@@ -238,4 +238,84 @@ describe("WSTransport", () => {
     lastSocket().receive({ id: "2", result: 2 });
     expect(handler).toHaveBeenCalledTimes(1);
   });
+
+  // --- sendAndWait tests ---
+
+  it("sendAndWait resolves when a matching response arrives", async () => {
+    const t = new WSTransport({
+      url: "ws://127.0.0.1:52800",
+      webSocketFactory: (url) => new FakeSocket(url) as unknown as WebSocket,
+    });
+    const p = t.connect();
+    lastSocket().open();
+    await p;
+
+    const reqPromise = t.sendAndWait!({ id: "ping-1", method: "system.ping" });
+    lastSocket().receive({ id: "ping-1", result: { pong: true } });
+    const resp = await reqPromise;
+    expect(resp).toEqual({ id: "ping-1", result: { pong: true } });
+  });
+
+  it("sendAndWait rejects on timeout if no response arrives", async () => {
+    const t = new WSTransport({
+      url: "ws://127.0.0.1:52800",
+      webSocketFactory: (url) => new FakeSocket(url) as unknown as WebSocket,
+    });
+    const p = t.connect();
+    lastSocket().open();
+    await p;
+
+    const reqPromise = t.sendAndWait!(
+      { id: "timeout-test", method: "system.ping" },
+      100,
+    );
+    await expect(reqPromise).rejects.toThrow("timeout");
+  });
+
+  it("sendAndWait throws immediately when not connected", async () => {
+    const t = new WSTransport({
+      url: "ws://127.0.0.1:52800",
+      webSocketFactory: (url) => new FakeSocket(url) as unknown as WebSocket,
+    });
+    // Don't call connect() — state is "disconnected".
+    expect(() => t.sendAndWait!({ id: "1", method: "system.ping" })).toThrow(
+      "cannot send while not connected",
+    );
+  });
+
+  it("sendAndWait responses are not dispatched to message handlers", async () => {
+    const handler = vi.fn();
+    const t = new WSTransport({
+      url: "ws://127.0.0.1:52800",
+      webSocketFactory: (url) => new FakeSocket(url) as unknown as WebSocket,
+    });
+    t.onMessage(handler);
+    const p = t.connect();
+    lastSocket().open();
+    await p;
+
+    const reqPromise = t.sendAndWait!({ id: "exclusive", method: "system.ping" });
+    lastSocket().receive({ id: "exclusive", result: { pong: true } });
+    await reqPromise;
+
+    // The response should have been consumed by sendAndWait, NOT forwarded
+    // to the generic handler.
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("disconnect() rejects all pending sendAndWait calls", async () => {
+    const t = new WSTransport({
+      url: "ws://127.0.0.1:52800",
+      webSocketFactory: (url) => new FakeSocket(url) as unknown as WebSocket,
+    });
+    const p = t.connect();
+    lastSocket().open();
+    await p;
+
+    const reqPromise = t.sendAndWait!({ id: "pending", method: "system.ping" }, 10_000);
+
+    // Disconnect without sending a response — the promise should reject.
+    await t.disconnect();
+    await expect(reqPromise).rejects.toThrow("disconnected");
+  });
 });

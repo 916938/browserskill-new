@@ -1,4 +1,4 @@
-import type { ConnectionState, ProtocolFrame } from "./types";
+import type { ConnectionState, ProtocolFrame, RequestFrame, ResponseFrame } from "./types";
 
 export interface Disposable {
   dispose(): void;
@@ -19,6 +19,16 @@ export interface Transport {
   connect(): Promise<void>;
   disconnect(): Promise<void>;
   send(msg: ProtocolFrame): void;
+  /**
+   * Send a request frame and resolve with the matching response. Used by
+   * the keepalive heartbeat to exchange `system.ping`/`pong`, which resets
+   * the MV3 service-worker idle timer so the daemon link survives past the
+   * ~30s eviction window (see docs/mv3-keepalive-fix-design.md).
+   *
+   * Optional: transports that cannot correlate requests/responses may omit
+   * it, in which case keepalive falls back to its connect-only behaviour.
+   */
+  sendAndWait?(msg: RequestFrame, timeout?: number): Promise<ResponseFrame>;
   onMessage(handler: FrameHandler): Disposable;
   onConnectionStateChange(handler: ConnectionStateHandler): Disposable;
   readonly state: ConnectionState;

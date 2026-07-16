@@ -1,5 +1,11 @@
 import type { ConnectionStateHandler, Disposable, FrameHandler, Transport } from "./transport";
-import type { ConnectionState, ProtocolFrame } from "./types";
+import type {
+  ConnectionState,
+  ProtocolFrame,
+  RequestFrame,
+  ResponseFrame,
+} from "./types";
+import { isResponseFrame } from "./types";
 
 const DEFAULT_INITIAL_DELAY_MS = 1_000;
 const DEFAULT_MAX_DELAY_MS = 5_000;
@@ -29,6 +35,12 @@ interface MessageLikeEvent {
   data: unknown;
 }
 
+interface PendingRequest {
+  resolve: (resp: ResponseFrame) => void;
+  reject: (err: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
+}
+
 /**
  * WebSocket-backed implementation of {@link Transport} (design §4.7).
  *
@@ -56,6 +68,8 @@ export class WSTransport implements Transport {
 
   private readonly messageHandlers = new Set<FrameHandler>();
   private readonly stateHandlers = new Set<ConnectionStateHandler>();
+  /** Outstanding `sendAndWait` calls keyed by their request id. */
+  private readonly pendingRequests = new Map<string, PendingRequest>();
 
   constructor(options: WSTransportOptions) {
     this.url = options.url;
@@ -95,6 +109,12 @@ export class WSTransport implements Transport {
         // ignore
       }
     }
+    // Reject all pending `sendAndWait` calls so callers don't hang.
+    for (const { reject, timer } of this.pendingRequests.values()) {
+      clearTimeout(timer);
+      reject(new Error("[WSTransport] disconnected"));
+    }
+    this.pendingRequests.clear();
     this.setState("disconnected");
     // Honour the Promise contract: if connect() never settled because
     // the caller chose to disconnect first, reject the pending promise
@@ -113,6 +133,22 @@ export class WSTransport implements Transport {
       throw new Error("[WSTransport] cannot send while not connected");
     }
     this.socket.send(JSON.stringify(msg));
+  }
+
+  async sendAndWait(msg: RequestFrame, timeout = 5000): Promise<ResponseFrame> {
+    if (!this.socket || this.socket.readyState !== 1 /* OPEN */) {
+      throw new Error("[WSTransport] cannot send while not connected");
+    }
+
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pendingRequests.delete(msg.id);
+        reject(new Error(`[WSTransport] request ${msg.id} timeout`));
+      }, timeout);
+
+      this.pendingRequests.set(msg.id, { resolve, reject, timer });
+      this.send(msg);
+    });
   }
 
   onMessage(handler: FrameHandler): Disposable {
@@ -170,6 +206,17 @@ export class WSTransport implements Transport {
     } catch {
       return;
     }
+
+    // If this is a response matching a pending `sendAndWait` call,
+    // resolve it directly instead of dispatching through message handlers.
+    if (isResponseFrame(parsed) && this.pendingRequests.has(parsed.id)) {
+      const { resolve, timer } = this.pendingRequests.get(parsed.id)!;
+      clearTimeout(timer);
+      this.pendingRequests.delete(parsed.id);
+      resolve(parsed);
+      return;
+    }
+
     for (const h of this.messageHandlers) {
       try {
         h(parsed);
