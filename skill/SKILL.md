@@ -61,6 +61,14 @@ bsk snapshot --session <id>            → again after navigation / DOM change
 
 Prefer `@eN` refs from the latest snapshot over raw CSS selectors. Use `--ref` / `--selector` when ambiguous (`bsk click --help`).
 
+### Quick decision tree
+
+- Need the user's existing login state or current tab? `bsk tab list --scope user` → `bsk tab borrow <tab-id>` → snapshot.
+- Need an isolated tab you can close later? `bsk navigate <url>` in the Agent Window.
+- Multiple browsers connected? `bsk browsers` to list, then `bsk session start --browser <id-or-label>`.
+- Page size unknown? `bsk snapshot` first; use `bsk screenshot` only if the snapshot is insufficient.
+- After navigation or a click that should change the page? Re-snapshot; old `@eN` refs are stale.
+
 ## Observation priority
 
 Start with `bsk snapshot` to understand page structure, text, controls, and element refs. Only escalate when the latest snapshot cannot answer the question:
