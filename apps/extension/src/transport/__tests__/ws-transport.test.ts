@@ -257,6 +257,7 @@ describe("WSTransport", () => {
   });
 
   it("sendAndWait rejects on timeout if no response arrives", async () => {
+    vi.useFakeTimers();
     const t = new WSTransport({
       url: "ws://127.0.0.1:52800",
       webSocketFactory: (url) => new FakeSocket(url) as unknown as WebSocket,
@@ -265,11 +266,11 @@ describe("WSTransport", () => {
     lastSocket().open();
     await p;
 
-    const reqPromise = t.sendAndWait!(
-      { id: "timeout-test", method: "system.ping" },
-      100,
-    );
+    const reqPromise = t.sendAndWait!({ id: "timeout-test", method: "system.ping" }, 5000);
+    // Advance time past the timeout
+    vi.advanceTimersByTime(5100);
     await expect(reqPromise).rejects.toThrow("timeout");
+    vi.useRealTimers();
   });
 
   it("sendAndWait throws immediately when not connected", async () => {
@@ -278,7 +279,7 @@ describe("WSTransport", () => {
       webSocketFactory: (url) => new FakeSocket(url) as unknown as WebSocket,
     });
     // Don't call connect() — state is "disconnected".
-    expect(() => t.sendAndWait!({ id: "1", method: "system.ping" })).toThrow(
+    await expect(t.sendAndWait!({ id: "1", method: "system.ping" })).rejects.toThrow(
       "cannot send while not connected",
     );
   });

@@ -165,6 +165,57 @@ Details and flags: **`bsk <cmd> --help`**
 | `bsk evaluate <expression>` | Run JS in agent tab (see red lines); JS throw → stderr, **exit 0** |
 | `bsk wait-for-navigation` | Block until load/DOM idle/etc. (`--wait-until`, `--timeout`) |
 | `bsk wait-ms <duration>` | Sleep (`500ms`, `2s`, `1m`; **no** `--session`) |
+| `bsk invoke --action <name>` | Forward raw JSON to any tool RPC (`tool.*`) |
+| `bsk invoke --action <name> --dry-run` | Preview request without executing |
+
+### Generic passthrough — `bsk invoke`
+
+`bsk invoke` sends a raw JSON params object to any `tool.*` RPC, bypassing
+the typed subcommand layer. This is the backend for shell helpers like
+`invoke.sh` / `invoke.ps1`.
+
+**Key flags:**
+
+| Flag | Purpose |
+|------|---------|
+| `--action <name>` | Tool action: `fill`, `snapshot`, or qualified `tool.fill` |
+| `--session <id>` | Session id (merged into params as `session_id`) |
+| `--timeout <dur>` | Hard timeout; accepts `30s`, `1m`, `1500ms`, or bare ms (default `30s`) |
+| `--args-json '{...}'` | Raw JSON object of arguments (mutually exclusive with `--args-file`) |
+| `--args-file <path>` | Path to JSON file, or `-` for stdin |
+| `--dry-run` | Validate and preview without sending to daemon |
+
+**Timeout format:** `30s` (seconds), `1m` (minutes), `500ms`, or bare number (milliseconds).
+Backward compatible: `--timeout-ms` is an alias.
+
+**Dry-run output** (`--dry-run`): Prints structured preview (action, method, session,
+params, timeout) without contacting the daemon. Use to debug argument construction
+or validate payloads before execution.
+
+### Environment variables
+
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `BSK_DEFAULT_SESSION` | Default session id when `--session` is omitted | _(none)_ |
+| `BSK_INVOKE_TIMEOUT_MS` | Override default timeout in milliseconds | `30000` |
+
+### Shell completion
+
+Generate tab-completion scripts for your shell:
+
+```bash
+# Bash (add to ~/.bashrc):
+bsk completion bash > ~/.local/share/bash-completion/completions/bsk
+
+# Zsh (add to ~/.zshrc):
+bsk completion zsh > "${fpath[1]}/_bsk"
+
+# Fish (auto-discovered):
+bsk completion fish > ~/.config/fish/completions/bsk.fish
+
+# PowerShell (add to Profile):
+bsk completion powershell | Out-File -Encoding utf8 $PROFILE
+```
 
 ### Ask the human for help — `bsk request-help`
 

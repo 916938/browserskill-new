@@ -89,8 +89,9 @@ describe("startKeepalive", () => {
     const alarms = makeAlarms();
     const transport = makeTransport("connected");
     // Stub sendAndWait so the tick doesn't actually try to talk to a daemon.
-    (transport as unknown as { sendAndWait?: (msg: unknown) => Promise<unknown> }).sendAndWait =
-      vi.fn().mockResolvedValue({ id: "1", result: { pong: true } });
+    (transport as unknown as { sendAndWait?: (msg: unknown) => Promise<unknown> }).sendAndWait = vi
+      .fn()
+      .mockResolvedValue({ id: "1", result: { pong: true } });
     startKeepalive({ transport, alarms });
 
     alarms.triggers[0]({ name: KEEPALIVE_ALARM_NAME });
@@ -98,10 +99,9 @@ describe("startKeepalive", () => {
     await Promise.resolve();
 
     expect(transport.connectCalls).toBe(0);
-    expect((transport as unknown as { sendAndWait?: ReturnType<typeof vi.fn> }).sendAndWait).toHaveBeenCalledWith(
-      expect.objectContaining({ method: "system.ping" }),
-      3000,
-    );
+    expect(
+      (transport as unknown as { sendAndWait?: ReturnType<typeof vi.fn> }).sendAndWait,
+    ).toHaveBeenCalledWith(expect.objectContaining({ method: "system.ping" }), 3000);
   });
 
   it("ignores alarms for other names", async () => {
