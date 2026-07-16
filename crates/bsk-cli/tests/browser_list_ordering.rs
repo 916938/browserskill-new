@@ -20,13 +20,30 @@ use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 
 fn tempfile_path(prefix: &str) -> PathBuf {
-    let mut p = std::env::temp_dir();
-    let mut rng = rand::thread_rng();
-    let suffix: String = (0..8)
-        .map(|_| char::from_digit(rng.gen_range(0..16), 16).unwrap())
-        .collect();
-    p.push(format!("{prefix}-{}-{suffix}.sock", std::process::id()));
-    p
+    #[cfg(windows)]
+    {
+        // Windows uses named pipes, not Unix-domain sockets.
+        let mut rng = rand::thread_rng();
+        let suffix: String = (0..8)
+            .map(|_| char::from_digit(rng.gen_range(0..16), 16).unwrap())
+            .collect();
+        PathBuf::from(format!(
+            r"\\.\pipe\{}-{}-{suffix}",
+            prefix,
+            std::process::id()
+        ))
+    }
+
+    #[cfg(not(windows))]
+    {
+        let mut p = std::env::temp_dir();
+        let mut rng = rand::thread_rng();
+        let suffix: String = (0..8)
+            .map(|_| char::from_digit(rng.gen_range(0..16), 16).unwrap())
+            .collect();
+        p.push(format!("{prefix}-{}-{suffix}.sock", std::process::id()));
+        p
+    }
 }
 
 async fn spawn_daemon() -> (daemon::DaemonHandle, PathBuf) {
