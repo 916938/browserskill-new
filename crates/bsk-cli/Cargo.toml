@@ -53,6 +53,7 @@ flate2 = { workspace = true }
 tar = { workspace = true }
 zip = { workspace = true }
 sha2 = { workspace = true }
+clap_complete = "4"
 
 [target.'cfg(unix)'.dependencies]
 nix = { workspace = true }

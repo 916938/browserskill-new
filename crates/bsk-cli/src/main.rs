@@ -94,6 +94,7 @@ fn dispatch(cli: Cli, format: Format) -> Result<(), CliError> {
         Command::WaitMs(args) => cli::waits::dispatch_wait_ms(args, format),
         Command::RequestHelp(args) => cli::human_loop::dispatch(args, format),
         Command::Invoke(args) => cli::invoke::dispatch(args, format),
+        Command::Completion(args) => cli::completion::dispatch(args).map_err(CliError::Local),
     }
 }
 
