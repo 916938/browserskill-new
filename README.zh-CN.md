@@ -23,6 +23,7 @@ https://github.com/user-attachments/assets/db782c92-b1d4-4aae-a255-039675937a90
 - **复用真实登录态**：Agent 可以操作你已经登录的网站，不需要额外测试账号。
 - **不中断你的工作**：浏览器任务在独立可见的 Agent Window 中运行，不影响你继续使用自己的浏览器。
 - **支持任意 Agent**：只要 Agent 能调用 Shell，就可以通过 `bsk` CLI 使用 BrowserSkill，不绑定特定模型、Agent 框架或 harness。
+- **多浏览器支持**：当连接了多个浏览器（如 Chrome + Edge）时，Agent 可以列举所有实例并指定目标——每个浏览器独立运行 Agent Window 和会话。
 - **内置 human-in-loop**：遇到 captcha、登录、确认弹窗等必须由人处理的步骤时，Agent 可以主动请求你接管，完成后再继续任务。
 
 ## 运行环境
@@ -144,6 +145,20 @@ flowchart TB
 ```
 
 Agent 不直接与浏览器通信。它通过 `bsk` CLI 下发浏览器任务；本地 daemon 把请求路由到扩展；扩展在 Agent Window 中执行。
+
+## 多浏览器使用
+
+当运行多个装有 BrowserSkill 扩展的 Chromium 浏览器时，Agent 可以指定目标浏览器：
+
+```bash
+# 列出所有已连接的浏览器实例
+bsk browsers
+
+# 在指定浏览器上启动会话（按实例 id 或 label）
+bsk session start --browser <instance-id-or-label>
+```
+
+如果连接了多个浏览器但未指定 `--browser`，`bsk session start` 会输出可用实例列表供选择。每个浏览器拥有独立的 Agent Window 和会话生命周期，互不影响。
 
 ## 面向开发者
 

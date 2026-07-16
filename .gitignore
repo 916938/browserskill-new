@@ -17,6 +17,9 @@ dist/
 # CodeGraph
 .codegraph/
 
+# npm (repo uses pnpm)
+package-lock.json
+
 # Environment
 .env.local
 .env.*.local
