@@ -5,6 +5,7 @@ use std::time::Duration;
 pub mod browser_wait;
 pub mod browsers;
 pub mod business_rpc;
+pub mod completion;
 pub mod console;
 pub mod daemon;
 pub mod dialogs;
@@ -30,6 +31,7 @@ pub mod waits;
 
 use clap::{Args, Parser, Subcommand};
 
+use crate::cli::completion::CompletionArgs;
 use crate::cli::console::ConsoleArgs;
 use crate::cli::daemon::DaemonCmd;
 use crate::cli::evaluate::EvaluateArgs;
@@ -171,6 +173,10 @@ pub enum Command {
     /// helpers pass a JSON blob straight through without flattening it
     /// into typed flags on the host side.
     Invoke(InvokeArgs),
+
+    /// Generate shell completion scripts for bash, zsh, fish, or PowerShell.
+    #[command(name = "completion")]
+    Completion(CompletionArgs),
 }
 
 #[derive(Debug, Clone, Args, Default)]

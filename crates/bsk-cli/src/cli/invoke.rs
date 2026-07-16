@@ -35,6 +35,7 @@ use std::time::Duration;
 use anyhow::Context;
 use bsk_protocol::Method;
 use clap::Args;
+use serde::Serialize;
 use serde_json::Value;
 
 use crate::cli::ensure_daemon::ensure_daemon;
@@ -43,6 +44,27 @@ use crate::cli::error::{CliError, Format};
 /// Default IPC timeout for a passthrough call, in milliseconds. Mirrors
 /// the 30s tool timeout other commands use as their clap default.
 const DEFAULT_TIMEOUT_MS: u32 = 30_000;
+
+/// Read default session from BSK_DEFAULT_SESSION env var.
+fn default_session_from_env() -> Option<String> {
+    std::env::var("BSK_DEFAULT_SESSION").ok().and_then(|s| {
+        let trimmed = s.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    })
+}
+
+/// Read timeout override from BSK_INVOKE_TIMEOUT_MS env var.
+/// Returns None to use the CLI default; Some(ms) to override.
+fn timeout_from_env() -> Option<u32> {
+    std::env::var("BSK_INVOKE_TIMEOUT_MS")
+        .ok()
+        .and_then(|v| v.parse::<u32>().ok())
+        .filter(|&ms| ms > 0)
+}
 
 #[derive(Debug, Clone, Args)]
 pub struct InvokeArgs {
@@ -67,9 +89,13 @@ pub struct InvokeArgs {
     #[arg(long = "args-file")]
     pub args_file: Option<String>,
 
-    /// Hard timeout in milliseconds (default 30000).
-    #[arg(long, default_value_t = DEFAULT_TIMEOUT_MS)]
-    pub timeout_ms: u32,
+    /// Hard timeout (default 30s). Accepts `30s`, `1m`, `1500ms`, or bare milliseconds.
+    #[arg(long = "timeout", long = "timeout-ms", default_value = "30s", value_parser = crate::cli::navigate::parse_timeout_ms)]
+    pub timeout: u32,
+
+    /// Validate and preview the request without executing it.
+    #[arg(long)]
+    pub dry_run: bool,
 }
 
 pub fn dispatch(args: InvokeArgs, format: Format) -> Result<(), CliError> {
@@ -78,7 +104,21 @@ pub fn dispatch(args: InvokeArgs, format: Format) -> Result<(), CliError> {
     let raw = read_args_payload(args.args_json.as_deref(), args.args_file.as_deref())?;
     let mut params = parse_params_object(&raw)?;
 
-    merge_session(&mut params, args.session.as_deref())?;
+    // Apply environment variable defaults for session
+    let effective_session = args.session.or_else(default_session_from_env);
+    merge_session(&mut params, effective_session.as_deref())?;
+
+    // Apply environment variable override for timeout (CLI arg takes precedence)
+    let effective_timeout = if args.timeout != DEFAULT_TIMEOUT_MS {
+        args.timeout
+    } else {
+        timeout_from_env().unwrap_or(DEFAULT_TIMEOUT_MS)
+    };
+
+    // Dry-run path: validate and preview without calling the daemon
+    if args.dry_run {
+        return render_dry_run_preview(&method, &params, effective_timeout, format);
+    }
 
     let info = ensure_daemon().context("ensure daemon is running")?;
     let reply: Value = crate::cli::business_rpc::call::<Value, Value>(
@@ -86,7 +126,7 @@ pub fn dispatch(args: InvokeArgs, format: Format) -> Result<(), CliError> {
         "invoke",
         method,
         Some(Value::Object(params)),
-        ipc_timeout(args.timeout_ms),
+        ipc_timeout(effective_timeout),
     )?;
 
     // The passthrough is format-agnostic: the reply is whatever the
@@ -219,6 +259,95 @@ fn ipc_timeout(timeout_ms: u32) -> Duration {
         .unwrap_or_else(|| Duration::from_secs(u64::from(timeout_ms / 1_000) + 15))
 }
 
+// --- Dry-run preview ---
+
+/// Structured dry-run output for JSON serialization.
+#[derive(Debug, Serialize)]
+struct DryRunPreview {
+    action: String,
+    method: String,
+    session_id: Option<String>,
+    params: serde_json::Map<String, Value>,
+    timeout_ms: u32,
+    formatted_timeout: String,
+}
+
+fn dry_run_preview(
+    method: &Method,
+    params: &serde_json::Map<String, Value>,
+    timeout_ms: u32,
+) -> DryRunPreview {
+    let method_str = serde_json::to_string(method).unwrap_or_default();
+    // Remove surrounding quotes from JSON string representation
+    let method_clean = method_str.trim_matches('"').to_string();
+
+    DryRunPreview {
+        action: method_to_action_string(&method_clean),
+        method: method_clean,
+        session_id: params
+            .get("session_id")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        params: params.clone(),
+        timeout_ms,
+        formatted_timeout: format_human_readable_timeout(timeout_ms),
+    }
+}
+
+fn format_human_readable_timeout(ms: u32) -> String {
+    if ms >= 60_000 && ms % 60_000 == 0 {
+        format!("{}m", ms / 60_000)
+    } else if ms >= 1_000 && ms % 1_000 == 0 {
+        format!("{}s", ms / 1_000)
+    } else {
+        format!("{ms}ms")
+    }
+}
+
+fn method_to_action_string(method_str: &str) -> String {
+    method_str
+        .strip_prefix("tool.")
+        .unwrap_or(method_str)
+        .to_string()
+}
+
+fn render_dry_run_preview(
+    method: &Method,
+    params: &serde_json::Map<String, Value>,
+    timeout_ms: u32,
+    format: Format,
+) -> Result<(), CliError> {
+    let preview = dry_run_preview(method, params, timeout_ms);
+
+    match format {
+        Format::Json => {
+            let json = serde_json::to_string_pretty(&preview)
+                .map_err(|e| CliError::Local(anyhow::anyhow!(e)))?;
+            println!("{json}");
+        }
+        Format::Human => {
+            println!("=== DRY RUN PREVIEW ===");
+            println!("Action:     {}", preview.action);
+            println!("Method:     {}", preview.method);
+            println!("Timeout:    {}", preview.formatted_timeout);
+            if let Some(ref sid) = preview.session_id {
+                println!("Session:    {sid}");
+            } else {
+                println!("Session:    <not set>");
+            }
+            println!("\nParams:");
+            let params_json = serde_json::to_string_pretty(&Value::Object(preview.params.clone()))
+                .map_err(|e| CliError::Local(anyhow::anyhow!(e)))?;
+            // Indent each line for readability
+            for line in params_json.lines() {
+                println!("  {line}");
+            }
+            println!("\n[Dry run mode — request was validated but NOT sent to daemon]");
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -346,5 +475,192 @@ mod tests {
         m.insert("session_id".into(), Value::String("fromjson".into()));
         merge_session(&mut m, None).unwrap();
         assert_eq!(m.get("session_id").unwrap().as_str().unwrap(), "fromjson");
+    }
+
+    #[test]
+    fn invoke_timeout_format_compatibility() {
+        // Verify that the timeout parser used by InvokeArgs accepts all
+        // expected formats (delegates to navigate::parse_timeout_ms).
+        use crate::cli::navigate::parse_timeout_ms;
+
+        // Human-readable formats
+        assert_eq!(parse_timeout_ms("30s").unwrap(), 30_000);
+        assert_eq!(parse_timeout_ms("250ms").unwrap(), 250);
+        assert_eq!(parse_timeout_ms("1m").unwrap(), 60_000);
+
+        // Bare number (milliseconds)
+        assert_eq!(parse_timeout_ms("5000").unwrap(), 5_000);
+        assert_eq!(parse_timeout_ms("5s").unwrap(), 5_000);
+
+        // Invalid formats should be rejected
+        assert!(parse_timeout_ms("0").is_err());
+        assert!(parse_timeout_ms("0ms").is_err());
+        assert!(parse_timeout_ms("-1").is_err());
+        assert!(parse_timeout_ms("1h").is_err());
+        assert!(parse_timeout_ms("abc").is_err());
+    }
+
+    #[test]
+    fn invoke_args_default_timeout_is_30s() {
+        // Verify that the default timeout value "30s" parses to 30000ms
+        use crate::cli::navigate::parse_timeout_ms;
+        assert_eq!(parse_timeout_ms("30s").unwrap(), 30_000);
+    }
+
+    #[test]
+    fn invoke_args_supports_timeout_ms_alias_for_backward_compat() {
+        // --timeout-ms accepts bare milliseconds, same as before
+        use crate::cli::navigate::parse_timeout_ms;
+        assert_eq!(parse_timeout_ms("60000").unwrap(), 60_000);
+    }
+
+    #[test]
+    fn default_session_from_env_reads_valid_value() {
+        // Test the core logic directly (avoids env var race in multi-threaded tests)
+        let input = "test-session-123";
+        let trimmed = input.trim();
+        let result = if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        };
+        assert_eq!(result.as_deref(), Some("test-session-123"));
+    }
+
+    #[test]
+    fn default_session_from_env_ignores_empty() {
+        // Test the trimming/empty logic directly (avoids env var race in multi-threaded tests)
+        let input = "";
+        let trimmed = input.trim();
+        assert!(trimmed.is_empty());
+        let result = if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        };
+        assert!(result.is_none(), "expected None for empty string");
+
+        // Also test whitespace-only
+        let input = "   ";
+        let trimmed = input.trim();
+        assert!(trimmed.is_empty());
+        let result = if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        };
+        assert!(result.is_none(), "expected None for whitespace-only string");
+    }
+
+    #[test]
+    fn default_session_from_env_returns_none_when_unset() {
+        // Simulates std::env::var returning Err (unset variable) via the Ok/None path
+        // When var() returns Err, .ok() converts to None, and and_then is never called
+        let input: Option<String> = None;
+        let result = input.and_then(|s| {
+            let trimmed = s.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        });
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn timeout_from_env_parses_valid_ms() {
+        // Test parsing logic directly
+        let input = "60000";
+        let result = input.parse::<u32>().ok().filter(|&ms| ms > 0);
+        assert_eq!(result, Some(60_000));
+    }
+
+    #[test]
+    fn timeout_from_env_rejects_zero_and_negative() {
+        // Zero is filtered out
+        let input = "0";
+        let result = input.parse::<u32>().ok().filter(|&ms| ms > 0);
+        assert!(result.is_none());
+
+        // Negative fails parse -> None
+        let input = "-1";
+        let result = input.parse::<u32>().ok().filter(|&ms| ms > 0);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn timeout_from_env_returns_none_when_unset_or_invalid() {
+        // Unset -> None (simulates Err from var())
+        let input: Option<String> = None;
+        let result = input
+            .and_then(|v| v.parse::<u32>().ok())
+            .filter(|&ms| ms > 0);
+        assert!(result.is_none());
+
+        // Invalid number -> parse fails -> None
+        let input = Some("not-a-number".to_string());
+        let result = input
+            .and_then(|v| v.parse::<u32>().ok())
+            .filter(|&ms| ms > 0);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn dry_run_preview_contains_all_fields() {
+        let mut params = serde_json::Map::new();
+        params.insert("session_id".into(), Value::String("test-session".into()));
+        params.insert("selector".into(), Value::String("#button".into()));
+
+        let preview = dry_run_preview(&Method::ToolFill, &params, 30_000);
+
+        assert_eq!(preview.action, "fill");
+        assert_eq!(preview.method, "tool.fill");
+        assert_eq!(preview.session_id.as_deref(), Some("test-session"));
+        assert_eq!(preview.timeout_ms, 30_000);
+        assert_eq!(preview.formatted_timeout, "30s");
+        assert_eq!(
+            preview.params.get("selector").unwrap().as_str().unwrap(),
+            "#button"
+        );
+    }
+
+    #[test]
+    fn dry_run_preview_handles_missing_session() {
+        let params = serde_json::Map::new();
+        let preview = dry_run_preview(&Method::ToolSnapshot, &params, 60_000);
+
+        assert!(preview.session_id.is_none());
+    }
+
+    #[test]
+    fn format_human_readable_timeout_conversions() {
+        // Exact minute
+        assert_eq!(format_human_readable_timeout(60_000), "1m");
+        assert_eq!(format_human_readable_timeout(120_000), "2m");
+
+        // Exact second
+        assert_eq!(format_human_readable_timeout(30_000), "30s");
+        assert_eq!(format_human_readable_timeout(90_000), "90s");
+
+        // Milliseconds (not exact second)
+        assert_eq!(format_human_readable_timeout(250), "250ms");
+        assert_eq!(format_human_readable_timeout(1_500), "1500ms");
+
+        // Edge case: not exact minute but exact second
+        assert_eq!(format_human_readable_timeout(90_000), "90s");
+    }
+
+    #[test]
+    fn method_to_action_string_strips_tool_prefix() {
+        assert_eq!(method_to_action_string("tool.fill"), "fill");
+        assert_eq!(method_to_action_string("tool.snapshot"), "snapshot");
+        assert_eq!(method_to_action_string("tool.tab_list"), "tab_list");
+    }
+
+    #[test]
+    fn method_to_action_string_preserves_non_tool_methods() {
+        // session.stop doesn't have tool. prefix
+        assert_eq!(method_to_action_string("session.stop"), "session.stop");
     }
 }

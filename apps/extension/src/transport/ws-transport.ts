@@ -1,10 +1,5 @@
 import type { ConnectionStateHandler, Disposable, FrameHandler, Transport } from "./transport";
-import type {
-  ConnectionState,
-  ProtocolFrame,
-  RequestFrame,
-  ResponseFrame,
-} from "./types";
+import type { ConnectionState, ProtocolFrame, RequestFrame, ResponseFrame } from "./types";
 import { isResponseFrame } from "./types";
 
 const DEFAULT_INITIAL_DELAY_MS = 1_000;
