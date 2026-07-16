@@ -16,6 +16,7 @@ pub mod get_html;
 pub mod human_loop;
 pub mod install_skill;
 pub mod interaction;
+pub mod invoke;
 pub mod logs;
 pub mod navigate;
 pub mod render_error;
@@ -36,6 +37,7 @@ use crate::cli::get_html::GetHtmlArgs;
 use crate::cli::human_loop::RequestHelpArgs;
 use crate::cli::install_skill::InstallSkillArgs;
 use crate::cli::interaction::{ClickArgs, FillArgs, PressArgs, SelectArgs};
+use crate::cli::invoke::InvokeArgs;
 use crate::cli::navigate::{NavigateCommand, NavigateHistoryArgs, ReloadArgs};
 use crate::cli::screenshot::ScreenshotArgs;
 use crate::cli::session::SessionCmd;
@@ -164,6 +166,11 @@ pub enum Command {
     /// Ask the human to complete an in-page step (captcha / login / confirm).
     #[command(name = "request-help")]
     RequestHelp(RequestHelpArgs),
+
+    /// Forward a raw JSON params object to any `tool.*` RPC. Lets shell
+    /// helpers pass a JSON blob straight through without flattening it
+    /// into typed flags on the host side.
+    Invoke(InvokeArgs),
 }
 
 #[derive(Debug, Clone, Args, Default)]

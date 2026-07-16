@@ -461,6 +461,7 @@ fn handle_cancel(state: &Arc<DaemonState>, params: Value) -> ResponseBody {
 /// the production handler in [`full_handler`] is the canonical entry
 /// point.
 #[cfg(test)]
+#[expect(dead_code)]
 fn handle_cancel_with_registry_only(registry: &Arc<AbortRegistry>, params: Value) -> ResponseBody {
     let params: CancelParams = match serde_json::from_value(params) {
         Ok(p) => p,
@@ -1029,8 +1030,8 @@ mod windows {
         first: Option<NamedPipeServer>,
     }
 
-    pub async fn bind(_path: &Path) -> Result<NamedPipeListener> {
-        let pipe_name = crate::daemon::paths::pipe_name();
+    pub async fn bind(path: &Path) -> Result<NamedPipeListener> {
+        let pipe_name = resolve_pipe_name(path);
         let first = ServerOptions::new()
             .first_pipe_instance(true)
             .access_inbound(true)
@@ -1041,6 +1042,27 @@ mod windows {
             pipe_name,
             first: Some(first),
         })
+    }
+
+    /// Convert a filesystem-style path to a Windows named-pipe name.
+    ///
+    /// - If `path` is already a named-pipe path (`\\.\pipe\...`), use it verbatim.
+    /// - Otherwise, extract the file stem (e.g. `daemon.sock` → `daemon`) and
+    ///   prefix with `\\.\pipe\`.
+    fn resolve_pipe_name(path: &Path) -> String {
+        let path_str = path.to_string_lossy();
+
+        // Already a named-pipe path — use as-is.
+        if path_str.starts_with(r"\\.\pipe\") || path_str.starts_with(r"\\?\pipe\") {
+            return path_str.into_owned();
+        }
+
+        // Extract the stem (file name without extension) as pipe identifier.
+        let stem = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("bsk-daemon");
+        format!(r"\\.\pipe\{stem}")
     }
 
     pub async fn serve<S>(

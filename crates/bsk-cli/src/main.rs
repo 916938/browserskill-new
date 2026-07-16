@@ -93,6 +93,7 @@ fn dispatch(cli: Cli, format: Format) -> Result<(), CliError> {
         Command::WaitForNavigation(args) => cli::waits::dispatch_wait_for_navigation(args, format),
         Command::WaitMs(args) => cli::waits::dispatch_wait_ms(args, format),
         Command::RequestHelp(args) => cli::human_loop::dispatch(args, format),
+        Command::Invoke(args) => cli::invoke::dispatch(args, format),
     }
 }
 

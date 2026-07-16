@@ -298,7 +298,7 @@ fn hermes_home_for_user_home(home: &Path) -> PathBuf {
                 return PathBuf::from(trimmed).join("hermes");
             }
         }
-        return home.join("AppData").join("Local").join("hermes");
+        home.join("AppData").join("Local").join("hermes")
     }
 
     #[cfg(not(windows))]
@@ -391,6 +391,37 @@ mod tests {
 
     #[test]
     fn skills_dirs_match_harness_spec() {
+        // Save and clear env vars that affect Hermes path resolution on Windows.
+        let hermes_home = std::env::var("HERMES_HOME").ok();
+        let local_app_data = std::env::var("LOCALAPPDATA").ok();
+        unsafe {
+            std::env::remove_var("HERMES_HOME");
+            std::env::remove_var("LOCALAPPDATA");
+        }
+        // Restore env vars when test scope ends.
+        struct EnvRestore {
+            hermes_home: Option<String>,
+            local_app_data: Option<String>,
+        }
+        impl Drop for EnvRestore {
+            fn drop(&mut self) {
+                unsafe {
+                    match self.hermes_home.take() {
+                        Some(v) => std::env::set_var("HERMES_HOME", v),
+                        None => std::env::remove_var("HERMES_HOME"),
+                    }
+                    match self.local_app_data.take() {
+                        Some(v) => std::env::set_var("LOCALAPPDATA", v),
+                        None => std::env::remove_var("LOCALAPPDATA"),
+                    }
+                }
+            }
+        }
+        let _restore = EnvRestore {
+            hermes_home,
+            local_app_data,
+        };
+
         let home = Path::new("/home/user");
         assert_eq!(
             HarnessId::Codex.skills_dir_for_home(home),
@@ -420,9 +451,16 @@ mod tests {
             HarnessId::PiAgent.skills_dir_for_home(home),
             PathBuf::from("/home/user/.pi/agent/skills")
         );
+        // Hermes path is platform-dependent on Windows (uses %LOCALAPPDATA%/hermes).
+        #[cfg(not(windows))]
         assert_eq!(
             HarnessId::Hermes.skills_dir_for_home(home),
             PathBuf::from("/home/user/.hermes/skills")
+        );
+        #[cfg(windows)]
+        assert_eq!(
+            HarnessId::Hermes.skills_dir_for_home(home),
+            PathBuf::from(r"/home/user/AppData/Local/hermes/skills")
         );
     }
 
@@ -451,11 +489,55 @@ mod tests {
 
     #[test]
     fn detects_hermes_from_home_layout() {
+        // Save and clear env vars so Hermes resolves to home/.hermes on all platforms.
+        let hermes_home = std::env::var("HERMES_HOME").ok();
+        let local_app_data = std::env::var("LOCALAPPDATA").ok();
+        unsafe {
+            std::env::remove_var("HERMES_HOME");
+            std::env::remove_var("LOCALAPPDATA");
+        }
+        struct EnvRestore {
+            hermes_home: Option<String>,
+            local_app_data: Option<String>,
+        }
+        impl Drop for EnvRestore {
+            fn drop(&mut self) {
+                unsafe {
+                    match self.hermes_home.take() {
+                        Some(v) => std::env::set_var("HERMES_HOME", v),
+                        None => std::env::remove_var("HERMES_HOME"),
+                    }
+                    match self.local_app_data.take() {
+                        Some(v) => std::env::set_var("LOCALAPPDATA", v),
+                        None => std::env::remove_var("LOCALAPPDATA"),
+                    }
+                }
+            }
+        }
+        let _restore = EnvRestore {
+            hermes_home,
+            local_app_data,
+        };
+
         let tmp = tempfile::TempDir::new().unwrap();
         let home = tmp.path();
+        // Create the directory that hermes_home_for_user_home() will check on this platform.
+        #[cfg(windows)]
+        std::fs::create_dir_all(home.join("AppData").join("Local").join("hermes")).unwrap();
+        #[cfg(not(windows))]
         std::fs::create_dir_all(home.join(".hermes")).unwrap();
         let report = HarnessId::Hermes.report_for_home(home);
         assert!(report.detected);
+        // Verify skills_dir matches the platform-specific path.
+        #[cfg(windows)]
+        assert_eq!(
+            report.skills_dir,
+            home.join("AppData")
+                .join("Local")
+                .join("hermes")
+                .join("skills")
+        );
+        #[cfg(not(windows))]
         assert_eq!(report.skills_dir, home.join(".hermes").join("skills"));
     }
 

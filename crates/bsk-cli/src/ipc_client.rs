@@ -214,8 +214,29 @@ mod platform {
         /// silent hang.
         const CONNECT_BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 
+        /// Convert a filesystem-style path to a Windows named-pipe name.
+        ///
+        /// - If `path` is already a named-pipe path (`\\.\pipe\...`), use it verbatim.
+        /// - Otherwise, extract the file stem (e.g. `daemon.sock` → `daemon`) and
+        ///   prefix with `\\.\pipe\`.
+        fn resolve_pipe_name(path: &Path) -> String {
+            let path_str = path.to_string_lossy();
+
+            // Already a named-pipe path — use as-is.
+            if path_str.starts_with(r"\\.\pipe\") || path_str.starts_with(r"\\?\pipe\") {
+                return path_str.into_owned();
+            }
+
+            // Extract the stem as pipe identifier.
+            let stem = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("bsk-daemon");
+            format!(r"\\.\pipe\{stem}")
+        }
+
         pub async fn connect_path(pipe_name: PathBuf) -> Result<Self> {
-            let name = pipe_name.to_string_lossy().into_owned();
+            let name = Self::resolve_pipe_name(&pipe_name);
             let connect_loop = async {
                 loop {
                     match ClientOptions::new().open(&name) {

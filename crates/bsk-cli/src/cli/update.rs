@@ -773,8 +773,21 @@ mod tests {
 
         let action = replace_binary_at_path(&target, b"new binary").unwrap();
 
-        assert_eq!(std::fs::read(&target).unwrap(), b"new binary");
-        assert!(matches!(action, InstallAction::Replaced));
+        // Platform-specific behaviour:
+        // - Unix: atomic rename replaces target immediately → Replaced action
+        // - Windows: writes staged file + .cmd script → Staged action (script runs on next launch)
+        #[cfg(windows)]
+        {
+            assert!(matches!(action, InstallAction::Staged));
+            // On Windows the target is NOT replaced yet; verify the staged binary.
+            let paths = staged_replacement_paths(&target, std::process::id()).unwrap();
+            assert_eq!(std::fs::read(paths.binary_path).unwrap(), b"new binary");
+        }
+        #[cfg(not(windows))]
+        {
+            assert!(matches!(action, InstallAction::Replaced));
+            assert_eq!(std::fs::read(&target).unwrap(), b"new binary");
+        }
 
         #[cfg(unix)]
         {
