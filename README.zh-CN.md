@@ -169,6 +169,30 @@ bsk session start --browser <instance-id-or-label>
 - `apps/extension` — 浏览器扩展
 - `packages/ui` 和 `packages/i18n` — 扩展 UI 共享支持
 
+### 从源码构建扩展
+
+修改扩展源码后，需要重新构建并加载：
+
+```bash
+pnpm install
+pnpm ext:build                    # 输出: apps/extension/dist/chrome-mv3
+```
+
+然后在 Chrome 中：
+
+1. 打开 `chrome://extensions`
+2. 开启 **开发者模式**
+3. 点击 **加载已解压的扩展程序**，选择 `apps/extension/dist/chrome-mv3` 目录
+4. BrowserSkill 弹窗变绿即表示已连接到 daemon
+
+开发时可使用热重载：
+
+```bash
+pnpm ext:dev                      # 启动 WXT dev server，支持 HMR
+```
+
+> **注意**：`bsk` CLI 与扩展的协议版本必须匹配。更新任一侧后，请同步重新构建另一侧。
+
 ## 许可证
 
 MIT

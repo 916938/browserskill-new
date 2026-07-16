@@ -198,6 +198,32 @@ The repository is a Cargo + pnpm workspace:
 - `apps/extension` — browser extension
 - `packages/ui` and `packages/i18n` — shared extension UI support
 
+### Building the extension from source
+
+After any change to the extension source, rebuild and re-install the unpacked
+extension:
+
+```bash
+pnpm install
+pnpm ext:build                    # output: apps/extension/dist/chrome-mv3
+```
+
+Then in Chrome:
+
+1. Open `chrome://extensions`
+2. Enable **Developer mode**
+3. Click **Load unpacked** and select the `apps/extension/dist/chrome-mv3` directory
+4. The BrowserSkill popup should turn green once connected to the daemon
+
+For development with hot reload:
+
+```bash
+pnpm ext:dev                      # starts WXT dev server with HMR
+```
+
+> **Note**: the `bsk` CLI and the extension must match in protocol version. If you
+> update one side, rebuild the other as well.
+
 ## License
 
 MIT
