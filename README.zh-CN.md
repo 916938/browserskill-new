@@ -65,8 +65,11 @@ BrowserSkill 由两个本地运行组件组成：`bsk` CLI/daemon 和浏览器�
 curl -fsSL https://raw.githubusercontent.com/Tencent/BrowserSkill/main/install.sh | sh
 ```
 
-**Windows**：从 [最新 CLI release](https://github.com/Tencent/BrowserSkill/releases/latest)
-下载 `bsk-v<version>-x86_64-pc-windows-msvc.zip`，解压后将 `bsk.exe` 加入 `PATH`。
+**Windows**（PowerShell — 安装到 `~/.local/bin`）：
+
+```powershell
+irm https://raw.githubusercontent.com/Tencent/BrowserSkill/main/install.ps1 | iex
+```
 
 验证二进制：
 

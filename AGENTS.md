@@ -85,6 +85,6 @@ Schemas land in `crates/bsk-protocol/schema/`. These are committed and should ma
 ## Style conventions
 
 - Rust: 4-space indent, 100 char max width (`rustfmt.toml`), clippy cognitive complexity threshold 30.
-- JS/TS/CSS/JSON/MD: 2-space indent, 100 char line width (Biome). Double quotes, always semicolons, trailing commas.
+- JS/TS/CSS/MD: 2-space indent, 100 char line width (Biome). Double quotes, always semicolons, trailing commas. JSON: no trailing commas.
 - LF line endings everywhere (`.editorconfig`).
 - Extensions `.gitignore`d: `target/`, `node_modules/`, `dist/`, `.output/`, `.wxt/`.

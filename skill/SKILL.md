@@ -234,7 +234,7 @@ Always **`bsk session stop <id>`** in a `finally`-style path so the Agent Window
 
 ## BrowserSkill Pro (optional skill package)
 
-The [BrowserSkill Pro](https://github.com/Tencent/BrowserSkill) skill package adds helper scripts, layered documentation, and workflow examples on top of the base `bsk` CLI. **Everything above works without it** — Pro is an enhancement, not a requirement.
+The [BrowserSkill Pro](https://github.com/916938/browserskill-pro) skill package adds helper scripts, layered documentation, and workflow examples on top of the base `bsk` CLI. **Everything above works without it** — Pro is an enhancement, not a requirement.
 
 ### What Pro provides
 
