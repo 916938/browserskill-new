@@ -14,6 +14,9 @@ dist/
 # macOS
 .DS_Store
 
+# CodeGraph
+.codegraph/
+
 # Environment
 .env.local
 .env.*.local
