@@ -261,7 +261,7 @@ Install the Pro skill package when you need:
 - **UTF-8 safe argument passing** — avoid shell escaping issues with Chinese text or nested JSON
 - **Workflow examples** — end-to-end patterns for common tasks
 
-To install, copy the `skill/` directory from the [BrowserSkill Pro repo](https://github.com/Tencent/BrowserSkill) into your agent's skills directory as `browserskill-pro/`. See the Pro README for agent-specific install paths.
+To install, copy the `skill/` directory from the [BrowserSkill Pro repo](https://github.com/916938/browserskill-pro) into your agent's skills directory as `browserskill-pro/`. See the Pro README for agent-specific install paths.
 
 ---
 
