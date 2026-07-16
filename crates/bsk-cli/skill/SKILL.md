@@ -61,6 +61,14 @@ bsk snapshot --session <id>            → again after navigation / DOM change
 
 Prefer `@eN` refs from the latest snapshot over raw CSS selectors. Use `--ref` / `--selector` when ambiguous (`bsk click --help`).
 
+### Quick decision tree
+
+- Need the user's existing login state or current tab? `bsk tab list --scope user` → `bsk tab borrow <tab-id>` → snapshot.
+- Need an isolated tab you can close later? `bsk navigate <url>` in the Agent Window.
+- Multiple browsers connected? `bsk browsers` to list, then `bsk session start --browser <id-or-label>`.
+- Page size unknown? `bsk snapshot` first; use `bsk screenshot` only if the snapshot is insufficient.
+- After navigation or a click that should change the page? Re-snapshot; old `@eN` refs are stale.
+
 ## Observation priority
 
 Start with `bsk snapshot` to understand page structure, text, controls, and element refs. Only escalate when the latest snapshot cannot answer the question:
@@ -223,6 +231,37 @@ Always **`bsk session stop <id>`** in a `finally`-style path so the Agent Window
 3. **No skip stop** — always `bsk session stop <id>`; never assume idle timeout will clean up.
 4. **No observe escalation before snapshot** — use `bsk snapshot` first; only use `bsk get-html` or `bsk screenshot` when the snapshot is insufficient. Element screenshots (`--ref @eN`) still require a fresh snapshot ref — never skip snapshot just to grab a visual.
 5. **`evaluate` is powerful and risky** — use only when snapshot + click/fill/select cannot suffice; never on credential surfaces.
+
+## BrowserSkill Pro (optional skill package)
+
+The [BrowserSkill Pro](https://github.com/916938/browserskill-pro) skill package adds helper scripts, layered documentation, and workflow examples on top of the base `bsk` CLI. **Everything above works without it** — Pro is an enhancement, not a requirement.
+
+### What Pro provides
+
+| Feature | Base skill | Pro package |
+|---------|-----------|-------------|
+| `bsk snapshot` (raw JSON) | `bsk snapshot --session <id>` | Same, plus `snapshot.py` for smart modes |
+| Snapshot auto/compact/file | — | `snapshot.py --auto` (compact for small, file for large), `--mode compact`, `--mode file` |
+| Readiness check | `bsk doctor` (sends browser actions) | `doctor.py --wait-connected 20` (read-only, no browser actions) |
+| Cross-platform screenshot | `bsk screenshot` | `screenshot.py` / `screenshot.ps1` (path-compatible wrapper) |
+| Smart wait (URL/title/text) | `bsk wait-for-navigation` (load event only) | `wait_for.py --url-contains / --title-contains / --text-contains` (polls snapshot, exits nonzero on timeout) |
+| UTF-8 args file workflow | Direct shell quoting | `invoke.ps1 -ArgsFile` / `invoke.sh --args-file` (avoids shell escaping for Chinese/nested JSON) |
+| Action wrapper | Direct `bsk <cmd>` calls | `invoke.ps1 -Action <name>` / `invoke.sh --action <name>` (auto-maps action names to bsk subcommands) |
+| Layered reference docs | This file only | `protocol.md` (parameters, exit codes), `operations.md` (install, recovery), `how-it-works.md` (architecture) |
+| End-to-end examples | — | `examples/` directory (form fill, scroll, popup recovery, network debug) |
+| OpenAI/Codex metadata | — | `agents/openai.yaml` |
+
+### When to install Pro
+
+Install the Pro skill package when you need:
+
+- **Snapshot control** — auto strategy that handles both small and large pages without flooding context
+- **Smart waiting** — poll by visible text or URL change instead of fixed sleep
+- **Readiness checks without side effects** — `doctor.py` never sends browser actions
+- **UTF-8 safe argument passing** — avoid shell escaping issues with Chinese text or nested JSON
+- **Workflow examples** — end-to-end patterns for common tasks
+
+To install, copy the `skill/` directory from the [BrowserSkill Pro repo](https://github.com/916938/browserskill-pro) into your agent's skills directory as `browserskill-pro/`. See the Pro README for agent-specific install paths.
 
 ---
 
