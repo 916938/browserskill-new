@@ -31,6 +31,9 @@ https://github.com/user-attachments/assets/db782c92-b1d4-4aae-a255-039675937a90
 - **Support any Agent**: any Agent that can call a shell can use BrowserSkill
   through the `bsk` CLI, with no lock-in to a specific model, Agent framework, or
   harness.
+- **Multi-browser support**: when you have more than one browser connected
+  (e.g. Chrome + Edge), the agent can list them and target a specific one —
+  each browser runs its own Agent Window and sessions independently.
 - **Built-in human-in-loop**: when a task hits captcha, login, confirmation
   dialogs, or other human-only steps, the Agent can ask you to take over and
   then continue afterwards.
@@ -167,6 +170,24 @@ flowchart TB
 The agent never talks to the browser directly. It asks the `bsk` CLI to perform a
 browser task; the local daemon routes that request to the extension; the
 extension runs it in an Agent Window.
+
+## Multiple Browsers
+
+When more than one Chromium browser with the BrowserSkill extension is running,
+the agent can target a specific one:
+
+```bash
+# List all connected browser instances
+bsk browsers
+
+# Start a session on a specific browser (by instance id or label)
+bsk session start --browser <instance-id-or-label>
+```
+
+If multiple browsers are connected and no `--browser` flag is given, `bsk session
+start` prints a table of available instances so the agent (or you) can pick one.
+Each browser gets its own Agent Window and session lifecycle — sessions on
+different browsers are fully independent.
 
 ## For Developers
 
