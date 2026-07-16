@@ -265,10 +265,7 @@ describe("WSTransport", () => {
     lastSocket().open();
     await p;
 
-    const reqPromise = t.sendAndWait!(
-      { id: "timeout-test", method: "system.ping" },
-      100,
-    );
+    const reqPromise = t.sendAndWait!({ id: "timeout-test", method: "system.ping" }, 100);
     await expect(reqPromise).rejects.toThrow("timeout");
   });
 
