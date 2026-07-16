@@ -89,10 +89,9 @@ describe("startKeepalive", () => {
     const alarms = makeAlarms();
     const transport = makeTransport("connected");
     // Stub sendAndWait so the tick doesn't actually try to talk to a daemon.
-    (transport as unknown as { sendAndWait?: (msg: unknown) => Promise<unknown> }).sendAndWait =
-      vi
-        .fn()
-        .mockResolvedValue({ id: "1", result: { pong: true } });
+    (transport as unknown as { sendAndWait?: (msg: unknown) => Promise<unknown> }).sendAndWait = vi
+      .fn()
+      .mockResolvedValue({ id: "1", result: { pong: true } });
     startKeepalive({ transport, alarms });
 
     alarms.triggers[0]({ name: KEEPALIVE_ALARM_NAME });
