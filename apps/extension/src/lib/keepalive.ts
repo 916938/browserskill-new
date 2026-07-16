@@ -80,7 +80,35 @@ export function startKeepalive(options: KeepaliveOptions): KeepaliveHandle {
 
   const tick = async () => {
     if (options.shouldConnect && !options.shouldConnect()) return;
-    if (options.transport.state === "connected") return;
+
+    if (options.transport.state === "connected") {
+      // Send a keepalive ping to reset the MV3 service-worker idle timer.
+      // WebSocket I/O alone does not keep the SW alive; an application-
+      // layer message round-trip does (see docs/mv3-keepalive-fix-design.md).
+      try {
+        if (options.transport.sendAndWait) {
+          const resp = await options.transport.sendAndWait(
+            {
+              id: crypto.randomUUID?.() ?? `ping-${Date.now()}`,
+              method: "system.ping",
+              params: {},
+            },
+            3000,
+          );
+          console.debug("[bsk keepalive] ping ok, SW stays alive", resp);
+        }
+      } catch (err) {
+        console.debug("[bsk keepalive] ping failed, reconnecting", err);
+        try {
+          await options.transport.connect();
+        } catch (e) {
+          console.debug("[bsk keepalive] reconnect failed", e);
+        }
+      }
+      return;
+    }
+
+    // Not connected: attempt to reconnect.
     try {
       await options.transport.connect();
     } catch (err) {

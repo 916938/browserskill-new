@@ -26,7 +26,7 @@ use tokio_tungstenite::WebSocketStream;
 use tokio_tungstenite::tungstenite::handshake::server::{ErrorResponse, Request, Response};
 use tokio_tungstenite::tungstenite::http::{HeaderValue, StatusCode};
 use tokio_tungstenite::tungstenite::protocol::{CloseFrame, Message};
-use tracing::{debug, info, warn};
+use tracing::{debug, info, trace, warn};
 
 use super::browsers::{BrowserClient, BrowserId, BrowserSink, Pending};
 use super::state::{
@@ -427,8 +427,23 @@ async fn handle_inbound_text(state: &Arc<DaemonState>, client: &Arc<BrowserClien
             }
         },
         Frame::Request(req) => {
-            // M5 onwards: support extension-originated requests if needed.
-            debug!(method = ?req.method, "extension request not yet handled");
+            match req.method {
+                bsk_protocol::Method::SystemPing => {
+                    // Reply with pong to keep the MV3 service-worker alive.
+                    let resp = ResponseFrame {
+                        id: req.id,
+                        body: ResponseBody::Ok(serde_json::json!({ "pong": true })),
+                    };
+                    if let Err(err) = client.sink.send(Frame::Response(resp)) {
+                        warn!(%err, "failed to send ping response");
+                    } else {
+                        trace!(id = %client.id, "responded to system.ping");
+                    }
+                }
+                _ => {
+                    debug!(method = ?req.method, "extension request not yet handled");
+                }
+            }
         }
     }
 }

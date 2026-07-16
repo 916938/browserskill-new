@@ -85,15 +85,23 @@ describe("startKeepalive", () => {
     expect(transport.connectCalls).toBe(1);
   });
 
-  it("does not call transport.connect() while connected", async () => {
+  it("sends a keepalive ping instead of calling connect while connected", async () => {
     const alarms = makeAlarms();
     const transport = makeTransport("connected");
+    // Stub sendAndWait so the tick doesn't actually try to talk to a daemon.
+    (transport as unknown as { sendAndWait?: (msg: unknown) => Promise<unknown> }).sendAndWait =
+      vi.fn().mockResolvedValue({ id: "1", result: { pong: true } });
     startKeepalive({ transport, alarms });
 
     alarms.triggers[0]({ name: KEEPALIVE_ALARM_NAME });
     await Promise.resolve();
     await Promise.resolve();
+
     expect(transport.connectCalls).toBe(0);
+    expect((transport as unknown as { sendAndWait?: ReturnType<typeof vi.fn> }).sendAndWait).toHaveBeenCalledWith(
+      expect.objectContaining({ method: "system.ping" }),
+      3000,
+    );
   });
 
   it("ignores alarms for other names", async () => {
