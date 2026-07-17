@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Planned
 - (No planned features yet)
 
+### In Progress
+- No active development since v0.2.0/v0.1.4 release (2026-07-17)
+
 ---
 
 ## [CLI v0.2.0] & [Extension v0.1.4] - 2026-07-17
@@ -125,8 +128,8 @@ See full git history for detailed commit information between tags.
 
 | Version | Date | Type | Key Features |
 |---------|------|------|--------------|
-| **v0.2.0 / v0.1.4** | 2026-07-17 | Major Feature Release | Dry-run mode, env vars, human timeout, shell completion, CI fixes |
-| **v0.1.7 / v0.1.3** | 2026-07-16 | Feature Release | bsk invoke command, Windows compatibility, transport layer |
+| **[v0.2.0 / v0.1.4](https://github.com/916938/browserskill-new/releases/tag/cli-v0.2.0)** | 2026-07-17 | Major Feature Release | Dry-run mode, env vars, human timeout, shell completion, CI fixes |
+| **[v0.1.7 / v0.1.3](https://github.com/916938/browserskill-new/releases/tag/cli-v0.1.7)** | 2026-07-16 | Feature Release | bsk invoke command, Windows compatibility, transport layer |
 | **v0.1.6 / v0.1.2** | Earlier | Patch/Maintenance | Bug fixes, minor improvements |
 | **v0.1.5 / v0.1.1** | Earlier | Initial Public Release | Core functionality |
 | **v0.1.4 / v0.1.0** | Earlier | First Release | MVP release |
