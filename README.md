@@ -224,6 +224,25 @@ pnpm ext:dev                      # starts WXT dev server with HMR
 > **Note**: the `bsk` CLI and the extension must match in protocol version. If you
 > update one side, rebuild the other as well.
 
+## Changelog
+
+View the [full changelog](CHANGELOG.md) for details on version history, new features, bug fixes, and migration guides.
+
+| Version | Date | Highlights |
+|---------|------|------------|
+| [**v0.2.0 / v0.1.4**](https://github.com/916938/browserskill-new/releases/tag/cli-v0.2.0) | 2026-07-17 | Dry-run mode, env var defaults, human-readable timeout, shell completion |
+| [v0.1.7 / v0.1.3](https://github.com/916938/browserskill-new/releases/tag/cli-v0.1.7) | 2026-07-16 | `bsk invoke` command, Windows compatibility, transport improvements |
+
+## Contributing
+
+See [AGENTS.md](AGENTS.md) for development setup, coding conventions, and CI commands.
+
+## Support
+
+- **Issues & Bugs**: [GitHub Issues](https://github.com/916938/browserskill-new/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/916938/browserskill-new/discussions)
+- **Releases**: [GitHub Releases](https://github.com/916938/browserskill-new/releases)
+
 ## License
 
 MIT
