@@ -24,6 +24,20 @@ pub enum Method {
     #[serde(rename = "browser.list")]
     BrowserList,
 
+    // ── Template management ────────────────────────────────
+    #[serde(rename = "template.list")]
+    TemplateList,
+    #[serde(rename = "template.get")]
+    TemplateGet,
+    #[serde(rename = "template.create")]
+    TemplateCreate,
+    #[serde(rename = "template.update")]
+    TemplateUpdate,
+    #[serde(rename = "template.delete")]
+    TemplateDelete,
+    #[serde(rename = "template.apply")]
+    TemplateApply,
+
     #[serde(rename = "tool.session_start")]
     ToolSessionStart,
     #[serde(rename = "tool.session_stop")]
@@ -163,6 +177,15 @@ impl Method {
             | Method::SystemStatus
             | Method::BrowserList
             | Method::Cancel => false,
+
+            // Template management — list/get/create/update/delete are
+            // control-plane (not gated); apply modifies browser state.
+            Method::TemplateList
+            | Method::TemplateGet
+            | Method::TemplateCreate
+            | Method::TemplateUpdate
+            | Method::TemplateDelete => false,
+            Method::TemplateApply => true,
         }
     }
 }

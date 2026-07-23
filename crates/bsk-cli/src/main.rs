@@ -80,6 +80,7 @@ fn dispatch(cli: Cli, format: Format) -> Result<(), CliError> {
         Command::Session(cmd) => cli::session::dispatch(cmd, format),
         Command::Browsers => cli::browsers::dispatch(format),
         Command::Tab(cmd) => cli::tab::dispatch(cmd, format),
+        Command::Templates(cmd) => cli::templates::dispatch(cmd, format),
         Command::Screenshot(args) => cli::screenshot::dispatch(args, format),
         Command::Snapshot(args) => cli::snapshot::dispatch(args, format),
         Command::Console(args) => cli::console::dispatch(args, format),
