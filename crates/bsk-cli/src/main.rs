@@ -56,9 +56,12 @@ fn dispatch(cli: Cli, format: Format) -> Result<(), CliError> {
             } else {
                 Output::Human
             };
-            cli::doctor::run(output)
-                .map(|_| ())
-                .map_err(CliError::Local)
+            let checks = cli::doctor::run(output).map_err(CliError::Local)?;
+            if cli::doctor::has_failures(&checks) {
+                Err(CliError::RenderedExit { exit_code: 1 })
+            } else {
+                Ok(())
+            }
         }
         Command::InstallSkill(args) => {
             let output = if cli.flags.json {
@@ -80,6 +83,7 @@ fn dispatch(cli: Cli, format: Format) -> Result<(), CliError> {
         Command::Screenshot(args) => cli::screenshot::dispatch(args, format),
         Command::Snapshot(args) => cli::snapshot::dispatch(args, format),
         Command::Console(args) => cli::console::dispatch(args, format),
+        Command::Network(args) => cli::network::dispatch(args, format),
         Command::GetHtml(args) => cli::get_html::dispatch(args, format),
         Command::Navigate(args) => cli::navigate::dispatch_navigate_command(args, format),
         Command::NavigateBack(args) => cli::navigate::dispatch_navigate_back(args, format),
@@ -95,6 +99,7 @@ fn dispatch(cli: Cli, format: Format) -> Result<(), CliError> {
         Command::RequestHelp(args) => cli::human_loop::dispatch(args, format),
         Command::Invoke(args) => cli::invoke::dispatch(args, format),
         Command::Completion(args) => cli::completion::dispatch(args).map_err(CliError::Local),
+        Command::Record(cmd) => cli::record::dispatch(cmd, format),
     }
 }
 

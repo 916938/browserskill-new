@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use bsk::cli::daemon::{DaemonCmd, parse_duration};
 use bsk::cli::navigate::NavigateCmd;
+use bsk::cli::record::{RecordCmd, RecordSub};
 use bsk::{Cli, Command};
 use clap::Parser;
 
@@ -105,6 +106,41 @@ fn rejects_zero_console_bounds() {
 }
 
 #[test]
+fn parses_network_command_with_context_safety_flags() {
+    let cli = parse(&[
+        "bsk",
+        "network",
+        "--session",
+        "s1",
+        "--tab-id",
+        "9",
+        "--since",
+        "12",
+        "--limit",
+        "75",
+        "--max-text-chars",
+        "2048",
+    ]);
+    let Command::Network(args) = cli.command else {
+        panic!("expected network command");
+    };
+    assert_eq!(args.session, "s1");
+    assert_eq!(args.tab_id, Some(9));
+    assert_eq!(args.since, Some(12));
+    assert_eq!(args.limit, Some(75));
+    assert_eq!(args.max_text_chars, Some(2048));
+}
+
+#[test]
+fn rejects_zero_network_bounds() {
+    assert!(Cli::try_parse_from(["bsk", "network", "--session", "s1", "--limit", "0"]).is_err());
+    assert!(
+        Cli::try_parse_from(["bsk", "network", "--session", "s1", "--max-text-chars", "0"])
+            .is_err()
+    );
+}
+
+#[test]
 fn parses_install_skill_subcommand() {
     let cli = parse(&["bsk", "install-skill", "--list"]);
     assert!(matches!(cli.command, Command::InstallSkill(_)));
@@ -156,4 +192,38 @@ fn rejects_zero_click_count() {
     assert!(
         Cli::try_parse_from(["bsk", "click", "@e1", "--session", "s1", "--count", "0"]).is_err()
     );
+}
+
+#[test]
+fn parses_record_start_with_browser_and_url() {
+    let cli = parse(&[
+        "bsk",
+        "record",
+        "start",
+        "--browser",
+        "022ca8ac",
+        "--url",
+        "https://x",
+    ]);
+    let Command::Record(RecordCmd {
+        sub: RecordSub::Start(args),
+    }) = cli.command
+    else {
+        panic!("expected record start subcommand");
+    };
+    assert_eq!(args.browser.as_deref(), Some("022ca8ac"));
+    assert_eq!(args.url.as_deref(), Some("https://x"));
+}
+
+#[test]
+fn parses_record_start_without_url() {
+    let cli = parse(&["bsk", "record", "start", "--browser", "022ca8ac"]);
+    let Command::Record(RecordCmd {
+        sub: RecordSub::Start(args),
+    }) = cli.command
+    else {
+        panic!("expected record start subcommand");
+    };
+    assert_eq!(args.browser.as_deref(), Some("022ca8ac"));
+    assert!(args.url.is_none());
 }

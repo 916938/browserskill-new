@@ -20,6 +20,9 @@ pub mod interaction;
 pub mod invoke;
 pub mod logs;
 pub mod navigate;
+pub mod network;
+pub mod record;
+pub mod record_state;
 pub mod render_error;
 pub mod screenshot;
 pub mod session;
@@ -41,6 +44,8 @@ use crate::cli::install_skill::InstallSkillArgs;
 use crate::cli::interaction::{ClickArgs, FillArgs, PressArgs, SelectArgs};
 use crate::cli::invoke::InvokeArgs;
 use crate::cli::navigate::{NavigateCommand, NavigateHistoryArgs, ReloadArgs};
+use crate::cli::network::NetworkArgs;
+use crate::cli::record::RecordCmd;
 use crate::cli::screenshot::ScreenshotArgs;
 use crate::cli::session::SessionCmd;
 use crate::cli::snapshot::SnapshotArgs;
@@ -124,6 +129,9 @@ pub enum Command {
     /// Read buffered console/log/exception messages.
     Console(ConsoleArgs),
 
+    /// Read buffered network responses / failures.
+    Network(NetworkArgs),
+
     /// Dump raw HTML for a tab or a snapshot ref.
     #[command(name = "get-html")]
     GetHtml(GetHtmlArgs),
@@ -177,6 +185,9 @@ pub enum Command {
     /// Generate shell completion scripts for bash, zsh, fish, or PowerShell.
     #[command(name = "completion")]
     Completion(CompletionArgs),
+
+    /// Record user actions into a semantic `trace.json` textbook for LLMs.
+    Record(RecordCmd),
 }
 
 #[derive(Debug, Clone, Args, Default)]

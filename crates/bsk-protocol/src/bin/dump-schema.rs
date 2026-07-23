@@ -86,6 +86,9 @@ fn main() {
     dump!(ConsoleResult, "tool_console_result");
     dump!(ConsoleEntry, "tool_console_entry");
     dump!(ConsoleStackFrame, "tool_console_stack_frame");
+    dump!(NetworkParams, "tool_network_params");
+    dump!(NetworkResult, "tool_network_result");
+    dump!(NetworkEntry, "tool_network_entry");
 
     dump!(EvaluateParams, "tool_evaluate_params");
     dump!(EvaluateResult, "tool_evaluate_result");
@@ -97,4 +100,13 @@ fn main() {
     dump!(WaitMsResult, "tool_wait_ms_result");
     dump!(RequestHelpParams, "tool_request_help_params");
     dump!(RequestHelpResult, "tool_request_help_result");
+
+    dump!(Trace, "trace");
+    dump!(Step, "trace_step");
+    dump!(RecordStartParams, "tool_record_start_params");
+    dump!(RecordStartResult, "tool_record_start_result");
+    dump!(RecordStopParams, "tool_record_stop_params");
+    dump!(RecordStopResult, "tool_record_stop_result");
+    dump!(RecordAwaitParams, "tool_record_await_params");
+    dump!(RecordAwaitResult, "tool_record_await_result");
 }

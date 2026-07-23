@@ -64,6 +64,8 @@ pub enum Method {
     ToolScreenshot,
     #[serde(rename = "tool.console")]
     ToolConsole,
+    #[serde(rename = "tool.network")]
+    ToolNetwork,
     #[serde(rename = "tool.evaluate")]
     ToolEvaluate,
     #[serde(rename = "tool.wait_for_navigation")]
@@ -72,6 +74,12 @@ pub enum Method {
     ToolWaitMs,
     #[serde(rename = "tool.request_help")]
     ToolRequestHelp,
+    #[serde(rename = "tool.record_start")]
+    ToolRecordStart,
+    #[serde(rename = "tool.record_stop")]
+    ToolRecordStop,
+    #[serde(rename = "tool.record_await")]
+    ToolRecordAwait,
 
     #[serde(rename = "cancel")]
     Cancel,
@@ -119,17 +127,27 @@ impl Method {
             | Method::ToolFill
             | Method::ToolPress
             | Method::ToolSelect
-            | Method::ToolEvaluate => true,
+            | Method::ToolEvaluate
+            // May navigate via optional `url` and changes Agent Window
+            // chrome; gate behind pending-interrupt like other writes.
+            | Method::ToolRecordStart => true,
 
             // Read-only tool calls — transparent.
+            //
+            // `record_stop` / `record_await` observe / finish a recording
+            // without driving new automation gestures, so they stay
+            // ungated (teardown after interrupt must still work).
             Method::ToolTabList
             | Method::ToolSnapshot
             | Method::ToolGetHtml
             | Method::ToolScreenshot
             | Method::ToolConsole
+            | Method::ToolNetwork
             | Method::ToolWaitForNavigation
             | Method::ToolWaitMs
-            | Method::ToolRequestHelp => false,
+            | Method::ToolRequestHelp
+            | Method::ToolRecordStop
+            | Method::ToolRecordAwait => false,
 
             // Session lifecycle — not gated.
             Method::SessionStart
@@ -170,6 +188,13 @@ mod tests {
     }
 
     #[test]
+    fn network_method_round_trips() {
+        let method: Method = serde_json::from_value(json!("tool.network")).unwrap();
+        assert_eq!(method, Method::ToolNetwork);
+        assert_eq!(serde_json::to_value(method).unwrap(), json!("tool.network"));
+    }
+
+    #[test]
     fn cancel_params_and_result_round_trip() {
         let params: CancelParams = serde_json::from_value(json!({ "rpc_id": "wait-1" })).unwrap();
         assert_eq!(params.rpc_id, "wait-1");
@@ -187,6 +212,7 @@ mod tests {
         assert!(!Method::ToolGetHtml.is_mutating());
         assert!(!Method::ToolScreenshot.is_mutating());
         assert!(!Method::ToolConsole.is_mutating());
+        assert!(!Method::ToolNetwork.is_mutating());
         assert!(!Method::ToolWaitForNavigation.is_mutating());
         assert!(!Method::ToolWaitMs.is_mutating());
     }
@@ -207,6 +233,13 @@ mod tests {
         assert!(Method::ToolPress.is_mutating());
         assert!(Method::ToolSelect.is_mutating());
         assert!(Method::ToolEvaluate.is_mutating());
+        assert!(Method::ToolRecordStart.is_mutating());
+    }
+
+    #[test]
+    fn is_mutating_classifies_record_stop_await_as_non_mutating() {
+        assert!(!Method::ToolRecordStop.is_mutating());
+        assert!(!Method::ToolRecordAwait.is_mutating());
     }
 
     #[test]

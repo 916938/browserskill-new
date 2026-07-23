@@ -15,7 +15,6 @@ use bsk_protocol::tools::{SessionStartParams, SessionStartResult, SessionStopPar
 use bsk_protocol::{BrowserPeerInfo, Frame, Method, RequestFrame, ResponseBody, ResponseFrame};
 use futures_util::{SinkExt, StreamExt};
 use rand::Rng;
-use tokio::net::TcpListener;
 use tokio_tungstenite::tungstenite::handshake::client::generate_key;
 use tokio_tungstenite::tungstenite::http::Request;
 use tokio_tungstenite::tungstenite::protocol::Message;
@@ -39,11 +38,19 @@ async fn spawn_daemon() -> (daemon::DaemonHandle, PathBuf) {
 }
 
 async fn spawn_daemon_with_connect_wait(connect_wait: Duration) -> (daemon::DaemonHandle, PathBuf) {
-    let probe = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let port = probe.local_addr().unwrap().port();
-    drop(probe);
+    let port = 0;
 
     let config = DaemonConfig::new(port).with_extension_connect_wait(connect_wait);
+    let sock = tempfile_path("bsk-test-ipc");
+    let handle = daemon::run(config, Some(sock.clone())).await.unwrap();
+    (handle, sock)
+}
+
+async fn spawn_daemon_with_session_idle(session_idle: Duration) -> (daemon::DaemonHandle, PathBuf) {
+    let port = 0;
+
+    let mut config = DaemonConfig::new(port);
+    config.session_idle = session_idle;
     let sock = tempfile_path("bsk-test-ipc");
     let handle = daemon::run(config, Some(sock.clone())).await.unwrap();
     (handle, sock)
@@ -237,6 +244,47 @@ async fn session_start_stop_round_trip_via_ipc() {
     assert_eq!(status_after.browsers[0].session_count, 0);
 
     responder.abort();
+    handle.shutdown().await;
+}
+
+#[tokio::test]
+async fn session_idle_timeout_stops_and_unregisters_session() {
+    let (handle, _sock) = spawn_daemon_with_session_idle(Duration::from_millis(50)).await;
+    let mut ws = connect_ext(handle.ws_addr()).await;
+    let _ = handshake_as_ext(&mut ws).await;
+    let state = handle.state();
+    let session_id = bsk::daemon::sessions::SessionId("idle".into());
+    state.sessions.insert(bsk::daemon::sessions::Session {
+        id: session_id.clone(),
+        browser_id: bsk::daemon::browsers::BrowserId(TEST_EXT_ID.into()),
+        agent_window_id: Some(7),
+        created_at_ms: 0,
+    });
+    state.tool_queues.spawn(session_id);
+
+    let request = tokio::time::timeout(Duration::from_secs(1), ws.next())
+        .await
+        .expect("idle reaper did not contact extension")
+        .expect("extension socket closed")
+        .expect("extension socket failed");
+    let Message::Text(text) = request else {
+        panic!("expected text request");
+    };
+    let request: RequestFrame = serde_json::from_str(&text).unwrap();
+    assert_eq!(request.method, Method::ToolSessionStop);
+    ws.send(Message::Text(
+        serde_json::to_string(&ResponseFrame {
+            id: request.id,
+            body: ResponseBody::Ok(
+                serde_json::to_value(bsk_protocol::tools::SessionStopResult::default()).unwrap(),
+            ),
+        })
+        .unwrap(),
+    ))
+    .await
+    .unwrap();
+
+    wait_for_no_sessions(&state).await;
     handle.shutdown().await;
 }
 

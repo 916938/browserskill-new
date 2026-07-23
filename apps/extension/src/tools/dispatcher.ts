@@ -10,8 +10,12 @@ import type {
   NavigateBackParams,
   NavigateForwardParams,
   NavigateParams,
+  NetworkParams,
   PressParams,
   ProtocolFrame,
+  RecordAwaitParams,
+  RecordStartParams,
+  RecordStopParams,
   ReloadParams,
   RequestFrame,
   RequestHelpParams,
@@ -33,6 +37,7 @@ import {
   handleNavigateForward,
   handleReload,
 } from "./navigation";
+import { handleNetwork, type NetworkCdpRunner } from "./network";
 import {
   type CdpRunner,
   chromeTabsCaptureApi,
@@ -40,6 +45,7 @@ import {
   handleScreenshot,
   handleSnapshot,
 } from "./observation";
+import { handleRecordAwait, handleRecordStart, handleRecordStop } from "./record";
 import {
   handleSessionStart,
   handleSessionStop,
@@ -64,12 +70,15 @@ import {
 } from "./tabs";
 import { handleWaitForNavigation } from "./waits";
 
+type DispatcherCdpRunner = CdpRunner &
+  NetworkCdpRunner & {
+    detachSession(sessionId: string): Promise<void>;
+  };
+
 export interface DispatcherDeps {
   transport: Transport;
   sessions: SessionManager;
-  cdp?: CdpRunner & {
-    detachSession(sessionId: string): Promise<void>;
-  };
+  cdp?: DispatcherCdpRunner;
   /**
    * Invoked whenever a dispatched RPC may have changed the live
    * session set (currently `tool.session_start` and
@@ -103,9 +112,7 @@ export interface DispatcherDeps {
 export class ToolDispatcher {
   private readonly transport: Transport;
   private readonly sessions: SessionManager;
-  private readonly cdp?: CdpRunner & {
-    detachSession(sessionId: string): Promise<void>;
-  };
+  private readonly cdp?: DispatcherCdpRunner;
   private readonly onSessionsChanged?: () => void;
   private readonly approveBorrow?: BorrowConfirmationApprover;
   private readonly helpNotificationCopy?: () => { title: string; body: string };
@@ -285,6 +292,12 @@ export class ToolDispatcher {
           req.params as ConsoleParams,
           this.cdp ? { cdp: this.cdp, tabsApi: chromeTabsApi } : undefined,
         );
+      case "tool.network":
+        return handleNetwork(
+          this.sessions,
+          req.params as NetworkParams,
+          this.cdp ? { cdp: this.cdp, tabsApi: chromeTabsApi } : undefined,
+        );
       case "tool.snapshot":
         return handleSnapshot(
           this.sessions,
@@ -385,6 +398,45 @@ export class ToolDispatcher {
           ...(this.cdp ? { cdp: this.cdp } : {}),
           notifications: makeHelpNotifications(),
           notificationCopy: this.helpNotificationCopy?.(),
+          signal,
+        });
+      case "tool.record_start":
+        return handleRecordStart(this.sessions, req.params as RecordStartParams, {
+          tabsApi: chromeTabsApi,
+          sendToTab: (tabId, msg) => chrome.tabs.sendMessage(tabId, msg),
+          bypassOverlay: async (tabId, enabled) => {
+            try {
+              await chrome.tabs.sendMessage(tabId, {
+                type: OVERLAY_AUTOMATION_BYPASS,
+                enabled,
+              });
+            } catch {
+              // Content script may be unavailable on restricted pages.
+            }
+          },
+          ...(this.cdp ? { cdp: this.cdp } : {}),
+          signal,
+        });
+      case "tool.record_stop":
+        return handleRecordStop(this.sessions, req.params as RecordStopParams, {
+          tabsApi: chromeTabsApi,
+          sendToTab: (tabId, msg) => chrome.tabs.sendMessage(tabId, msg),
+          bypassOverlay: async (tabId, enabled) => {
+            try {
+              await chrome.tabs.sendMessage(tabId, {
+                type: OVERLAY_AUTOMATION_BYPASS,
+                enabled,
+              });
+            } catch {
+              // Content script may be unavailable on restricted pages.
+            }
+          },
+          signal,
+        });
+      case "tool.record_await":
+        return handleRecordAwait(this.sessions, req.params as RecordAwaitParams, {
+          tabsApi: chromeTabsApi,
+          sendToTab: (tabId, msg) => chrome.tabs.sendMessage(tabId, msg),
           signal,
         });
       default:

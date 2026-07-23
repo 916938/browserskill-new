@@ -8,6 +8,7 @@ import {
 } from "@/lib/instance-id";
 import { startKeepalive } from "@/lib/keepalive";
 import {
+  OVERLAY_AUTOMATION_BYPASS,
   OVERLAY_MSG_INTERRUPT,
   OVERLAY_MSG_WHO_AM_I,
   type OverlayInterruptRequest,
@@ -27,6 +28,11 @@ import {
   requestBorrowConfirmation,
 } from "@/tools/borrow-confirmation";
 import { ToolDispatcher } from "@/tools/dispatcher";
+import {
+  attachRecordFinishListener,
+  attachRecordQueryListener,
+  attachRecordStepListener,
+} from "@/tools/record";
 import { detectBrowserMeta } from "@/transport/handshake";
 import type { Transport } from "@/transport/transport";
 import { WSTransport } from "@/transport/ws-transport";
@@ -54,8 +60,7 @@ export default defineBackground(() => {
         deps: {
           // Skip every Agent Window when choosing where to render the
           // overlay — Agent Windows boot on about:blank, which has no
-          // content script, so sendMessage would fail-open and silently
-          // allow the borrow without any UI shown.
+          // content script, so they cannot surface an authorization decision.
           isAgentWindowId: (windowId) => sessions.findByWindowId(windowId) !== null,
           // Resolve i18n strings per-borrow so language switches take effect
           // without re-creating the dispatcher.
@@ -68,6 +73,27 @@ export default defineBackground(() => {
     }),
   });
   dispatcher.start();
+  const recordDeps = {
+    tabsApi: chrome.tabs,
+    sendToTab: (tabId: number, msg: Parameters<typeof chrome.tabs.sendMessage>[1]) =>
+      chrome.tabs.sendMessage(tabId, msg),
+    bypassOverlay: async (tabId: number, enabled: boolean) => {
+      try {
+        await chrome.tabs.sendMessage(tabId, {
+          type: OVERLAY_AUTOMATION_BYPASS,
+          enabled,
+        });
+      } catch {
+        // Content script may be unavailable on restricted pages.
+      }
+    },
+  };
+  // Message listeners stay up (cheap; fire only for record message types).
+  // Tab / webNavigation observation attaches lazily while a recording is
+  // active — see ensureBrowserObservationListeners in tools/record.ts.
+  attachRecordStepListener();
+  attachRecordFinishListener(recordDeps);
+  attachRecordQueryListener(recordDeps);
   if (typeof chrome.notifications?.onClicked?.addListener === "function") {
     attachBorrowNotificationClickHandler({
       onClicked: chrome.notifications.onClicked,
@@ -82,8 +108,8 @@ export default defineBackground(() => {
   // The Allow / Deny buttons on the OS notification are the *explicit*
   // authorization fallback when every candidate user window's content
   // script was missing (extension just reloaded, page in BFCache, etc.).
-  // Without this listener those button clicks would land nowhere and we'd
-  // be back to fail-open-after-sendMessage-failure.
+  // Without this listener those button clicks would land nowhere and the
+  // request would only resolve via the fail-closed background timeout.
   if (typeof chrome.notifications?.onButtonClicked?.addListener === "function") {
     attachBorrowNotificationButtonHandler({
       onButtonClicked: chrome.notifications.onButtonClicked,
