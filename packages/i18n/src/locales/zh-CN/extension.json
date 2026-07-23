@@ -42,6 +42,9 @@
     "copy": "复制",
     "copied": "已复制",
     "copyInstanceId": "复制实例 ID",
+    "labelTitle": "标签",
+    "editLabel": "点击编辑",
+    "noLabel": "(未设置)",
     "record": {
       "sectionTitle": "操作录制",
       "cardDesc": "录制你的操作，供 Agent 参考",

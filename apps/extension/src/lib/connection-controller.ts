@@ -126,6 +126,18 @@ export class ConnectionController {
     this.fire();
   }
 
+  /**
+   * Disconnect so the keepalive loop reconnects with the updated label.
+   * Label is only sent to the daemon during WS handshake, so a reconnect
+   * is required after label changes.
+   */
+  async disconnectForLabelUpdate(): Promise<void> {
+    if (this.transport) {
+      await this.transport.disconnect().catch(() => {});
+    }
+    this.setState("disconnected");
+  }
+
   private async runHandshake(browser: { name: string; version: string }): Promise<void> {
     if (!this.transport) return;
     if (!this.connectionEnabled) return;
