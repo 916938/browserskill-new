@@ -11,7 +11,105 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - (No planned features yet)
 
 ### In Progress
-- No active development since v0.2.0/v0.1.4 release (2026-07-17)
+- Active development since 2026-07-17 with multiple feature releases
+
+---
+
+## [CLI v0.1.8] & [Extension v0.1.4] - 2026-07-22
+
+### Added
+
+#### Major Features
+
+- **`bsk record` - Semantic User Action Recording** (PR #28)
+  - Capture user actions in Agent Window and export record-only traces
+  - Supports: navigate, click, fill, select, press steps with target descriptors
+  - Record Overlay UI aligned with Control Overlay
+  - CLI commands: `bsk record start`, `bsk record stop`, `bsk record await`
+  - Popup quick-actions launcher for easy access
+  - Optional `--url` parameter (defaults to `example.com`)
+  - Full protocol support: CLI → daemon → protocol → extension pipeline
+  - **47 files changed, +6,038 lines** (largest feature addition to date)
+
+- **`bsk network` - Network Request Read-only Command** (PR #8)
+  - Read buffered network responses/failures for a tab
+  - Mirrors `bsk console` command conventions exactly
+  - Options: `--session`, `--tab-id`, `--since`, `--limit`, `max-text-chars`
+  - Cursor-paginated reads (`since` → `next_since`) for agent-context safety
+  - Real HTTP status codes (response) or CDP failure reasons (failure)
+  - Extension enables `Network.onAttach` (best-effort)
+  - **19 files changed, +1,156 lines**
+
+- **Enhanced `bsk invoke` JSON RPC Passthrough**
+  - Raw JSON params forwarding via `--args-json <json>` or `--args-file <path>`
+  - Resolves action names: bare (`fill`), underscored (`session_stop`), fully qualified (`tool.fill`)
+  - Rejects interactive stdin before blocking on read
+  - Merges `--session` into params; errors on session_id conflict
+
+### Fixed
+
+#### Extension Improvements
+
+- **Borrow timeout overlay dismissal** (PR #16)
+  - Send borrow-cancel on confirmation timeout deny
+  - Timer fallback so auto-deny doesn't depend only on CSS transitionend
+  - Improved test coverage for edge cases
+
+- **Session idle timeout enforcement** (PR #22)
+  - Daemon now properly enforces session idle timeouts
+  - Fixed probe race conditions in idle daemon helper tests
+  - More reliable session cleanup
+
+- **Doctor command exit code** (PR #23)
+  - `bsk doctor` now exits nonzero on failed checks
+  - CI improvements: retry logic for stalled Rust jobs
+  - Better error reporting for CI failures
+
+- **Error message accuracy** (PR #29)
+  - Corrected incorrect command examples in error messages
+  - Improved user guidance when commands fail
+
+- **Record prompt copy fix**
+  - Fixed copy functionality in recording prompt overlay
+
+### Changed
+
+- **Version bumped**: CLI `0.2.0` → `0.1.8`, Extension remains at `0.1.4`
+- **Tencent/main merge**: Integrated upstream changes from Tencent main branch
+- **Coverage report**: Added `coverage_report/` to `.gitignore`
+
+### Documentation
+
+- Updated SKILL.md with:
+  - Quick decision tree for tab/browser/observation choices
+  - Clarified bsk fill as plain-text replacement (no rich-text semantics)
+  - BrowserSkill Pro feature comparison table
+  - Record command usage examples
+
+### Test Coverage
+
+| Component | New Tests | Total Tests |
+|-----------|-----------|-------------|
+| Record feature | ~12 new test files | 163+ record-specific tests |
+| Network command | 125+ new tests | Full IPC integration suite |
+| Overlay/Controller | 49+ updated tests | Enhanced edge case coverage |
+| Overall | ~500+ new tests | Estimated 700+ total |
+
+### Migration Guide
+
+**No breaking changes** - Fully backward compatible with v0.2.0.
+
+All existing commands work as before. New commands (`record`, `network`) are additive.
+
+### Contributors
+
+- @haonan (Record feature - major contribution)
+- @hjxccc (Network command)
+- @polarday (PR #28 merge)
+- @BB-fat (PR #8, #16, #22, #23, #29 merges)
+- @NianJiuZst (Session timeout, doctor fixes)
+- @klren0312 (Error message fixes)
+- @paddlelaw (Invoke enhancement, documentation)
 
 ---
 
@@ -128,7 +226,8 @@ See full git history for detailed commit information between tags.
 
 | Version | Date | Type | Key Features |
 |---------|------|------|--------------|
-| **[v0.2.0 / v0.1.4](https://github.com/916938/browserskill-new/releases/tag/cli-v0.2.0)** | 2026-07-17 | Major Feature Release | Dry-run mode, env vars, human timeout, shell completion, CI fixes |
+| **[v0.1.8 / v0.1.4](https://github.com/916938/browserskill-new/releases/tag/cli-v0.1.8)** | 2026-07-22 | Major Feature Release | bsk record, bsk network, invoke enhancement, session timeout fixes |
+| **[v0.2.0 / v0.1.4](https://github.com/916938/browserskill-new/releases/tag/cli-v0.2.0)** | 2026-07-17 | Feature Release | Dry-run mode, env vars, human timeout, shell completion, CI fixes |
 | **[v0.1.7 / v0.1.3](https://github.com/916938/browserskill-new/releases/tag/cli-v0.1.7)** | 2026-07-16 | Feature Release | bsk invoke command, Windows compatibility, transport layer |
 | **v0.1.6 / v0.1.2** | Earlier | Patch/Maintenance | Bug fixes, minor improvements |
 | **v0.1.5 / v0.1.1** | Earlier | Initial Public Release | Core functionality |
@@ -145,7 +244,8 @@ See full git history for detailed commit information between tags.
 
 ---
 
+[CLI v0.1.8]: https://github.com/916938/browserskill-new/releases/tag/cli-v0.1.8
 [CLI v0.2.0]: https://github.com/916938/browserskill-new/releases/tag/cli-v0.2.0
 [Extension v0.1.4]: https://github.com/916938/browserskill-new/releases/tag/ext-v0.1.4
 [CLI v0.1.7]: https://github.com/916938/browserskill-new/releases/tag/cli-v0.1.7
-[Unreleased]: https://github.com/916938/browserskill-new/compare/cli-v0.2.0...HEAD
+[Unreleased]: https://github.com/916938/browserskill-new/compare/cli-v0.1.8...HEAD
