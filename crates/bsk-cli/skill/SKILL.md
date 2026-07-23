@@ -154,7 +154,7 @@ Details and flags: **`bsk <cmd> --help`**
 | Command | Summary |
 |---------|---------|
 | `bsk click <ref-or-selector>` | Click element (`--button`, `--click-count`, `--modifiers`) |
-| `bsk fill <ref-or-selector> --value <text>` | Clear and type into input |
+| `bsk fill <ref-or-selector> --value <text>` | Clear and type plain text into an input, textarea, or `contenteditable`; it does **not** apply rich-text formatting (bold, italic, ranges) |
 | `bsk select <ref-or-selector> --value <v>` | Set `<select>` option(s) by `value` (repeat `--value` for multi-select) |
 | `bsk press <key>` | Key/combo (`Enter`, `Ctrl+A`, …; optional `--ref` to focus first) |
 

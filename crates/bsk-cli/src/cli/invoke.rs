@@ -195,8 +195,13 @@ fn read_args_payload(args_json: Option<&str>, args_file: Option<&str>) -> Result
 }
 
 fn read_args_file(path: &str) -> Result<String, CliError> {
-    use std::io::Read;
+    use std::io::{IsTerminal, Read};
     if path == "-" {
+        if std::io::stdin().is_terminal() {
+            return Err(CliError::Local(anyhow::anyhow!(
+                "refusing to wait for JSON on an interactive terminal; pipe input or use a heredoc"
+            )));
+        }
         let mut buf = String::new();
         std::io::stdin()
             .read_to_string(&mut buf)
