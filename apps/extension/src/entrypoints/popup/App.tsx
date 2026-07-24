@@ -42,6 +42,7 @@ export function App() {
   const [copiedInstanceId, setCopiedInstanceId] = useState(false);
   const [purposeDraft, setPurposeDraft] = useState("");
   const [startUrlDraft, setStartUrlDraft] = useState("");
+  const [labelDraft, setLabelDraft] = useState("");
   // Bumped on every successful copy so the "copied" toast re-shows (and its
   // auto-hide timer restarts) even when the copied content is unchanged.
   const [copiedTick, setCopiedTick] = useState(0);
@@ -67,6 +68,13 @@ export function App() {
   useEffect(() => {
     setCopiedTick(0);
   }, [purposeDraft, startUrlDraft]);
+
+  // Sync label from snapshot to local draft (for editing)
+  useEffect(() => {
+    if (snapshot.label !== labelDraft) {
+      setLabelDraft(snapshot.label);
+    }
+  }, [snapshot.label]);
 
   // Auto-hide the copied toast shortly after it appears.
   useEffect(() => {
@@ -233,6 +241,43 @@ export function App() {
               {snapshot.lastError}
             </div>
           )}
+
+          <section
+            className="rounded-xl border border-border/80 bg-card/60 px-3 py-2.5"
+            data-slot="popup-label-card"
+          >
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="bh-label" className="block text-xs text-muted-foreground">
+                {t("popup.label.title")}
+              </Label>
+              <div className="flex items-center gap-2">
+                <Input
+                  id="bh-label"
+                  type="text"
+                  value={labelDraft}
+                  onChange={(event: ChangeEvent<HTMLInputElement>) =>
+                    setLabelDraft(event.target.value)
+                  }
+                  placeholder={t("popup.label.placeholder")}
+                  className="h-8 text-sm flex-1"
+                  data-slot="popup-label-input"
+                />
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  className="h-7 px-2.5 text-xs"
+                  disabled={!labelDraft.trim() || labelDraft === snapshot.label}
+                  onClick={() => {
+                    setLabel(labelDraft.trim());
+                  }}
+                  data-slot="popup-label-save"
+                >
+                  {t("popup.label.saveBtn")}
+                </Button>
+              </div>
+            </div>
+          </section>
 
           <section
             className="flex min-w-0 items-center justify-between gap-2 border-t border-border/70 pt-2 text-[10px] leading-tight text-muted-foreground"

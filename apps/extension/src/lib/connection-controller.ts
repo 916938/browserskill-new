@@ -6,7 +6,7 @@ import {
 } from "../transport/handshake";
 import type { Transport } from "../transport/transport";
 import type { ConnectionState, HandshakeResult } from "../transport/types";
-import { getLabel, getOrCreateInstanceId } from "./instance-id";
+import { generateDefaultLabel, getLabel, getOrCreateInstanceId, setLabel } from "./instance-id";
 import { compareProtocol, parseProtocolMajor } from "./semver";
 
 export interface SnapshotInfo {
@@ -73,6 +73,12 @@ export class ConnectionController {
     this.connectionEnabled = connectionEnabled;
     this.instanceId = await getOrCreateInstanceId();
     this.label = await getLabel();
+
+    // Auto-generate a default label if none has been set
+    if (!this.label && this.instanceId) {
+      this.label = generateDefaultLabel(this.instanceId, browser.name);
+      await setLabel(this.label);
+    }
 
     transport.onConnectionStateChange((s) => {
       if (!this.connectionEnabled) return;
