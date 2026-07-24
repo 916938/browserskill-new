@@ -262,7 +262,14 @@ mod tests {
         let _updated = reg
             .update(&t.id, None, None, None, None, Some(Some(String::new())))
             .unwrap();
-        assert!(reg.get(&t.id).unwrap().user_agent.as_deref().unwrap_or("").is_empty());
+        assert!(
+            reg.get(&t.id)
+                .unwrap()
+                .user_agent
+                .as_deref()
+                .unwrap_or("")
+                .is_empty()
+        );
     }
 
     #[test]
