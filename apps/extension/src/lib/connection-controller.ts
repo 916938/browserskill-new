@@ -132,6 +132,21 @@ export class ConnectionController {
     this.fire();
   }
 
+  /**
+   * Disconnect the transport so the next handshake carries the updated label.
+   *
+   * The daemon reads the profile label during the WebSocket handshake, so after
+   * `refreshLabel()` updates the stored label we drop the current connection and
+   * let the normal reconnect path re-run the handshake with the new value.
+   */
+  async disconnectForLabelUpdate(): Promise<void> {
+    if (this.transport) {
+      await this.transport.disconnect().catch(() => {});
+    }
+    this.handshake = null;
+    this.setState("disconnected");
+  }
+
   private async runHandshake(browser: { name: string; version: string }): Promise<void> {
     if (!this.transport) return;
     if (!this.connectionEnabled) return;

@@ -512,8 +512,8 @@ describe("defaultStorage", () => {
     store?: Record<string, unknown>;
     getError?: string | null;
     setError?: string | null;
-    throwOnGet?: Error;
-    throwOnSet?: Error;
+    throwOnGet?: unknown;
+    throwOnSet?: unknown;
   }) {
     const store = { ...(options.store ?? {}) };
     return {
