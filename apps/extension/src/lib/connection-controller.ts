@@ -6,7 +6,7 @@ import {
 } from "../transport/handshake";
 import type { Transport } from "../transport/transport";
 import type { ConnectionState, HandshakeResult } from "../transport/types";
-import { getLabel, getOrCreateInstanceId } from "./instance-id";
+import { generateDefaultLabel, getLabel, getOrCreateInstanceId, setLabel } from "./instance-id";
 import { compareProtocol, parseProtocolMajor } from "./semver";
 
 export interface SnapshotInfo {
@@ -74,6 +74,12 @@ export class ConnectionController {
     this.instanceId = await getOrCreateInstanceId();
     this.label = await getLabel();
 
+    // Auto-generate a default label if none has been set
+    if (!this.label && this.instanceId) {
+      this.label = generateDefaultLabel(this.instanceId, browser.name);
+      await setLabel(this.label);
+    }
+
     transport.onConnectionStateChange((s) => {
       if (!this.connectionEnabled) return;
       if (s === "connected") {
@@ -124,18 +130,6 @@ export class ConnectionController {
   async refreshLabel(): Promise<void> {
     this.label = await getLabel();
     this.fire();
-  }
-
-  /**
-   * Disconnect so the keepalive loop reconnects with the updated label.
-   * Label is only sent to the daemon during WS handshake, so a reconnect
-   * is required after label changes.
-   */
-  async disconnectForLabelUpdate(): Promise<void> {
-    if (this.transport) {
-      await this.transport.disconnect().catch(() => {});
-    }
-    this.setState("disconnected");
   }
 
   private async runHandshake(browser: { name: string; version: string }): Promise<void> {

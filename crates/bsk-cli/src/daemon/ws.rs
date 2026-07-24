@@ -447,22 +447,22 @@ async fn handle_inbound_text(state: &Arc<DaemonState>, client: &Arc<BrowserClien
                 }
                 // ── template.* (daemon-local CRUD) ───────────
                 bsk_protocol::Method::TemplateList => {
-                    handle_ws_template_list(state, client, req.id, req.params);
+                    handle_ws_template_list(&state, &client, req.id, req.params);
                 }
                 bsk_protocol::Method::TemplateGet => {
-                    handle_ws_template_get(state, client, req.id, req.params);
+                    handle_ws_template_get(&state, &client, req.id, req.params);
                 }
                 bsk_protocol::Method::TemplateCreate => {
-                    handle_ws_template_create(state, client, req.id, req.params);
+                    handle_ws_template_create(&state, &client, req.id, req.params);
                 }
                 bsk_protocol::Method::TemplateUpdate => {
-                    handle_ws_template_update(state, client, req.id, req.params);
+                    handle_ws_template_update(&state, &client, req.id, req.params);
                 }
                 bsk_protocol::Method::TemplateDelete => {
-                    handle_ws_template_delete(state, client, req.id, req.params);
+                    handle_ws_template_delete(&state, &client, req.id, req.params);
                 }
                 bsk_protocol::Method::TemplateApply => {
-                    handle_ws_template_apply(state, client, req.id, req.params);
+                    handle_ws_template_apply(&state, &client, req.id, req.params);
                 }
                 _ => {
                     debug!(method = ?req.method, "extension request not yet handled");

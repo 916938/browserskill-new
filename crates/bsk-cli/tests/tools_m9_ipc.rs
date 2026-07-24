@@ -7,7 +7,6 @@
 
 mod support;
 
-#[cfg(unix)]
 use support::wait_for_abort_registered;
 
 use std::path::PathBuf;

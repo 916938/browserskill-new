@@ -14,9 +14,10 @@ use std::time::Duration;
 use anyhow::Context;
 use bsk_protocol::Method;
 use bsk_protocol::template::{
-    TemplateApplyParams, TemplateApplyResult, TemplateCreateParams, TemplateCreateResult,
-    TemplateDeleteParams, TemplateDeleteResult, TemplateGetParams, TemplateGetResult,
-    TemplateListParams, TemplateListResult, TemplateUpdateParams, TemplateUpdateResult,
+    CookieEntry, ProfileTemplate, StorageEntry, TemplateApplyParams, TemplateApplyResult,
+    TemplateCreateParams, TemplateCreateResult, TemplateDeleteParams, TemplateDeleteResult,
+    TemplateGetParams, TemplateGetResult, TemplateListParams, TemplateListResult, TemplateSummary,
+    TemplateUpdateParams, TemplateUpdateResult,
 };
 use clap::{Args, Subcommand};
 use serde::Deserialize;
@@ -421,7 +422,6 @@ fn fmt_timestamp(ms: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bsk_protocol::template::{CookieEntry, ProfileTemplate, StorageEntry, TemplateSummary};
 
     // ── fmt_timestamp ─────────────────────────────────
 
@@ -665,6 +665,6 @@ mod tests {
             user_agent: Some(None),
         };
         let json = serde_json::to_value(&params).unwrap();
-        assert!(json.get("user_agent").unwrap().is_null());
+        assert_eq!(json.get("user_agent").unwrap().is_null(), true);
     }
 }

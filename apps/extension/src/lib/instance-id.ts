@@ -110,3 +110,24 @@ export const STORAGE_KEYS = {
   LABEL: LABEL_STORAGE_KEY,
   CONNECTION_ENABLED: CONNECTION_ENABLED_KEY,
 } as const;
+
+/**
+ * Generate a smart default label for this browser instance.
+ *
+ * Format: `{BrowserName}#{instanceId前4位}` (no space for CLI-friendliness)
+ * Examples: `Chrome#03c3`, `Edge#a7f2`
+ *
+ * @param instanceId - The 8-char hex instance ID
+ * @param browserName - Browser name from navigator (defaults to "Chrome")
+ * @returns A human-readable default label suitable for CLI arguments
+ */
+export function generateDefaultLabel(
+  instanceId: string,
+  browserName: string = "Chrome",
+): string {
+  const shortId = instanceId.slice(0, 4);
+  // Capitalize first letter, lowercase the rest
+  const browser =
+    browserName.charAt(0).toUpperCase() + browserName.slice(1).toLowerCase();
+  return `${browser}#${shortId}`;
+}

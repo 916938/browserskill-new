@@ -18,6 +18,12 @@ export default defineConfig({
     include: ["src/**/*.test.ts", "src/**/*.test.tsx"],
     globals: false,
     setupFiles: ["./src/vitest-setup.ts"],
+    coverage: {
+      provider: "v8",
+      reporter: ["text", "text-summary", "html", "lcov"],
+      reportsDirectory: "./coverage",
+      include: ["src/lib/instance-id.ts"],
+    },
   },
   define: {
     __BSK_EXT_VERSION__: JSON.stringify(pkg.version),

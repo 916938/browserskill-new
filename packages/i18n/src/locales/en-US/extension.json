@@ -42,9 +42,13 @@
     "copy": "Copy",
     "copied": "Copied",
     "copyInstanceId": "Copy instance ID",
-    "labelTitle": "Label",
-    "editLabel": "Click to edit",
-    "noLabel": "(none)",
+    "label": {
+      "title": "Label",
+      "placeholder": "e.g. WorkChrome",
+      "saveBtn": "Save",
+      "saved": "Saved",
+      "defaultHint": "Auto-generated from browser info"
+    },
     "record": {
       "sectionTitle": "Action recording",
       "cardDesc": "Record your actions for Agent reference",
