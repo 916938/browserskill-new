@@ -265,7 +265,11 @@ export function App() {
                   onFocus={() => setIsEditingLabel(true)}
                   onBlur={() => setIsEditingLabel(false)}
                   onKeyDown={(event: React.KeyboardEvent) => {
-                    if (event.key === "Enter" && labelDraft.trim() && labelDraft !== snapshot.label) {
+                    if (
+                      event.key === "Enter" &&
+                      labelDraft.trim() &&
+                      labelDraft !== snapshot.label
+                    ) {
                       setLabel(labelDraft.trim());
                     }
                   }}

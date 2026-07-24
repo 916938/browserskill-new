@@ -361,7 +361,9 @@ describe("App - Label Editing", () => {
     const input = getLabelInput();
 
     // Initially: input value equals snapshot.label → save should be disabled
-    const saveBtn = input.closest("div")?.querySelector('button[type="button"]') as HTMLButtonElement;
+    const saveBtn = input
+      .closest("div")
+      ?.querySelector('button[type="button"]') as HTMLButtonElement;
     expect(saveBtn).toBeTruthy();
     expect(saveBtn.disabled).toBe(true);
 
