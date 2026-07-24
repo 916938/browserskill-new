@@ -10,8 +10,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Planned
 - (No planned features yet)
 
-### In Progress
-- Active development since 2026-07-17 with multiple feature releases
+---
+
+## [CLI v0.2.0] & [Extension v0.1.4] - 2026-07-24
+
+### Added
+
+#### Major Features
+
+- **Profile Template System** (PR #4)
+  - Complete CRUD operations for browser profile templates via CLI, Daemon RPC, and Popup UI
+  - Save and restore: cookies, `chrome.storage.local` data, User-Agent strings
+  - Template persistence as JSON files in `~/.bsk/templates/{uuid}.json`
+  - **27 files changed, +4,020 lines**
+
+##### CLI Commands (`bsk templates`)
+
+| Command | Description |
+|---------|-------------|
+| `bsk templates list` | List all templates (summaries) |
+| `bsk templates get <id>` | Show full template details |
+| `bsk templates create --name <name> [--description] [--user-agent]` | Create new template |
+| `bsk templates update <id> [--name] [--description] [--user-agent]` | Update template |
+| `bsk templates delete <id>` | Delete template by ID |
+| `bsk templates apply <id> --scope all\|cookies\|storage\|user-agent` | Apply template to current profile |
+
+##### Protocol API (WS/IPC)
+
+New RPC methods: `template.list`, `template.get`, `template.create`, `template.update`, `template.delete`, `template.apply`
+
+##### Extension Changes
+
+- `template-client.ts`: Type-safe RPC client for template operations
+- `apply-template.ts`: Apply cookies via `chrome.cookies.set()`, storage via `chrome.storage.local.set()`
+- **Popup UI**: New Templates tab with list/create/edit/delete/apply + scope selector + toast notifications
+- Manifest: Added `cookies` permission for template apply functionality
+- i18n support: zh-CN + en-US keys for template UI
+
+### Fixed
+
+- **Clippy `--all-targets` warnings** resolved across all test targets
+- **TypeScript strict typing**: i18n key inference narrowed to literal unions
+- **ResponseFrame protocol alignment**: Fixed `.body` wrapper in template-client to match actual `{id, result/error}` shape
+- **Platform-specific import**: Added `#[cfg(unix)]` guard for `wait_for_abort_registered` in integration tests
+
+### Test Coverage
+
+| Component | New Tests | Total Tests |
+|-----------|-----------|-------------|
+| Rust (template) | 20 new unit/integration tests | 253+ total |
+| TypeScript (template) | 44 new tests | 520+ total |
+
+### Migration Guide
+
+**No breaking changes** - Fully backward compatible.
+
+All existing commands work as before. The `templates` subcommand and template protocol methods are purely additive.
+
+### Contributors
+
+- @paddlelaw - Feature implementation (PR #4)
 
 ---
 
@@ -226,12 +284,13 @@ See full git history for detailed commit information between tags.
 
 | Version | Date | Type | Key Features |
 |---------|------|------|--------------|
+| **[v0.2.0 / v0.1.4](https://github.com/916938/browserskill-new/releases/tag/cli-v0.2.0)** | 2026-07-24 | Major Feature Release | Profile Template System (CRUD + apply), CLI/WS/IPC/Popup UI |
 | **[v0.1.8 / v0.1.4](https://github.com/916938/browserskill-new/releases/tag/cli-v0.1.8)** | 2026-07-22 | Major Feature Release | bsk record, bsk network, invoke enhancement, session timeout fixes |
 | **[v0.2.0 / v0.1.4](https://github.com/916938/browserskill-new/releases/tag/cli-v0.2.0)** | 2026-07-17 | Feature Release | Dry-run mode, env vars, human timeout, shell completion, CI fixes |
 | **[v0.1.7 / v0.1.3](https://github.com/916938/browserskill-new/releases/tag/cli-v0.1.7)** | 2026-07-16 | Feature Release | bsk invoke command, Windows compatibility, transport layer |
-| **v0.1.6 / v0.1.2** | Earlier | Patch/Maintenance | Bug fixes, minor improvements |
-| **v0.1.5 / v0.1.1** | Earlier | Initial Public Release | Core functionality |
-| **v0.1.4 / v0.1.0** | Earlier | First Release | MVP release |
+| v0.1.6 / v0.1.2 | Earlier | Patch/Maintenance | Bug fixes, minor improvements |
+| v0.1.5 / v0.1.1 | Earlier | Initial Public Release | Core functionality |
+| v0.1.4 / v0.1.0 | Earlier | First Release | MVP release |
 
 ---
 
@@ -244,8 +303,8 @@ See full git history for detailed commit information between tags.
 
 ---
 
-[CLI v0.1.8]: https://github.com/916938/browserskill-new/releases/tag/cli-v0.1.8
 [CLI v0.2.0]: https://github.com/916938/browserskill-new/releases/tag/cli-v0.2.0
+[CLI v0.1.8]: https://github.com/916938/browserskill-new/releases/tag/cli-v0.1.8
 [Extension v0.1.4]: https://github.com/916938/browserskill-new/releases/tag/ext-v0.1.4
 [CLI v0.1.7]: https://github.com/916938/browserskill-new/releases/tag/cli-v0.1.7
-[Unreleased]: https://github.com/916938/browserskill-new/compare/cli-v0.1.8...HEAD
+[Unreleased]: https://github.com/916938/browserskill-new/compare/cli-v0.2.0...HEAD

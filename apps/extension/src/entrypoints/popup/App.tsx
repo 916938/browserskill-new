@@ -11,6 +11,7 @@ import { type ChangeEvent, useEffect, useState } from "react";
 import { PROTOCOL_VERSION } from "@/transport/handshake";
 import { ConnectionStatusIndicator } from "./connection-status-indicator";
 import { POPUP_FEATURES, type PopupView } from "./features";
+import { TemplateView } from "./template-view";
 import { type PopupStatusState, useConnectionState } from "./use-connection-state";
 
 const STATE_LABEL_KEYS = {
@@ -36,11 +37,14 @@ function getLogoSrc() {
 
 export function App() {
   const { t } = useTranslation("extension");
-  const { snapshot, statusState, setConnectionEnabled } = useConnectionState();
+  const { snapshot, statusState, setLabel, setConnectionEnabled } = useConnectionState();
   const [view, setView] = useState<PopupView>("main");
   const [copiedInstanceId, setCopiedInstanceId] = useState(false);
   const [purposeDraft, setPurposeDraft] = useState("");
   const [startUrlDraft, setStartUrlDraft] = useState("");
+  const [labelDraft, setLabelDraft] = useState("");
+  const [labelSaved, setLabelSaved] = useState(false);
+  const [isEditingLabel, setIsEditingLabel] = useState(false);
   // Bumped on every successful copy so the "copied" toast re-shows (and its
   // auto-hide timer restarts) even when the copied content is unchanged.
   const [copiedTick, setCopiedTick] = useState(0);
@@ -66,6 +70,14 @@ export function App() {
   useEffect(() => {
     setCopiedTick(0);
   }, [purposeDraft, startUrlDraft]);
+
+  // Sync label from snapshot to local draft only when user is not actively editing.
+  // Prevents external label updates from overwriting the user's in-progress input.
+  useEffect(() => {
+    if (!isEditingLabel && snapshot.label !== labelDraft) {
+      setLabelDraft(snapshot.label);
+    }
+  }, [snapshot.label]);
 
   // Auto-hide the copied toast shortly after it appears.
   useEffect(() => {
@@ -115,7 +127,9 @@ export function App() {
       ? t("popup.launcher.title")
       : view === "record"
         ? t("popup.record.sectionTitle")
-        : t("popup.brandName");
+        : view === "templates"
+          ? t("popup.templates.sectionTitle")
+          : t("popup.brandName");
 
   return (
     <main
@@ -135,7 +149,7 @@ export function App() {
             size="icon"
             className="size-7 shrink-0 rounded-md"
             aria-label={t("popup.back")}
-            onClick={() => setView(view === "record" ? "features" : "main")}
+            onClick={() => setView(view === "record" || view === "templates" ? "features" : "main")}
             data-slot="popup-back"
           >
             <RiArrowLeftLine className="size-4" aria-hidden />
@@ -232,6 +246,57 @@ export function App() {
           )}
 
           <section
+            className="rounded-xl border border-border/80 bg-card/60 px-3 py-2.5"
+            data-slot="popup-label-card"
+          >
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="bh-label" className="block text-xs text-muted-foreground">
+                {t("popup.label.title")}
+              </Label>
+              <div className="flex items-center gap-2">
+                <Input
+                  id="bh-label"
+                  type="text"
+                  maxLength={32}
+                  value={labelDraft}
+                  onChange={(event: ChangeEvent<HTMLInputElement>) =>
+                    setLabelDraft(event.target.value)
+                  }
+                  onFocus={() => setIsEditingLabel(true)}
+                  onBlur={() => setIsEditingLabel(false)}
+                  onKeyDown={(event: React.KeyboardEvent) => {
+                    if (
+                      event.key === "Enter" &&
+                      labelDraft.trim() &&
+                      labelDraft !== snapshot.label
+                    ) {
+                      setLabel(labelDraft.trim());
+                    }
+                  }}
+                  placeholder={t("popup.label.placeholder")}
+                  className="h-8 text-sm flex-1"
+                  data-slot="popup-label-input"
+                />
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  className="h-7 px-2.5 text-xs"
+                  disabled={!labelDraft.trim() || labelDraft === snapshot.label}
+                  onClick={() => {
+                    setLabel(labelDraft.trim());
+                    setLabelSaved(true);
+                    setTimeout(() => setLabelSaved(false), 1500);
+                  }}
+                  data-slot="popup-label-save"
+                >
+                  {labelSaved ? t("popup.label.saved") : t("popup.label.saveBtn")}
+                </Button>
+              </div>
+            </div>
+          </section>
+
+          <section
             className="flex min-w-0 items-center justify-between gap-2 border-t border-border/70 pt-2 text-[10px] leading-tight text-muted-foreground"
             data-slot="popup-meta"
           >
@@ -299,6 +364,8 @@ export function App() {
           })}
         </section>
       )}
+
+      {view === "templates" && <TemplateView />}
 
       {view === "record" && (
         <section className="space-y-2.5" data-slot="popup-record-body">

@@ -100,6 +100,16 @@ pub fn record_session_path() -> Result<PathBuf> {
     Ok(bsk_home()?.join("record-session.json"))
 }
 
+/// Directory holding per-template JSON files (`templates/{uuid}.json`).
+pub fn templates_dir() -> Result<PathBuf> {
+    let dir = bsk_home()?.join("templates");
+    if !dir.exists() {
+        std::fs::create_dir_all(&dir)
+            .with_context(|| format!("create templates dir {}", dir.display()))?;
+    }
+    Ok(dir)
+}
+
 /// Windows named-pipe name. Include the resolved `BSK_HOME` path in the
 /// token so test homes and custom installs do not share a predictable
 /// per-username pipe.

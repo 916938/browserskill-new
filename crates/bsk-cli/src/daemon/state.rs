@@ -9,10 +9,12 @@ use super::abort::AbortRegistry;
 use super::browsers::BrowserRegistry;
 use super::inflight::ToolInflightRegistry;
 use super::ipc::IpcHandle;
+use super::paths::templates_dir;
 use super::queue::ToolQueueRegistry;
 use super::session_interrupt::SessionInterruptRegistry;
 use super::sessions::SessionRegistry;
 use super::start::DaemonConfig;
+use super::templates::TemplateRegistry;
 use super::ws::WsHandle;
 
 pub const DAEMON_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -51,6 +53,8 @@ pub struct DaemonState {
     /// `SessionRegistry` because the signal is a transient runtime
     /// control state.
     pub session_interrupts: Arc<SessionInterruptRegistry>,
+    /// Persistent template store (CRUD + JSON files under ~/.bsk/templates/).
+    pub templates: Arc<TemplateRegistry>,
 }
 
 impl DaemonState {
@@ -64,6 +68,9 @@ impl DaemonState {
         ));
         let abort_registry = Arc::new(AbortRegistry::new());
         let session_interrupts = Arc::new(SessionInterruptRegistry::new());
+        let templates_dir = templates_dir().expect("resolve templates directory");
+        let templates =
+            Arc::new(TemplateRegistry::new(templates_dir).expect("load template registry"));
         Self {
             config,
             browsers,
@@ -72,6 +79,7 @@ impl DaemonState {
             abort_registry,
             tool_inflight,
             session_interrupts,
+            templates,
         }
     }
 }

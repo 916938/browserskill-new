@@ -6,7 +6,7 @@ import {
 } from "../transport/handshake";
 import type { Transport } from "../transport/transport";
 import type { ConnectionState, HandshakeResult } from "../transport/types";
-import { getLabel, getOrCreateInstanceId } from "./instance-id";
+import { generateDefaultLabel, getLabel, getOrCreateInstanceId, setLabel } from "./instance-id";
 import { compareProtocol, parseProtocolMajor } from "./semver";
 
 export interface SnapshotInfo {
@@ -74,6 +74,12 @@ export class ConnectionController {
     this.instanceId = await getOrCreateInstanceId();
     this.label = await getLabel();
 
+    // Auto-generate a default label if none has been set
+    if (!this.label && this.instanceId) {
+      this.label = generateDefaultLabel(this.instanceId, browser.name);
+      await setLabel(this.label);
+    }
+
     transport.onConnectionStateChange((s) => {
       if (!this.connectionEnabled) return;
       if (s === "connected") {
@@ -124,6 +130,21 @@ export class ConnectionController {
   async refreshLabel(): Promise<void> {
     this.label = await getLabel();
     this.fire();
+  }
+
+  /**
+   * Disconnect the transport so the next handshake carries the updated label.
+   *
+   * The daemon reads the profile label during the WebSocket handshake, so after
+   * `refreshLabel()` updates the stored label we drop the current connection and
+   * let the normal reconnect path re-run the handshake with the new value.
+   */
+  async disconnectForLabelUpdate(): Promise<void> {
+    if (this.transport) {
+      await this.transport.disconnect().catch(() => {});
+    }
+    this.handshake = null;
+    this.setState("disconnected");
   }
 
   private async runHandshake(browser: { name: string; version: string }): Promise<void> {

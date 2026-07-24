@@ -27,6 +27,7 @@ export default defineConfig({
       "Let AI agents use your logged-in browser in a separate Agent Window—without interrupting your work. Powered by the bsk CLI.",
     permissions: [
       "alarms",
+      "cookies",
       "debugger",
       "notifications",
       "tabs",
