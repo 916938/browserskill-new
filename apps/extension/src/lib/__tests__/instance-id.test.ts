@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   defaultStorage,
   generateDefaultLabel,
@@ -257,10 +257,12 @@ describe("generateDefaultLabel", () => {
       const input2 = { id: "a7f32e1c", browser: "Edge" };
 
       // Same inputs → same outputs
-      expect(generateDefaultLabel(input1.id, input1.browser))
-        .toBe(generateDefaultLabel(input1.id, input1.browser));
-      expect(generateDefaultLabel(input2.id, input2.browser))
-        .toBe(generateDefaultLabel(input2.id, input2.browser));
+      expect(generateDefaultLabel(input1.id, input1.browser)).toBe(
+        generateDefaultLabel(input1.id, input1.browser),
+      );
+      expect(generateDefaultLabel(input2.id, input2.browser)).toBe(
+        generateDefaultLabel(input2.id, input2.browser),
+      );
     });
 
     it("generates different labels for different instanceIds", () => {
@@ -283,9 +285,7 @@ describe("generateDefaultLabel", () => {
     });
 
     it("produces consistent output across multiple calls (stability)", () => {
-      const results = Array.from({ length: 100 }, () =>
-        generateDefaultLabel("deadbeef", "Chrome"),
-      );
+      const results = Array.from({ length: 100 }, () => generateDefaultLabel("deadbeef", "Chrome"));
       // All 100 calls should return identical value
       expect(new Set(results).size).toBe(1);
     });
@@ -299,8 +299,8 @@ describe("generateDefaultLabel", () => {
       const testCases = [
         { id: "abcdef01", browser: "Chrome" },
         { id: "01234567", browser: "Edge" },
-        { id: "", browser: "Firefox" },          // Edge case: empty ID
-        { id: "abcd", browser: "" },              // Edge case: empty browser
+        { id: "", browser: "Firefox" }, // Edge case: empty ID
+        { id: "abcd", browser: "" }, // Edge case: empty browser
       ];
 
       for (const { id, browser } of testCases) {
@@ -314,12 +314,12 @@ describe("generateDefaultLabel", () => {
 
     it("short ID part is always exactly 4 characters", () => {
       const testCases = [
-        "abcdef01",  // Normal 8-char
-        "01234567",  // Another normal
-        "abcdef0123456789",  // Long
-        "abcd",      // Exactly 4
-        "",          // Empty → "????"
-        "ab",        // Short → "????"
+        "abcdef01", // Normal 8-char
+        "01234567", // Another normal
+        "abcdef0123456789", // Long
+        "abcd", // Exactly 4
+        "", // Empty → "????"
+        "ab", // Short → "????"
       ];
 
       for (const id of testCases) {
@@ -335,8 +335,8 @@ describe("generateDefaultLabel", () => {
         { browser: "EDGE", expectedFirstChar: "E" },
         { browser: "firefox", expectedFirstChar: "F" },
         { browser: "Brave", expectedFirstChar: "B" },
-        { browser: "", expectedFirstChar: "C" },           // Fallback to Chrome
-        { browser: "   ", expectedFirstChar: "C" },       // Trim + fallback
+        { browser: "", expectedFirstChar: "C" }, // Fallback to Chrome
+        { browser: "   ", expectedFirstChar: "C" }, // Trim + fallback
       ];
 
       for (const { browser, expectedFirstChar } of testCases) {
@@ -524,28 +524,34 @@ describe("defaultStorage", () => {
             ? vi.fn(() => {
                 throw options.throwOnGet;
               })
-            : vi.fn((keys: string | string[], callback: (items: Record<string, unknown>) => void) => {
-              // Simulate chrome behavior: set lastError before calling callback
-              if (options.getError) {
-                (globalThis as unknown as { chrome: { runtime: { lastError: string } } }).chrome.runtime.lastError = { message: options.getError } as unknown as string;
-              }
-              const result: Record<string, unknown> = {};
-              const list = Array.isArray(keys) ? keys : [keys];
-              for (const k of list) if (k in store) result[k] = store[k];
-              callback(result);
-            }),
+            : vi.fn(
+                (keys: string | string[], callback: (items: Record<string, unknown>) => void) => {
+                  // Simulate chrome behavior: set lastError before calling callback
+                  if (options.getError) {
+                    (
+                      globalThis as unknown as { chrome: { runtime: { lastError: string } } }
+                    ).chrome.runtime.lastError = { message: options.getError } as unknown as string;
+                  }
+                  const result: Record<string, unknown> = {};
+                  const list = Array.isArray(keys) ? keys : [keys];
+                  for (const k of list) if (k in store) result[k] = store[k];
+                  callback(result);
+                },
+              ),
           set: options.throwOnSet
             ? vi.fn(() => {
                 throw options.throwOnSet;
               })
             : vi.fn((items: Record<string, unknown>, callback?: () => void) => {
-              // Simulate chrome behavior: set lastError before calling callback
-              if (options.setError) {
-                (globalThis as unknown as { chrome: { runtime: { lastError: string } } }).chrome.runtime.lastError = { message: options.setError } as unknown as string;
-              }
-              Object.assign(store, items);
-              callback?.();
-            }),
+                // Simulate chrome behavior: set lastError before calling callback
+                if (options.setError) {
+                  (
+                    globalThis as unknown as { chrome: { runtime: { lastError: string } } }
+                  ).chrome.runtime.lastError = { message: options.setError } as unknown as string;
+                }
+                Object.assign(store, items);
+                callback?.();
+              }),
         },
       },
       runtime: {
@@ -585,7 +591,10 @@ describe("defaultStorage", () => {
     const result = await storage.get(["key1", "key2"]);
 
     expect(result).toEqual(mockData);
-    expect(mockChrome.storage.local.get).toHaveBeenCalledWith(["key1", "key2"], expect.any(Function));
+    expect(mockChrome.storage.local.get).toHaveBeenCalledWith(
+      ["key1", "key2"],
+      expect.any(Function),
+    );
   });
 
   it("get() resolves with empty object when key does not exist in storage", async () => {
