@@ -43,6 +43,8 @@ export function App() {
   const [purposeDraft, setPurposeDraft] = useState("");
   const [startUrlDraft, setStartUrlDraft] = useState("");
   const [labelDraft, setLabelDraft] = useState("");
+  const [labelSaved, setLabelSaved] = useState(false);
+  const [isEditingLabel, setIsEditingLabel] = useState(false);
   // Bumped on every successful copy so the "copied" toast re-shows (and its
   // auto-hide timer restarts) even when the copied content is unchanged.
   const [copiedTick, setCopiedTick] = useState(0);
@@ -69,9 +71,10 @@ export function App() {
     setCopiedTick(0);
   }, [purposeDraft, startUrlDraft]);
 
-  // Sync label from snapshot to local draft (for editing)
+  // Sync label from snapshot to local draft only when user is not actively editing.
+  // Prevents external label updates from overwriting the user's in-progress input.
   useEffect(() => {
-    if (snapshot.label !== labelDraft) {
+    if (!isEditingLabel && snapshot.label !== labelDraft) {
       setLabelDraft(snapshot.label);
     }
   }, [snapshot.label]);
@@ -254,10 +257,18 @@ export function App() {
                 <Input
                   id="bh-label"
                   type="text"
+                  maxLength={32}
                   value={labelDraft}
                   onChange={(event: ChangeEvent<HTMLInputElement>) =>
                     setLabelDraft(event.target.value)
                   }
+                  onFocus={() => setIsEditingLabel(true)}
+                  onBlur={() => setIsEditingLabel(false)}
+                  onKeyDown={(event: React.KeyboardEvent) => {
+                    if (event.key === "Enter" && labelDraft.trim() && labelDraft !== snapshot.label) {
+                      setLabel(labelDraft.trim());
+                    }
+                  }}
                   placeholder={t("popup.label.placeholder")}
                   className="h-8 text-sm flex-1"
                   data-slot="popup-label-input"
@@ -270,10 +281,12 @@ export function App() {
                   disabled={!labelDraft.trim() || labelDraft === snapshot.label}
                   onClick={() => {
                     setLabel(labelDraft.trim());
+                    setLabelSaved(true);
+                    setTimeout(() => setLabelSaved(false), 1500);
                   }}
                   data-slot="popup-label-save"
                 >
-                  {t("popup.label.saveBtn")}
+                  {labelSaved ? t("popup.label.saved") : t("popup.label.saveBtn")}
                 </Button>
               </div>
             </div>
