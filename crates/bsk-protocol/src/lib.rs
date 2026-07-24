@@ -5,6 +5,7 @@ pub mod error;
 pub mod frame;
 pub mod method;
 pub mod system;
+pub mod template;
 pub mod tools;
 
 pub use cancel::{CancelParams, CancelResult};

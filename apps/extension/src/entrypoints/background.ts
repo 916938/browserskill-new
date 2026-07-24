@@ -1,5 +1,6 @@
 import { i18n } from "@browser-skill/i18n";
 import { ChromiumCdp } from "@/browser-driver/chromium-cdp";
+import { applyTemplate } from "@/lib/apply-template";
 import { ConnectionController } from "@/lib/connection-controller";
 import {
   getConnectionEnabled,
@@ -17,6 +18,7 @@ import {
 } from "@/lib/overlay-bridge";
 import { POPUP_PORT_NAME, type PopupInbound, type PopupOutbound } from "@/lib/popup-bridge";
 import { attachSessionsLiveFlag } from "@/lib/sessions-live-flag";
+import { initTemplateClient, templateClient } from "@/lib/template-client";
 import { attachSessionEventHandler } from "@/session-manager/event-handler";
 import { SessionManager } from "@/session-manager/manager";
 import {
@@ -40,6 +42,7 @@ import { WSTransport } from "@/transport/ws-transport";
 export default defineBackground(() => {
   const controller = new ConnectionController();
   const transport = new WSTransport({ url: __BSK_DAEMON_WS_URL__ });
+  initTemplateClient(transport);
   const sessions = new SessionManager();
   const cdp = new ChromiumCdp();
   const sessionsLive = attachSessionsLiveFlag({ manager: sessions });
@@ -183,7 +186,11 @@ export default defineBackground(() => {
       const msg = raw as PopupOutbound;
       if (msg && typeof msg === "object" && "kind" in msg) {
         if (msg.kind === "set_label") {
-          void setLabel(msg.value).then(() => controller.refreshLabel());
+          void setLabel(msg.value).then(async () => {
+            await controller.refreshLabel();
+            // Label is sent during WS handshake; reconnect so daemon receives the updated label
+            await controller.disconnectForLabelUpdate();
+          });
         } else if (msg.kind === "set_port") {
           // Placeholder for the future custom-port UI; warn loudly so
           // any reintroduced popup control is caught instead of
@@ -193,6 +200,77 @@ export default defineBackground(() => {
           void controller
             .setConnectionEnabled(msg.value)
             .then(() => persistConnectionEnabled(msg.value));
+          // ── Template operations (routed to daemon via templateClient) ──
+        } else if (msg.kind === "template_list") {
+          void templateClient
+            .list()
+            .then((templates) => {
+              post({ kind: "template_list_result", templates });
+            })
+            .catch((err: Error) => {
+              post({ kind: "template_list_result", templates: [], error: err.message });
+            });
+        } else if (msg.kind === "template_get") {
+          void templateClient
+            .get(msg.id)
+            .then((template) => {
+              post({ kind: "template_get_result", template });
+            })
+            .catch((err: Error) => {
+              post({ kind: "template_get_result", error: err.message });
+            });
+        } else if (msg.kind === "template_create") {
+          void templateClient
+            .create(msg.params)
+            .then((template) => {
+              post({ kind: "template_create_result", template });
+            })
+            .catch((err: Error) => {
+              post({ kind: "template_create_result", error: err.message });
+            });
+        } else if (msg.kind === "template_update") {
+          void templateClient
+            .update(msg.params)
+            .then((template) => {
+              post({ kind: "template_update_result", template: template ?? undefined });
+            })
+            .catch((err: Error) => {
+              post({ kind: "template_update_result", error: err.message });
+            });
+        } else if (msg.kind === "template_delete") {
+          void templateClient
+            .delete(msg.id)
+            .then((deleted) => {
+              post({ kind: "template_delete_result", deleted });
+            })
+            .catch((err: Error) => {
+              post({ kind: "template_delete_result", deleted: false, error: err.message });
+            });
+        } else if (msg.kind === "template_apply") {
+          void (async () => {
+            try {
+              const result = await templateClient.apply({
+                template_id: msg.templateId,
+                scope: msg.scope,
+              });
+              // If daemon returned the full template data, apply it to the browser profile
+              if (result.template) {
+                const applyResult = await applyTemplate(result.template, msg.scope);
+                // Merge the daemon's counts with our actual application results
+                const merged = {
+                  ...result,
+                  applied_cookies: applyResult.cookies.applied,
+                  applied_storage: applyResult.storage.applied,
+                  applied_user_agent: applyResult.userAgent,
+                };
+                post({ kind: "template_apply_result", result: merged });
+              } else {
+                post({ kind: "template_apply_result", result });
+              }
+            } catch (err) {
+              post({ kind: "template_apply_result", error: (err as Error).message });
+            }
+          })();
         }
       }
     });

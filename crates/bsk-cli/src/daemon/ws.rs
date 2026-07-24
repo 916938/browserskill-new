@@ -14,6 +14,11 @@ use anyhow::{Context, anyhow};
 use bsk_protocol::system::{
     HandshakeCompat, HandshakeParams, HandshakeResult, evaluate_handshake_compat,
 };
+use bsk_protocol::template::{
+    TemplateApplyParams, TemplateApplyResult, TemplateCreateParams, TemplateCreateResult,
+    TemplateDeleteParams, TemplateDeleteResult, TemplateGetParams, TemplateGetResult,
+    TemplateListParams, TemplateListResult, TemplateUpdateParams, TemplateUpdateResult,
+};
 use bsk_protocol::tools::ReturnFailure;
 use bsk_protocol::{Frame, RequestFrame, ResponseBody, ResponseFrame, RpcError};
 use futures_util::{SinkExt, StreamExt};
@@ -440,6 +445,25 @@ async fn handle_inbound_text(state: &Arc<DaemonState>, client: &Arc<BrowserClien
                         trace!(id = %client.id, "responded to system.ping");
                     }
                 }
+                // ── template.* (daemon-local CRUD) ───────────
+                bsk_protocol::Method::TemplateList => {
+                    handle_ws_template_list(&state, &client, req.id, req.params);
+                }
+                bsk_protocol::Method::TemplateGet => {
+                    handle_ws_template_get(&state, &client, req.id, req.params);
+                }
+                bsk_protocol::Method::TemplateCreate => {
+                    handle_ws_template_create(&state, &client, req.id, req.params);
+                }
+                bsk_protocol::Method::TemplateUpdate => {
+                    handle_ws_template_update(&state, &client, req.id, req.params);
+                }
+                bsk_protocol::Method::TemplateDelete => {
+                    handle_ws_template_delete(&state, &client, req.id, req.params);
+                }
+                bsk_protocol::Method::TemplateApply => {
+                    handle_ws_template_apply(&state, &client, req.id, req.params);
+                }
                 _ => {
                     debug!(method = ?req.method, "extension request not yet handled");
                 }
@@ -564,6 +588,272 @@ fn handle_session_user_interrupt(
     }
 
     state.session_interrupts.mark(&sid);
+}
+
+// ── template.* WS handlers ───────────────────────────────
+
+fn parse_params<T: serde::de::DeserializeOwned>(
+    params: Option<serde_json::Value>,
+) -> Result<T, RpcError> {
+    params
+        .ok_or_else(|| RpcError {
+            code: bsk_protocol::ErrorCode::InvalidParams,
+            message: "missing params".into(),
+            data: None,
+        })
+        .and_then(|v| {
+            serde_json::from_value(v).map_err(|e| RpcError {
+                code: bsk_protocol::ErrorCode::InvalidParams,
+                message: e.to_string(),
+                data: None,
+            })
+        })
+}
+
+fn ws_ok(id: bsk_protocol::RpcId, value: impl serde::Serialize) -> ResponseFrame {
+    ResponseFrame {
+        id,
+        body: ResponseBody::Ok(serde_json::to_value(value).unwrap_or(serde_json::Value::Null)),
+    }
+}
+
+fn ws_err(id: bsk_protocol::RpcId, err: RpcError) -> ResponseFrame {
+    ResponseFrame {
+        id,
+        body: ResponseBody::Err(err),
+    }
+}
+
+fn handle_ws_template_list(
+    state: &Arc<DaemonState>,
+    client: &Arc<BrowserClient>,
+    id: bsk_protocol::RpcId,
+    params: Option<serde_json::Value>,
+) {
+    let _: TemplateListParams = match parse_params(params) {
+        Ok(p) => p,
+        Err(e) => {
+            let _ = client.sink.send(Frame::Response(ws_err(id, e)));
+            return;
+        }
+    };
+    let result = TemplateListResult {
+        templates: state.templates.list(),
+    };
+    if let Err(err) = client.sink.send(Frame::Response(ws_ok(id, result))) {
+        warn!(%err, "failed to send template.list response");
+    }
+}
+
+fn handle_ws_template_get(
+    state: &Arc<DaemonState>,
+    client: &Arc<BrowserClient>,
+    id: bsk_protocol::RpcId,
+    params: Option<serde_json::Value>,
+) {
+    let params: TemplateGetParams = match parse_params(params) {
+        Ok(p) => p,
+        Err(e) => {
+            let _ = client.sink.send(Frame::Response(ws_err(id, e)));
+            return;
+        }
+    };
+    match state.templates.get(&params.id) {
+        Some(t) => {
+            let result = TemplateGetResult { template: t };
+            if let Err(err) = client.sink.send(Frame::Response(ws_ok(id, result))) {
+                warn!(%err, "failed to send template.get response");
+            }
+        }
+        None => {
+            let _ = client.sink.send(Frame::Response(ws_err(
+                id,
+                RpcError {
+                    code: bsk_protocol::ErrorCode::NotFound,
+                    message: format!("template not found: {}", params.id),
+                    data: None,
+                },
+            )));
+        }
+    }
+}
+
+fn handle_ws_template_create(
+    state: &Arc<DaemonState>,
+    client: &Arc<BrowserClient>,
+    id: bsk_protocol::RpcId,
+    params: Option<serde_json::Value>,
+) {
+    let params: TemplateCreateParams = match parse_params(params) {
+        Ok(p) => p,
+        Err(e) => {
+            let _ = client.sink.send(Frame::Response(ws_err(id, e)));
+            return;
+        }
+    };
+    match state.templates.create(
+        params.name,
+        params.description,
+        params.cookies,
+        params.storage,
+        params.user_agent,
+    ) {
+        Ok(t) => {
+            let result = TemplateCreateResult { template: t };
+            if let Err(err) = client.sink.send(Frame::Response(ws_ok(id, result))) {
+                warn!(%err, "failed to send template.create response");
+            }
+        }
+        Err(err) => {
+            let _ = client.sink.send(Frame::Response(ws_err(
+                id,
+                RpcError {
+                    code: bsk_protocol::ErrorCode::ProtocolError,
+                    message: err.to_string(),
+                    data: None,
+                },
+            )));
+        }
+    }
+}
+
+fn handle_ws_template_update(
+    state: &Arc<DaemonState>,
+    client: &Arc<BrowserClient>,
+    id: bsk_protocol::RpcId,
+    params: Option<serde_json::Value>,
+) {
+    let params: TemplateUpdateParams = match parse_params(params) {
+        Ok(p) => p,
+        Err(e) => {
+            let _ = client.sink.send(Frame::Response(ws_err(id, e)));
+            return;
+        }
+    };
+    match state.templates.update(
+        &params.id,
+        params.name,
+        params.description,
+        params.cookies,
+        params.storage,
+        params.user_agent,
+    ) {
+        Ok(Some(t)) => {
+            let result = TemplateUpdateResult { template: t };
+            if let Err(err) = client.sink.send(Frame::Response(ws_ok(id, result))) {
+                warn!(%err, "failed to send template.update response");
+            }
+        }
+        Ok(None) => {
+            let _ = client.sink.send(Frame::Response(ws_err(
+                id,
+                RpcError {
+                    code: bsk_protocol::ErrorCode::NotFound,
+                    message: format!("template not found: {}", params.id),
+                    data: None,
+                },
+            )));
+        }
+        Err(err) => {
+            let _ = client.sink.send(Frame::Response(ws_err(
+                id,
+                RpcError {
+                    code: bsk_protocol::ErrorCode::ProtocolError,
+                    message: err.to_string(),
+                    data: None,
+                },
+            )));
+        }
+    }
+}
+
+fn handle_ws_template_delete(
+    state: &Arc<DaemonState>,
+    client: &Arc<BrowserClient>,
+    id: bsk_protocol::RpcId,
+    params: Option<serde_json::Value>,
+) {
+    let params: TemplateDeleteParams = match parse_params(params) {
+        Ok(p) => p,
+        Err(e) => {
+            let _ = client.sink.send(Frame::Response(ws_err(id, e)));
+            return;
+        }
+    };
+    match state.templates.delete(&params.id) {
+        Ok(true) => {
+            let result = TemplateDeleteResult { deleted: true };
+            if let Err(err) = client.sink.send(Frame::Response(ws_ok(id, result))) {
+                warn!(%err, "failed to send template.delete response");
+            }
+        }
+        Ok(false) => {
+            let _ = client.sink.send(Frame::Response(ws_err(
+                id,
+                RpcError {
+                    code: bsk_protocol::ErrorCode::NotFound,
+                    message: format!("template not found: {}", params.id),
+                    data: None,
+                },
+            )));
+        }
+        Err(err) => {
+            let _ = client.sink.send(Frame::Response(ws_err(
+                id,
+                RpcError {
+                    code: bsk_protocol::ErrorCode::ProtocolError,
+                    message: err.to_string(),
+                    data: None,
+                },
+            )));
+        }
+    }
+}
+
+fn handle_ws_template_apply(
+    state: &Arc<DaemonState>,
+    client: &Arc<BrowserClient>,
+    id: bsk_protocol::RpcId,
+    params: Option<serde_json::Value>,
+) {
+    let params: TemplateApplyParams = match parse_params(params) {
+        Ok(p) => p,
+        Err(e) => {
+            let _ = client.sink.send(Frame::Response(ws_err(id, e)));
+            return;
+        }
+    };
+    // Apply returns the full template so the extension can apply it locally.
+    match state.templates.get(&params.template_id) {
+        Some(template) => {
+            // Build apply result with counts
+            let result = TemplateApplyResult {
+                applied_cookies: template.cookies.len(),
+                applied_storage: template.storage.len(),
+                applied_user_agent: template.user_agent.is_some(),
+            };
+            // Include full template in response data for extension-side application
+            let mut value = serde_json::to_value(result).unwrap();
+            value["template"] = serde_json::to_value(&template).unwrap();
+            let resp = ResponseFrame {
+                id,
+                body: ResponseBody::Ok(value),
+            };
+            if let Err(err) = client.sink.send(Frame::Response(resp)) {
+                warn!(%err, "failed to send template.apply response");
+            }
+        }
+        None => {
+            let _ = client.sink.send(Frame::Response(ws_err(
+                id,
+                RpcError {
+                    code: bsk_protocol::ErrorCode::NotFound,
+                    message: format!("template not found: {}", params.template_id),
+                    data: None,
+                },
+            )));
+        }
+    }
 }
 
 #[cfg(test)]

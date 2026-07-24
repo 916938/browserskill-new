@@ -250,6 +250,13 @@ pub fn full_handler(status: DaemonStatus, state: Arc<DaemonState>) -> RpcHandler
                 }
                 Method::ToolWaitMs => handle_wait_ms(&state.abort_registry, rpc_id, params).await,
                 Method::Cancel => handle_cancel(&state, params),
+                // ── template.* (daemon-local CRUD) ───────────
+                Method::TemplateList => handle_template_list(&state, params),
+                Method::TemplateGet => handle_template_get(&state, params),
+                Method::TemplateCreate => handle_template_create(&state, params),
+                Method::TemplateUpdate => handle_template_update(&state, params),
+                Method::TemplateDelete => handle_template_delete(&state, params),
+                Method::TemplateApply => handle_template_apply(&state, params),
                 other => ResponseBody::Err(RpcError {
                     code: ErrorCode::UnknownMethod,
                     message: format!("method not implemented yet: {other:?}"),
@@ -845,6 +852,146 @@ async fn handle_browser_list(state: &Arc<DaemonState>, params: Value) -> Result<
     // (review I1).
     let browsers = snapshot_status_entries(&state.browsers, &state.sessions);
     Ok(serde_json::to_value(BrowserListResult { browsers }).unwrap_or(Value::Null))
+}
+
+// ── template.* IPC handlers ─────────────────────────────
+
+fn ipc_parse_params<T: serde::de::DeserializeOwned>(params: Value) -> Result<T, RpcError> {
+    serde_json::from_value(params).map_err(|e| RpcError {
+        code: ErrorCode::InvalidParams,
+        message: e.to_string(),
+        data: None,
+    })
+}
+
+fn handle_template_list(state: &Arc<DaemonState>, params: Value) -> ResponseBody {
+    let _: bsk_protocol::template::TemplateListParams = match ipc_parse_params(params) {
+        Ok(p) => p,
+        Err(e) => return ResponseBody::Err(e),
+    };
+    let result = bsk_protocol::template::TemplateListResult {
+        templates: state.templates.list(),
+    };
+    ResponseBody::Ok(serde_json::to_value(result).unwrap_or(Value::Null))
+}
+
+fn handle_template_get(state: &Arc<DaemonState>, params: Value) -> ResponseBody {
+    let params: bsk_protocol::template::TemplateGetParams = match ipc_parse_params(params) {
+        Ok(p) => p,
+        Err(e) => return ResponseBody::Err(e),
+    };
+    match state.templates.get(&params.id) {
+        Some(t) => {
+            let result = bsk_protocol::template::TemplateGetResult { template: t };
+            ResponseBody::Ok(serde_json::to_value(result).unwrap_or(Value::Null))
+        }
+        None => ResponseBody::Err(RpcError {
+            code: ErrorCode::NotFound,
+            message: format!("template not found: {}", params.id),
+            data: None,
+        }),
+    }
+}
+
+fn handle_template_create(state: &Arc<DaemonState>, params: Value) -> ResponseBody {
+    let params: bsk_protocol::template::TemplateCreateParams = match ipc_parse_params(params) {
+        Ok(p) => p,
+        Err(e) => return ResponseBody::Err(e),
+    };
+    match state.templates.create(
+        params.name,
+        params.description,
+        params.cookies,
+        params.storage,
+        params.user_agent,
+    ) {
+        Ok(t) => {
+            let result = bsk_protocol::template::TemplateCreateResult { template: t };
+            ResponseBody::Ok(serde_json::to_value(result).unwrap_or(Value::Null))
+        }
+        Err(err) => ResponseBody::Err(RpcError {
+            code: ErrorCode::ProtocolError,
+            message: err.to_string(),
+            data: None,
+        }),
+    }
+}
+
+fn handle_template_update(state: &Arc<DaemonState>, params: Value) -> ResponseBody {
+    let params: bsk_protocol::template::TemplateUpdateParams = match ipc_parse_params(params) {
+        Ok(p) => p,
+        Err(e) => return ResponseBody::Err(e),
+    };
+    match state.templates.update(
+        &params.id,
+        params.name,
+        params.description,
+        params.cookies,
+        params.storage,
+        params.user_agent,
+    ) {
+        Ok(Some(t)) => {
+            let result = bsk_protocol::template::TemplateUpdateResult { template: t };
+            ResponseBody::Ok(serde_json::to_value(result).unwrap_or(Value::Null))
+        }
+        Ok(None) => ResponseBody::Err(RpcError {
+            code: ErrorCode::NotFound,
+            message: format!("template not found: {}", params.id),
+            data: None,
+        }),
+        Err(err) => ResponseBody::Err(RpcError {
+            code: ErrorCode::ProtocolError,
+            message: err.to_string(),
+            data: None,
+        }),
+    }
+}
+
+fn handle_template_delete(state: &Arc<DaemonState>, params: Value) -> ResponseBody {
+    let params: bsk_protocol::template::TemplateDeleteParams = match ipc_parse_params(params) {
+        Ok(p) => p,
+        Err(e) => return ResponseBody::Err(e),
+    };
+    match state.templates.delete(&params.id) {
+        Ok(true) => {
+            let result = bsk_protocol::template::TemplateDeleteResult { deleted: true };
+            ResponseBody::Ok(serde_json::to_value(result).unwrap_or(Value::Null))
+        }
+        Ok(false) => ResponseBody::Err(RpcError {
+            code: ErrorCode::NotFound,
+            message: format!("template not found: {}", params.id),
+            data: None,
+        }),
+        Err(err) => ResponseBody::Err(RpcError {
+            code: ErrorCode::ProtocolError,
+            message: err.to_string(),
+            data: None,
+        }),
+    }
+}
+
+fn handle_template_apply(state: &Arc<DaemonState>, params: Value) -> ResponseBody {
+    let params: bsk_protocol::template::TemplateApplyParams = match ipc_parse_params(params) {
+        Ok(p) => p,
+        Err(e) => return ResponseBody::Err(e),
+    };
+    match state.templates.get(&params.template_id) {
+        Some(template) => {
+            let result = bsk_protocol::template::TemplateApplyResult {
+                applied_cookies: template.cookies.len(),
+                applied_storage: template.storage.len(),
+                applied_user_agent: template.user_agent.is_some(),
+            };
+            let mut value = serde_json::to_value(result).unwrap();
+            value["template"] = serde_json::to_value(&template).unwrap();
+            ResponseBody::Ok(value)
+        }
+        None => ResponseBody::Err(RpcError {
+            code: ErrorCode::NotFound,
+            message: format!("template not found: {}", params.template_id),
+            data: None,
+        }),
+    }
 }
 
 // ----- Test-helper IpcServer wrapper around the transport layer -----

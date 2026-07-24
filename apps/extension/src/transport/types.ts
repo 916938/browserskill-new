@@ -669,3 +669,95 @@ export interface RecordAwaitParams {
 export interface RecordAwaitResult {
   trace: Trace;
 }
+
+// ── Profile Template types (template.* RPC) ──────────────
+
+export interface CookieEntry {
+  name: string;
+  value: string;
+  domain: string;
+  path?: string;
+  secure?: boolean;
+  http_only?: boolean;
+}
+
+export interface StorageEntry {
+  value: string;
+}
+
+export interface ProfileTemplate {
+  id: string;
+  name: string;
+  description?: string;
+  cookies: CookieEntry[];
+  storage: Record<string, StorageEntry>;
+  user_agent?: string;
+  created_at_ms: number;
+  updated_at_ms: number;
+}
+
+export interface TemplateSummary {
+  id: string;
+  name: string;
+  description?: string;
+  cookie_count: number;
+  storage_count: number;
+  has_user_agent: boolean;
+  created_at_ms: number;
+  updated_at_ms: number;
+}
+
+export interface TemplateListParams {}
+export interface TemplateListResult {
+  templates: TemplateSummary[];
+}
+
+export interface TemplateGetParams {
+  id: string;
+}
+export interface TemplateGetResult {
+  template: ProfileTemplate;
+}
+
+export interface TemplateCreateParams {
+  name: string;
+  description?: string;
+  cookies: CookieEntry[];
+  storage: Record<string, StorageEntry>;
+  user_agent?: string;
+}
+export interface TemplateCreateResult {
+  template: ProfileTemplate;
+}
+
+export interface TemplateUpdateParams {
+  id: string;
+  name?: string;
+  description?: string;
+  cookies?: CookieEntry[];
+  storage?: Record<string, StorageEntry>;
+  user_agent?: string | null; // null = explicitly clear, absent = no change
+}
+export interface TemplateUpdateResult {
+  template: ProfileTemplate;
+}
+
+export interface TemplateDeleteParams {
+  id: string;
+}
+export interface TemplateDeleteResult {
+  deleted: boolean;
+}
+
+export type TemplateScope = "cookies" | "storage" | "user_agent" | "all";
+
+export interface TemplateApplyParams {
+  template_id: string;
+  scope?: TemplateScope;
+}
+export interface TemplateApplyResult {
+  applied_cookies: number;
+  applied_storage: number;
+  applied_user_agent: boolean;
+  template?: ProfileTemplate; // included by daemon for extension-side application
+}
