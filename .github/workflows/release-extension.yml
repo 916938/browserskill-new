@@ -4,7 +4,18 @@ on:
   push:
     tags:
       - ext-v*
+      - 'v[0-9]+.[0-9]+.[0-9]*'          # 允许 v{version} 格式标签直接触发
   workflow_dispatch:
+    inputs:
+      custom_tag:
+        description: 'Custom release tag (leave empty for auto-generated)'
+        required: false
+        type: string
+      prerelease:
+        description: 'Mark as pre-release'
+        required: false
+        default: 'false'
+        type: boolean
 
 permissions:
   contents: write
@@ -19,22 +30,88 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
+      is_prerelease: ${{ steps.version.outputs.is_prerelease }}
+      source: ${{ steps.version.outputs.source }}
     steps:
       - uses: actions/checkout@v6
 
-      - name: Resolve extension version
+      - name: Resolve version and tag (smart default)
         id: version
         shell: bash
         run: |
           set -euo pipefail
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            VERSION="$(node -p "require('./apps/extension/package.json').version")"
+
+          # --- Step 1: Extract base version from package.json ---
+          PKG_VERSION="$(node -p "require('./apps/extension/package.json').version")"
+          VERSION="${PKG_VERSION#v}"
+          echo "Package version: ${VERSION}"
+
+          # --- Step 2: Determine tag by priority ---
+
+          # Priority 1: Manual tag push (ext-v* or v*)
+          if [[ "${GITHUB_REF_NAME}" == ext-v* ]] || [[ "${GITHUB_REF_NAME}" == v[0-9]* ]]; then
+            TAG="${GITHUB_REF_NAME}"
+            SOURCE="manual_tag"
+            echo "Source: manual tag push -> ${TAG}"
+
+          # Priority 2: workflow_dispatch with custom_tag input
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ inputs.custom_tag }}" ]; then
+            CUSTOM="${{ inputs.custom_tag }}"
+            # Ensure tag starts with 'v' if it looks like a plain version number
+            if [[ "$CUSTOM" =~ ^[0-9] ]]; then
+              TAG="v${CUSTOM}"
+            else
+              TAG="${CUSTOM}"
+            fi
+            SOURCE="manual_input"
+            echo "Source: manual input -> ${TAG}"
+
+          # Priority 3: Smart auto-generated default
           else
-            VERSION="${GITHUB_REF_NAME#ext-v}"
+            BRANCH="${GITHUB_REF#refs/heads/}"
+            # Normalize branch name to slug (replace / and special chars)
+            BRANCH_SLUG="$(echo "$BRANCH" | sed 's/[^a-zA-Z0-9._-]/-/g; s/--*/-/g; s/^-\|-$//g')"
+
+            case "$BRANCH" in
+              main|master|chain)
+                # Main branch: clean semver tag
+                TAG="v${VERSION}"
+                IS_PRERELEASE="false"
+                ;;
+              *)
+                # Feature/dev branch: append branch slug, mark as prerelease
+                TAG="v${VERSION}-${BRANCH_SLUG}"
+                IS_PRERELEASE="true"
+                ;;
+            esac
+            SOURCE="auto_default"
+            echo "Source: auto default (${BRANCH}) -> ${TAG}"
           fi
-          VERSION="${VERSION#v}"
+
+          # --- Step 3: Determine prerelease flag ---
+          # If not already set above, check inputs or detect from version string
+          if [ -z "${IS_PRERELEASE:-}" ]; then
+            if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.prerelease }}" = "true" ]; then
+              IS_PRERELEASE="true"
+            elif [[ "$VERSION" =~ -(alpha|beta|rc|dev|nightly)[0-9]*$ ]]; then
+              IS_PRERELEASE="true"
+            else
+              IS_PRERELEASE="false"
+            fi
+          fi
+
+          # --- Output ---
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "tag=ext-v${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "is_prerelease=${IS_PRERELEASE}" >> "$GITHUB_OUTPUT"
+          echo "source=${SOURCE}" >> "$GITHUB_OUTPUT"
+
+          echo "---"
+          echo "Resolved:"
+          echo "  version     = ${VERSION}"
+          echo "  tag         = ${TAG}"
+          echo "  prerelease  = ${IS_PRERELEASE}"
+          echo "  source      = ${SOURCE}"
 
   guard:
     needs: resolve
@@ -42,17 +119,30 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Verify tag matches extension package.json version
+      - name: Verify version consistency
         shell: bash
         run: |
           set -euo pipefail
           PKG_VERSION="$(node -p "require('./apps/extension/package.json').version")"
           RELEASE_VERSION="${{ needs.resolve.outputs.version }}"
-          if [ "$PKG_VERSION" != "$RELEASE_VERSION" ]; then
-            echo "apps/extension/package.json version (${PKG_VERSION}) does not match release version (${RELEASE_VERSION})"
-            exit 1
+          SOURCE="${{ needs.resolve.outputs.source }}"
+
+          # For manual tags, enforce strict match between tag version and package.json
+          if [ "$SOURCE" = "manual_tag" ]; then
+            if [ "$PKG_VERSION" != "$RELEASE_VERSION" ]; then
+              echo "::error::Tag version (${RELEASE_VERSION}) does not match apps/extension/package.json (${PKG_VERSION})"
+              exit 1
+            fi
+            echo "Strict guard passed: tag version matches package.json"
+          else
+            # For auto-generated / manual input, just warn on mismatch but don't fail
+            if [ "$PKG_VERSION" != "$RELEASE_VERSION" ]; then
+              echo "::warning::package.json version (${PKG_VERSION}) differs from resolved version (${RELEASE_VERSION})"
+              echo "Proceeding with resolved version: ${RELEASE_VERSION}"
+            else
+              echo "Version check passed: ${RELEASE_VERSION}"
+            fi
           fi
-          echo "Version guard passed: ${RELEASE_VERSION}"
 
   build-extension:
     needs: [resolve, guard]
@@ -124,5 +214,6 @@ jobs:
           tag_name: ${{ needs.resolve.outputs.tag }}
           name: BrowserSkill Extension ${{ needs.resolve.outputs.version }}
           make_latest: false
+          prerelease: ${{ needs.resolve.outputs.is_prerelease == 'true' }}
           generate_release_notes: true
           files: dist/*.zip
