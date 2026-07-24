@@ -6,6 +6,7 @@ import {
   RiArrowRightSLine,
   RiCheckLine,
   RiFileCopyLine,
+  RiPencilLine,
 } from "@remixicon/react";
 import { type ChangeEvent, useEffect, useState } from "react";
 import { PROTOCOL_VERSION } from "@/transport/handshake";
@@ -37,11 +38,13 @@ function getLogoSrc() {
 
 export function App() {
   const { t } = useTranslation("extension");
-  const { snapshot, statusState, setConnectionEnabled } = useConnectionState();
+  const { snapshot, statusState, setLabel, setConnectionEnabled } = useConnectionState();
   const [view, setView] = useState<PopupView>("main");
   const [copiedInstanceId, setCopiedInstanceId] = useState(false);
   const [purposeDraft, setPurposeDraft] = useState("");
   const [startUrlDraft, setStartUrlDraft] = useState("");
+  const [labelDraft, setLabelDraft] = useState(snapshot.label);
+  const [isEditingLabel, setIsEditingLabel] = useState(false);
   // Bumped on every successful copy so the "copied" toast re-shows (and its
   // auto-hide timer restarts) even when the copied content is unchanged.
   const [copiedTick, setCopiedTick] = useState(0);
@@ -62,6 +65,11 @@ export function App() {
     setCopiedInstanceId(false);
     setCopiedTick(0);
   }, [snapshot.instanceId]);
+
+  // Sync label draft when external changes occur (e.g., from another popup or background refresh).
+  useEffect(() => {
+    setLabelDraft(snapshot.label);
+  }, [snapshot.label]);
 
   // Hide the copied toast when the command changes (topic / start URL edits).
   useEffect(() => {
@@ -242,6 +250,54 @@ export function App() {
               <span title={t("popup.extensionVersionHint")}>{extensionVersion}</span>
               <span aria-hidden>/</span>
               <span title={t("popup.daemonVersionHint")}>{daemonVersion}</span>
+            </div>
+            {/* Label 编辑行 */}
+            <div className="flex min-w-0 items-center gap-1" data-slot="popup-label-row">
+              <span className="shrink-0">{t("popup.labelTitle")}</span>
+              {isEditingLabel ? (
+                <div className="flex min-w-0 flex-1 items-center gap-1">
+                  <Input
+                    value={labelDraft}
+                    onChange={(e) => setLabelDraft(e.target.value.slice(0, 32))}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        setLabel(labelDraft.trim());
+                        setIsEditingLabel(false);
+                      } else if (e.key === "Escape") {
+                        setLabelDraft(snapshot.label);
+                        setIsEditingLabel(false);
+                      }
+                    }}
+                    onBlur={() => {
+                      if (labelDraft.trim() !== snapshot.label) {
+                        setLabel(labelDraft.trim());
+                      }
+                      setIsEditingLabel(false);
+                    }}
+                    className="h-6 text-xs"
+                    autoFocus
+                  />
+                </div>
+              ) : (
+                <>
+                  <span
+                    className="min-w-0 cursor-pointer truncate font-mono text-[10px] text-foreground/80 hover:text-foreground"
+                    onClick={() => setIsEditingLabel(true)}
+                    title={t("popup.editLabel")}
+                  >
+                    {snapshot.label || t("popup.noLabel")}
+                  </span>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="size-5 rounded-md"
+                    onClick={() => setIsEditingLabel(true)}
+                  >
+                    <RiPencilLine className="size-3" />
+                  </Button>
+                </>
+              )}
             </div>
             <div className="flex min-w-0 items-center justify-end gap-1">
               <span className="shrink-0">{t("popup.instanceTitle")}</span>

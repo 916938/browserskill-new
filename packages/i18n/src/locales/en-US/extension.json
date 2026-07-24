@@ -42,6 +42,9 @@
     "copy": "Copy",
     "copied": "Copied",
     "copyInstanceId": "Copy instance ID",
+    "labelTitle": "Label",
+    "editLabel": "Click to edit",
+    "noLabel": "(none)",
     "record": {
       "sectionTitle": "Action recording",
       "cardDesc": "Record your actions for Agent reference",
