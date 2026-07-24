@@ -7,8 +7,6 @@
 
 mod support;
 
-use support::wait_for_abort_registered;
-
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
