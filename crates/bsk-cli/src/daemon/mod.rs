@@ -13,6 +13,7 @@ pub mod session_interrupt;
 pub mod sessions;
 pub mod start;
 pub mod state;
+pub mod templates;
 pub mod ws;
 
 pub use start::{DaemonConfig, run_foreground};

@@ -29,6 +29,7 @@ pub mod session;
 pub mod snapshot;
 pub mod status;
 pub mod tab;
+pub mod templates;
 pub mod update;
 pub mod waits;
 
@@ -50,6 +51,7 @@ use crate::cli::screenshot::ScreenshotArgs;
 use crate::cli::session::SessionCmd;
 use crate::cli::snapshot::SnapshotArgs;
 use crate::cli::tab::TabCmd;
+use crate::cli::templates::TemplatesCmd;
 use crate::cli::update::UpdateArgs;
 use crate::cli::waits::{WaitForNavigationArgs, WaitMsArgs};
 
@@ -119,6 +121,9 @@ pub enum Command {
 
     /// Tab management commands.
     Tab(TabCmd),
+
+    /// Manage profile templates (CRUD + apply).
+    Templates(TemplatesCmd),
 
     /// Capture a PNG of the active tab or a snapshot ref element.
     Screenshot(ScreenshotArgs),
