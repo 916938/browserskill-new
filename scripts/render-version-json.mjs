@@ -5,7 +5,7 @@
  * Usage:
  *   node scripts/render-version-json.mjs \
  *     --version 0.1.5 \
- *     --repo Tencent/BrowserSkill \
+ *     --repo 916938/browserskill-new \
  *     --server-url https://github.com \
  *     --branch main \
  *     --dist dist \

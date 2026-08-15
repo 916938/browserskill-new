@@ -21,7 +21,7 @@ use crate::cli::daemon::StartArgs;
 use crate::cli::error::{CliError, Format};
 
 pub const DEFAULT_MANIFEST_URL: &str =
-    "https://github.com/Tencent/BrowserSkill/releases/latest/download/version.json";
+    "https://github.com/916938/browserskill-new/releases/latest/download/version.json";
 const FETCH_TIMEOUT: Duration = Duration::from_secs(10);
 const ARCHIVE_FETCH_TIMEOUT: Duration = Duration::from_secs(60);
 /// How often the daemon ticks the update check, and how long a cache
@@ -882,7 +882,7 @@ mod tests {
                 "name": "bsk",
                 "version": "0.2.0",
                 "tag": "cli-v0.2.0",
-                "release_url": "https://github.com/Tencent/BrowserSkill/releases/tag/cli-v0.2.0",
+                "release_url": "https://github.com/916938/browserskill-new/releases/tag/cli-v0.2.0",
                 "assets": {
                     "darwin-arm64": {
                         "url": "https://example.test/bsk.tar.gz",
@@ -917,7 +917,7 @@ mod tests {
                 "name": "bsk",
                 "version": "0.2.0",
                 "tag": "cli-v0.2.0",
-                "release_url": "https://github.com/Tencent/BrowserSkill/releases/tag/cli-v0.2.0",
+                "release_url": "https://github.com/916938/browserskill-new/releases/tag/cli-v0.2.0",
                 "assets": {
                     "linux-x64": {
                         "url": "https://example.test/bsk.tar.gz",
@@ -1053,7 +1053,7 @@ mod tests {
                 "name": "bsk",
                 "version": "0.2.0",
                 "tag": "cli-v0.2.0",
-                "release_url": "https://github.com/Tencent/BrowserSkill/releases/tag/cli-v0.2.0",
+                "release_url": "https://github.com/916938/browserskill-new/releases/tag/cli-v0.2.0",
                 "assets": {
                     "linux-x64": {
                         "url": "https://example.test/bsk.tar.gz",

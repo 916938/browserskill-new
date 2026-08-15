@@ -2,7 +2,7 @@
 
 **Last updated:** May 25, 2026
 
-This Privacy Policy describes how the **BrowserSkill** browser extension (the "Extension") handles information when you install and use it. BrowserSkill is published as part of the open-source [BrowserSkill](https://github.com/Tencent/BrowserSkill) project. The source code is publicly auditable.
+This Privacy Policy describes how the **BrowserSkill** browser extension (the "Extension") handles information when you install and use it. BrowserSkill is published as part of the open-source [BrowserSkill](https://github.com/916938/browserskill-new) project. The source code is publicly auditable. This project is derived from [Tencent/BrowserSkill](https://github.com/Tencent/BrowserSkill) under the MIT License.
 
 If you have questions about this policy, please open an issue in the project repository.
 

