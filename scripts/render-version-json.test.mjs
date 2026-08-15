@@ -29,7 +29,7 @@ test("renders asset URLs with sha256 checksums from dist files", () => {
     "--version",
     version,
     "--repo",
-    "Tencent/BrowserSkill",
+    "916938/browserskill-new",
     "--dist",
     dist,
     "--out",
@@ -40,7 +40,7 @@ test("renders asset URLs with sha256 checksums from dist files", () => {
   const expectedSha = createHash("sha256").update(archiveBytes).digest("hex");
   assert.equal(
     manifest.assets["darwin-arm64"].url,
-    `https://github.com/Tencent/BrowserSkill/releases/download/cli-v${version}/${archive}`,
+    `https://github.com/916938/browserskill-new/releases/download/cli-v${version}/${archive}`,
   );
   assert.equal(manifest.assets["darwin-arm64"].sha256, expectedSha);
 });

@@ -2,9 +2,11 @@
 name: browser-skill
 description: |
   Use when the user asks to perform browser automation tasks against their
-  logged-in browser: visit and read pages, fill forms, scrape data, click
-  through a flow, regression-test a PR's UI, validate a deployed page.
-  Requires the bsk CLI installed and the browser-skill extension loaded.
+  logged-in Chromium browser: visit and read pages, fill forms, scrape data,
+  click through a flow, regression-test a PR's UI, validate a deployed page,
+  or target a connected browser instance by smart label or instance id.
+  Requires the bsk CLI installed and the matching browser-skill extension
+  loaded.
 ---
 
 # browser-skill
@@ -17,6 +19,7 @@ Drive the user's **real Chromium browser** (with their logins and cookies) throu
 - Fill forms, click through multi-step flows, smoke-test a UI change
 - Understand pages with `bsk snapshot` first; use `bsk get-html` or `bsk screenshot` only when the snapshot is insufficient
 - Operate on a specific user tab they point you at (after `bsk tab borrow`)
+- Target a specific connected browser instance after resolving its smart label or `instance_id` with `bsk browsers`
 
 ## When NOT to use
 
@@ -30,7 +33,8 @@ Drive the user's **real Chromium browser** (with their logins and cookies) throu
 
 1. `bsk` on `PATH` (Rust CLI from browser-skill)
 2. browser-skill **extension** loaded in Chromium and connected (popup shows green)
-3. Any `bsk` command auto-starts background services as needed; use `bsk doctor` if anything fails
+3. CLI, daemon, and extension must use matching protocol versions; version skew exits with code `5`
+4. Any `bsk` command auto-starts background services as needed; use `bsk doctor` if anything fails
 
 ## Mandatory workflow
 
@@ -42,9 +46,28 @@ Every automation task **must** follow this lifecycle. Do **not** rely on idle ti
 3. bsk session stop <id>          → REQUIRED when done (even on error paths)
 ```
 
-Optional: `bsk session start --browser <instance-id-or-label>` when multiple browsers are connected (`bsk browsers` / error output lists them). Add `--no-focus` to open the Agent Window in the background without stealing focus from the user's current window.
+Optional: when multiple browsers are connected, run `bsk browsers` first, then start with `bsk session start --browser <instance-id-or-label>`. Add `--no-focus` to open the Agent Window in the background without stealing focus from the user's current window. Follow **Multi-browser targeting and smart labels** below; do not guess among ambiguous labels.
 
 Emergency cleanup: `bsk session stop --all` or the Agent Window overlay **Stop all**.
+
+## Multi-browser targeting and smart labels
+
+The base CLI and extension implement browser-instance discovery and selection:
+
+- `bsk browsers` lists connected instances with their `instance_id`, editable smart label, browser version, and active sessions.
+- `bsk session start --browser <instance-id-or-label>` starts a session on the selected connected instance.
+- `instance_id` is the stable, unique routing key. A smart label is an editable human-readable alias and may be duplicated.
+- If a label is duplicated, missing, or offline, do not guess. Re-run `bsk browsers` and use the full `instance_id`, or ask the user which instance to target.
+- Label edits are made in the extension Popup, acknowledged by the daemon, and may briefly reconnect the extension. Re-run `bsk browsers` after a label change; do not cache label-to-id mappings across tasks.
+- Each Chromium Profile has its own browser-managed cookies, Local Storage, extension data, and login state. This is Chromium Profile behavior; smart labels only identify connected instances.
+- Do not switch an active session to another instance. Stop it and start a new session against the intended instance.
+
+```bash
+bsk browsers --json
+bsk session start --browser <full-instance-id> --no-focus
+# ... always pass --session <id> ...
+bsk session stop <id>
+```
 
 ## Stop when the goal is met
 
@@ -248,6 +271,35 @@ Backward compatible: `--timeout-ms` is an alias.
 params, timeout) without contacting the daemon. Use to debug argument construction
 or validate payloads before execution.
 
+### Profile templates — `bsk templates`
+
+Profile Templates currently provide template metadata/CRUD and controlled apply responses. They do not automatically capture the current Profile's live cookies or storage into a template; do not describe them as a live account backup or migration mechanism.
+
+| Command | Summary |
+|---------|---------|
+| `bsk templates list` | List template summaries (id, name, cookie/storage counts, User-Agent flag, updated time) |
+| `bsk templates get <id>` | Show full template metadata and stored entries |
+| `bsk templates create --name <name> [--description <text>] [--user-agent <ua>]` | Create an empty template with optional metadata/User-Agent |
+| `bsk templates update <id> [--name <name>] [--description <text>] [--user-agent <ua>]` | Update template metadata; pass an empty User-Agent to clear it |
+| `bsk templates delete <id>` | Delete a template by id; confirm the id before destructive cleanup |
+| `bsk templates apply <id> [--scope all\|cookies\|storage\|user-agent]` | Apply the selected template scope to the current browser Profile |
+
+Rules:
+
+- `bsk templates apply` currently returns the selected template and application counts; do not assume CLI output alone proves that browser cookies, storage, or User-Agent changed. Verify only behavior explicitly supported by the installed extension/version.
+- Use `--scope` instead of `all` when only one category is required. Treat `cookies` and `storage` as sensitive account state.
+- Never create, print, export, or apply templates containing credentials, session tokens, password-manager data, payment data, or unrelated personal data unless the user explicitly requests a legitimate controlled operation and confirms the exact scope.
+- Do not use templates to merge accounts, bypass login, or copy a live account's authentication state into another account. Prefer a new isolated Profile and normal user authentication.
+- After applying a template, observe the target page and verify only the requested non-sensitive result; do not dump cookies or storage to verify it.
+
+Examples:
+
+```bash
+bsk templates list --json
+bsk templates get <template-id> --json
+bsk templates apply <template-id> --scope user-agent
+```
+
 ### Environment variables
 
 | Variable | Purpose | Default |
@@ -372,37 +424,7 @@ Always **`bsk session stop <id>`** in a `finally`-style path so the Agent Window
 4. **No post-success control** — once the user’s goal (or last trace step) is met, do not keep operating the page; stop the session unless they asked to keep it open.
 5. **No raw observe escalation before snapshot/observe** — use `bsk snapshot` first; use `bsk observe` when VOM semantics or conditional surfaces help. Only use `bsk get-html` or `bsk screenshot` when snapshot/observe is insufficient. Element screenshots (`--ref @eN`) still require a fresh snapshot/observe ref — never skip observation just to grab a visual.
 6. **`evaluate` is powerful and risky** — use only when snapshot + click/fill/select cannot suffice; never on credential surfaces.
-
-## BrowserSkill Pro (optional skill package)
-
-The [BrowserSkill Pro](https://github.com/916938/browserskill-pro) skill package adds helper scripts, layered documentation, and workflow examples on top of the base `bsk` CLI. **Everything above works without it** — Pro is an enhancement, not a requirement.
-
-### What Pro provides
-
-| Feature | Base skill | Pro package |
-|---------|-----------|-------------|
-| `bsk snapshot` (raw JSON) | `bsk snapshot --session <id>` | Same, plus `snapshot.py` for smart modes |
-| Snapshot auto/compact/file | — | `snapshot.py --auto` (compact for small, file for large), `--mode compact`, `--mode file` |
-| Readiness check | `bsk doctor` (sends browser actions) | `doctor.py --wait-connected 20` (read-only, no browser actions) |
-| Cross-platform screenshot | `bsk screenshot` | `screenshot.py` / `screenshot.ps1` (path-compatible wrapper) |
-| Smart wait (URL/title/text) | `bsk wait-for-navigation` (load event only) | `wait_for.py --url-contains / --title-contains / --text-contains` (polls snapshot, exits nonzero on timeout) |
-| UTF-8 args file workflow | Direct shell quoting | `invoke.ps1 -ArgsFile` / `invoke.sh --args-file` (avoids shell escaping for Chinese/nested JSON) |
-| Action wrapper | Direct `bsk <cmd>` calls | `invoke.ps1 -Action <name>` / `invoke.sh --action <name>` (auto-maps action names to bsk subcommands) |
-| Layered reference docs | This file only | `protocol.md` (parameters, exit codes), `operations.md` (install, recovery), `how-it-works.md` (architecture) |
-| End-to-end examples | — | `examples/` directory (form fill, scroll, popup recovery, network debug) |
-| OpenAI/Codex metadata | — | `agents/openai.yaml` |
-
-### When to install Pro
-
-Install the Pro skill package when you need:
-
-- **Snapshot control** — auto strategy that handles both small and large pages without flooding context
-- **Smart waiting** — poll by visible text or URL change instead of fixed sleep
-- **Readiness checks without side effects** — `doctor.py` never sends browser actions
-- **UTF-8 safe argument passing** — avoid shell escaping issues with Chinese text or nested JSON
-- **Workflow examples** — end-to-end patterns for common tasks
-
-To install, copy the `skill/` directory from the [BrowserSkill Pro repo](https://github.com/916938/browserskill-pro) into your agent's skills directory as `browserskill-pro/`. See the Pro README for agent-specific install paths.
+7. **No ambiguous instance targeting** — smart labels are editable aliases, not isolation or authorization controls; use the full `instance_id` when a label is ambiguous.
 
 ---
 

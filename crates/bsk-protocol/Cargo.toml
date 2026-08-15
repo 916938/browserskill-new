@@ -9,7 +9,7 @@ readme = "README.md"
 keywords = ["browser", "automation", "json-rpc", "protocol", "websocket"]
 categories = ["web-programming", "api-bindings"]
 repository.workspace = true
-homepage = "https://github.com/Tencent/BrowserSkill"
+homepage = "https://github.com/916938/browserskill-new"
 documentation = "https://docs.rs/bsk-protocol"
 
 [dependencies]
