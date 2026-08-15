@@ -343,11 +343,21 @@ export default defineBackground(() => {
       const msg = raw as PopupOutbound;
       if (msg && typeof msg === "object" && "kind" in msg) {
         if (msg.kind === "set_label") {
-          void setLabel(msg.value).then(async () => {
-            await controller.refreshLabel();
-            // Label is sent during WS handshake; reconnect so daemon receives the updated label
-            await controller.disconnectForLabelUpdate();
-          });
+          void (async () => {
+            try {
+              const label = await setLabel(msg.value);
+              await controller.refreshLabel();
+              // Label is sent during WS handshake; reconnect so daemon receives the updated label.
+              await controller.disconnectForLabelUpdate();
+              post({ kind: "label_update_result", requestId: msg.requestId, label });
+            } catch (err) {
+              post({
+                kind: "label_update_result",
+                requestId: msg.requestId,
+                error: err instanceof Error ? err.message : String(err),
+              });
+            }
+          })();
         } else if (msg.kind === "set_port") {
           // Placeholder for the future custom-port UI; warn loudly so
           // any reintroduced popup control is caught instead of

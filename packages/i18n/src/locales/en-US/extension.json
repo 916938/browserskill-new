@@ -49,7 +49,9 @@
       "title": "Label",
       "placeholder": "e.g. WorkChrome",
       "saveBtn": "Save",
+      "saving": "Saving…",
       "saved": "Saved",
+      "saveFailed": "Save failed: {{error}}",
       "defaultHint": "Auto-generated from browser info"
     },
     "record": {
