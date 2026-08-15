@@ -372,7 +372,8 @@ describe("App - Label Editing", () => {
     expect(saveBtn.disabled).toBe(false);
   });
 
-  it("calls setLabel on Enter key press", () => {
+  it("calls setLabel on Enter key press", async () => {
+    setLabel.mockResolvedValue("NewLabel");
     // Note: This test verifies the onKeyDown handler is wired correctly.
     // The actual setLabel call depends on React synthetic event handling
     // which may vary across Testing Library versions.

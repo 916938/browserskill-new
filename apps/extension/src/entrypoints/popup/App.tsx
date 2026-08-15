@@ -8,12 +8,13 @@ import {
   RiInformationLine,
 } from "@remixicon/react";
 import { type ChangeEvent, useEffect, useState } from "react";
+import { LABEL_MAX_LENGTH, normalizeLabel } from "@/lib/instance-id";
 import { PROTOCOL_VERSION } from "@/transport/handshake";
 import functionIconUrl from "../../../assets/function.svg";
 import { ConnectionStatusIndicator } from "./connection-status-indicator";
 import { POPUP_FEATURES, type PopupView } from "./features";
-import { TemplateView } from "./template-view";
 import { Switch } from "./switch";
+import { TemplateView } from "./template-view";
 import { type PopupStatusState, useConnectionState } from "./use-connection-state";
 import { useControlHintsHidden } from "./use-control-hints-hidden";
 
@@ -42,6 +43,8 @@ export function App() {
   const { t } = useTranslation("extension");
   const { snapshot, statusState, setLabel, setConnectionEnabled } = useConnectionState();
   const [controlHintsHidden, setControlHintsHidden] = useControlHintsHidden();
+  const [labelSaving, setLabelSaving] = useState(false);
+  const [labelError, setLabelError] = useState<string | null>(null);
   const [view, setView] = useState<PopupView>("main");
   const [copiedInstanceId, setCopiedInstanceId] = useState(false);
   const [purposeDraft, setPurposeDraft] = useState("");
@@ -83,12 +86,18 @@ export function App() {
     }
   }, [snapshot.label]);
 
-  // Auto-hide the copied toast shortly after it appears.
+  // Auto-hide transient status messages shortly after they appear.
   useEffect(() => {
     if (copiedTick === 0) return;
     const timer = window.setTimeout(() => setCopiedTick(0), 1500);
     return () => window.clearTimeout(timer);
   }, [copiedTick]);
+
+  useEffect(() => {
+    if (!labelSaved) return;
+    const timer = window.setTimeout(() => setLabelSaved(false), 1500);
+    return () => window.clearTimeout(timer);
+  }, [labelSaved]);
 
   const isSkewed = statusState === "version_skew";
   const daemonVersion = snapshot.handshake?.version ?? "—";
@@ -100,6 +109,27 @@ export function App() {
     if (!snapshot.instanceId || !navigator.clipboard?.writeText) return;
     await navigator.clipboard.writeText(snapshot.instanceId);
     setCopiedInstanceId(true);
+  };
+
+  const saveLabel = async () => {
+    setLabelError(null);
+    let normalized: string;
+    try {
+      normalized = normalizeLabel(labelDraft);
+    } catch (err) {
+      setLabelError(err instanceof Error ? err.message : String(err));
+      return;
+    }
+    if (normalized === snapshot.label || labelSaving) return;
+    setLabelSaving(true);
+    try {
+      await setLabel(normalized);
+      setLabelSaved(true);
+    } catch (err) {
+      setLabelError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLabelSaving(false);
+    }
   };
 
   const recordReady = statusState === "connected" && Boolean(snapshot.instanceId);
@@ -287,7 +317,7 @@ export function App() {
                 <Input
                   id="bh-label"
                   type="text"
-                  maxLength={32}
+                  maxLength={LABEL_MAX_LENGTH}
                   value={labelDraft}
                   onChange={(event: ChangeEvent<HTMLInputElement>) =>
                     setLabelDraft(event.target.value)
@@ -295,12 +325,9 @@ export function App() {
                   onFocus={() => setIsEditingLabel(true)}
                   onBlur={() => setIsEditingLabel(false)}
                   onKeyDown={(event: React.KeyboardEvent) => {
-                    if (
-                      event.key === "Enter" &&
-                      labelDraft.trim() &&
-                      labelDraft !== snapshot.label
-                    ) {
-                      setLabel(labelDraft.trim());
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      void saveLabel();
                     }
                   }}
                   placeholder={t("popup.label.placeholder")}
@@ -312,17 +339,26 @@ export function App() {
                   variant="secondary"
                   size="sm"
                   className="h-7 px-2.5 text-xs"
-                  disabled={!labelDraft.trim() || labelDraft === snapshot.label}
+                  disabled={
+                    labelSaving || !labelDraft.trim() || labelDraft.trim() === snapshot.label
+                  }
                   onClick={() => {
-                    setLabel(labelDraft.trim());
-                    setLabelSaved(true);
-                    setTimeout(() => setLabelSaved(false), 1500);
+                    void saveLabel();
                   }}
                   data-slot="popup-label-save"
                 >
-                  {labelSaved ? t("popup.label.saved") : t("popup.label.saveBtn")}
+                  {labelSaving
+                    ? t("popup.label.saving")
+                    : labelSaved
+                      ? t("popup.label.saved")
+                      : t("popup.label.saveBtn")}
                 </Button>
               </div>
+              {labelError && (
+                <p className="text-[10px] text-destructive" role="alert">
+                  {t("popup.label.saveFailed", { error: labelError })}
+                </p>
+              )}
             </div>
           </section>
 

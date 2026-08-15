@@ -6,6 +6,8 @@ import {
   getControlHintsHidden,
   getLabel,
   getOrCreateInstanceId,
+  LABEL_MAX_LENGTH,
+  normalizeLabel,
   STORAGE_KEYS,
   setConnectionEnabled,
   setControlHintsHidden,
@@ -69,11 +71,19 @@ describe("instance-id", () => {
     expect(await getLabel(backend)).toBe("");
   });
 
-  it("setLabel persists the value retrievable by getLabel", async () => {
+  it("setLabel persists the normalized value retrievable by getLabel", async () => {
     const { backend, store } = fakeStorage();
-    await setLabel("Personal Chrome", backend);
+    await setLabel("  Personal Chrome  ", backend);
     expect(store[STORAGE_KEYS.LABEL]).toBe("Personal Chrome");
     expect(await getLabel(backend)).toBe("Personal Chrome");
+  });
+
+  it("normalizes valid labels and rejects invalid labels", () => {
+    expect(normalizeLabel("  Work  ")).toBe("Work");
+    expect(() => normalizeLabel("   ")).toThrow("Label cannot be empty");
+    expect(() => normalizeLabel("A".repeat(LABEL_MAX_LENGTH + 1))).toThrow(
+      `Label cannot exceed ${LABEL_MAX_LENGTH} characters`,
+    );
   });
 
   it("getConnectionEnabled returns true when storage is empty", async () => {
@@ -859,19 +869,16 @@ describe("getLabel / setLabel (edge cases)", () => {
     expect(await getLabel(backend)).toBe("");
   });
 
-  it("setLabel accepts and retrieves empty string (clearing label)", async () => {
-    const { backend, store } = fakeStorage({ [STORAGE_KEYS.LABEL]: "Old Label" });
-    await setLabel("", backend);
-    expect(store[STORAGE_KEYS.LABEL]).toBe("");
-    expect(await getLabel(backend)).toBe("");
+  it("setLabel rejects empty labels", async () => {
+    const { backend } = fakeStorage({ [STORAGE_KEYS.LABEL]: "Old Label" });
+    await expect(setLabel("", backend)).rejects.toThrow("Label cannot be empty");
   });
 
-  it("setLabel handles very long labels (up to storage limits)", async () => {
-    const longLabel = "A".repeat(500);
-    const { backend, store } = fakeStorage();
-    await setLabel(longLabel, backend);
-    expect(store[STORAGE_KEYS.LABEL]).toBe(longLabel);
-    expect(await getLabel(backend)).toBe(longLabel);
+  it("setLabel rejects labels longer than the UI limit", async () => {
+    const { backend } = fakeStorage();
+    await expect(setLabel("A".repeat(LABEL_MAX_LENGTH + 1), backend)).rejects.toThrow(
+      `Label cannot exceed ${LABEL_MAX_LENGTH} characters`,
+    );
   });
 
   it("setLabel handles labels with special characters", async () => {

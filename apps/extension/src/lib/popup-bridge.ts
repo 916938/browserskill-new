@@ -24,7 +24,7 @@ import type { SnapshotInfo } from "./connection-controller";
 export const POPUP_PORT_NAME = "popup";
 
 export type PopupOutbound =
-  | { kind: "set_label"; value: string }
+  | { kind: "set_label"; requestId: string; value: string }
   | { kind: "set_port"; value: number }
   | { kind: "set_connection_enabled"; value: boolean }
   // ── Template operations ──
@@ -37,6 +37,7 @@ export type PopupOutbound =
 
 export type PopupInbound =
   | { kind: "snapshot"; data: SnapshotInfo }
+  | { kind: "label_update_result"; requestId: string; label?: string; error?: string }
   // ── Template responses ──
   | { kind: "template_list_result"; templates: TemplateSummary[]; error?: string }
   | { kind: "template_get_result"; template?: ProfileTemplate; error?: string }

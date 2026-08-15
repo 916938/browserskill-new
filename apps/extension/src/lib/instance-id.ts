@@ -2,6 +2,7 @@ const STORAGE_KEY = "bsk_instance_id";
 const LABEL_STORAGE_KEY = "bh_label";
 const CONNECTION_ENABLED_KEY = "bh_connection_enabled";
 const CONTROL_HINTS_HIDDEN_KEY = "bsk_control_hints_hidden";
+export const LABEL_MAX_LENGTH = 32;
 
 export interface StorageBackend {
   get(keys: string | string[]): Promise<Record<string, unknown>>;
@@ -83,11 +84,22 @@ export async function getLabel(storage: StorageBackend = defaultStorage()): Prom
   return typeof raw === "string" ? raw : "";
 }
 
+export function normalizeLabel(label: string): string {
+  const normalized = label.trim();
+  if (!normalized) throw new Error("Label cannot be empty");
+  if (normalized.length > LABEL_MAX_LENGTH) {
+    throw new Error(`Label cannot exceed ${LABEL_MAX_LENGTH} characters`);
+  }
+  return normalized;
+}
+
 export async function setLabel(
   label: string,
   storage: StorageBackend = defaultStorage(),
-): Promise<void> {
-  await storage.set({ [LABEL_STORAGE_KEY]: label });
+): Promise<string> {
+  const normalized = normalizeLabel(label);
+  await storage.set({ [LABEL_STORAGE_KEY]: normalized });
+  return normalized;
 }
 
 /** Defaults to enabled when unset or non-boolean. */

@@ -51,11 +51,14 @@ const FALLBACK_SNAPSHOT: SnapshotInfo = {
 export function useConnectionState(): {
   snapshot: SnapshotInfo;
   statusState: PopupStatusState;
-  setLabel: (value: string) => void;
+  setLabel: (value: string) => Promise<string>;
   setConnectionEnabled: (value: boolean) => void;
 } {
   const [snapshot, setSnapshot] = useState<SnapshotInfo>(FALLBACK_SNAPSHOT);
   const portRef = useRef<chrome.runtime.Port | null>(null);
+  const pendingLabelsRef = useRef(
+    new Map<string, { resolve: (label: string) => void; reject: (error: Error) => void }>(),
+  );
   const lastStableRef = useRef<ConnectionState>("disconnected");
 
   useEffect(() => {
@@ -66,11 +69,23 @@ export function useConnectionState(): {
     portRef.current = port;
     const onMessage = (raw: unknown) => {
       const msg = raw as PopupInbound;
-      if (msg?.kind === "snapshot") setSnapshot(msg.data);
+      if (msg?.kind === "snapshot") {
+        setSnapshot(msg.data);
+      } else if (msg?.kind === "label_update_result") {
+        const pending = pendingLabelsRef.current.get(msg.requestId);
+        if (!pending) return;
+        pendingLabelsRef.current.delete(msg.requestId);
+        if (msg.error || !msg.label) pending.reject(new Error(msg.error ?? "Label update failed"));
+        else pending.resolve(msg.label);
+      }
     };
     port.onMessage.addListener(onMessage);
     port.onDisconnect.addListener(() => {
       portRef.current = null;
+      for (const pending of pendingLabelsRef.current.values()) {
+        pending.reject(new Error("Popup connection closed before the label was saved"));
+      }
+      pendingLabelsRef.current.clear();
     });
     return () => {
       port.onMessage.removeListener(onMessage);
@@ -87,6 +102,18 @@ export function useConnectionState(): {
     }
   };
 
+  const setLabel = (value: string): Promise<string> => {
+    const requestId = crypto.randomUUID();
+    return new Promise((resolve, reject) => {
+      if (!portRef.current) {
+        reject(new Error("Popup is not connected to the extension background"));
+        return;
+      }
+      pendingLabelsRef.current.set(requestId, { resolve, reject });
+      post({ kind: "set_label", requestId, value });
+    });
+  };
+
   const displayState = resolvePopupDisplayState(snapshot.state, lastStableRef.current);
   if (snapshot.state !== "connecting") {
     lastStableRef.current = snapshot.state;
@@ -97,7 +124,7 @@ export function useConnectionState(): {
   return {
     snapshot,
     statusState,
-    setLabel: (value: string) => post({ kind: "set_label", value }),
+    setLabel,
     setConnectionEnabled: (value: boolean) => post({ kind: "set_connection_enabled", value }),
   };
 }
