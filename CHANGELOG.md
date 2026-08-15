@@ -7,8 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Planned
-- (No planned features yet)
+### Added
+
+- Added the `@browser-skill/vom` workspace package and semantic VOM capture/rendering pipeline.
+- Added `bsk observe`, hover-aware interactions, hover-surface recording, and related protocol schemas.
+- Added mobile device emulation for viewport, User-Agent, touch, and user-agent metadata.
+- Added Agent Window management, window resizing, and `--no-focus` session startup.
+- Added popup control-hint visibility settings with persistent extension storage.
+- Added Kimi Code skill-install harness support.
+
+### Changed
+
+- Merged Tencent upstream `main` into `chain` while retaining Profile Templates, browser labels, and `bsk invoke` enhancements.
+- Reworked method classification around `ControlPlane`, `PassiveRead`, `TransientInput`, and `BrowserMutation` effects.
+- Hardened WebSocket handshake, reconnect, heartbeat, cancellation, and session-cleanup lifecycles.
+- Expanded recording overlays, hover capture, VOM observation, and human-loop behavior.
+- Extended CLI, extension, protocol, and generated JSON Schema coverage for the new tools.
+
+### Fixed
+
+- Added CDP screenshot fallback when `captureVisibleTab` fails and suppresses extension overlays during capture.
+- Fixed Windows named-pipe naming and staged executable replacement during updates.
+- Added release archive checksum verification and periodic daemon update checks.
+- Regenerated the pnpm lockfile after the upstream merge to restore the `@browser-skill/vom` workspace dependency graph.
+
+### Verification
+
+- Rust: 121 tests passed; Clippy and `cargo fmt --check` passed.
+- Extension: TypeScript compilation passed; 788 tests across 55 files passed.
+- Node scripts: 1 test passed.
+
+> This section describes the post-merge `chain` branch at commit `cfbc286`. Existing tags `cli-v0.2.1` and `ext-v0.1.6` predate this merge and do not contain the complete change set above.
 
 ---
 
