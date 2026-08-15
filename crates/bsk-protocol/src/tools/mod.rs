@@ -2,6 +2,7 @@
 
 pub mod console;
 pub mod dialog;
+pub mod emulate;
 pub mod human_loop;
 pub mod interaction;
 pub mod navigation;
@@ -12,9 +13,11 @@ pub mod script;
 pub mod session;
 pub mod tabs;
 pub mod waits;
+pub mod window;
 
 pub use console::*;
 pub use dialog::*;
+pub use emulate::*;
 pub use human_loop::*;
 pub use interaction::*;
 pub use navigation::*;
@@ -25,3 +28,4 @@ pub use script::*;
 pub use session::*;
 pub use tabs::*;
 pub use waits::*;
+pub use window::*;

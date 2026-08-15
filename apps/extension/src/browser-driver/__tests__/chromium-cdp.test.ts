@@ -67,6 +67,30 @@ describe("ChromiumCdp", () => {
     expect(cdp.isAttached(5)).toBe(false);
   });
 
+  it("rolls back the raw attach when a domain enable fails so the tab is not left stuck", async () => {
+    const { api } = fakeApi();
+    (api.sendCommand as ReturnType<typeof vi.fn>).mockImplementation(
+      async (_target, method: string) => {
+        if (method === "Page.enable") throw new Error("Page.enable rejected");
+        return {};
+      },
+    );
+    const cdp = new ChromiumCdp(api);
+
+    // Raw attach succeeds, but Page.enable fails. Without the rollback
+    // the debugger would stay attached while `attachedTabs` omits the id,
+    // leaving the tab stuck on "Another debugger is already attached" for
+    // every later call until the extension is reloaded.
+    await expect(cdp.ensureAttached(42)).rejects.toThrow(/Page\.enable rejected/);
+    expect(cdp.isAttached(42)).toBe(false);
+    expect(api.detach).toHaveBeenCalledWith({ tabId: 42 });
+
+    // The rollback detached, so a fresh attach can succeed afterwards.
+    (api.sendCommand as ReturnType<typeof vi.fn>).mockResolvedValue({});
+    await expect(cdp.ensureAttached(42)).resolves.toBeUndefined();
+    expect(cdp.isAttached(42)).toBe(true);
+  });
+
   it("send() rejects on chrome.runtime.lastError-style failures", async () => {
     const { api } = fakeApi();
     (api.sendCommand as ReturnType<typeof vi.fn>).mockImplementation(
@@ -132,11 +156,33 @@ describe("ChromiumCdp", () => {
     expect(cdp.isAttached(12)).toBe(true);
     expect(api.sendCommand).toHaveBeenCalledWith({ tabId: 12 }, "Runtime.enable", {});
     expect(api.sendCommand).toHaveBeenCalledWith({ tabId: 12 }, "Log.enable", {});
-    await cdp.ensureConsoleCapture(12);
-    const enableCalls = (api.sendCommand as ReturnType<typeof vi.fn>).mock.calls.filter(
+  });
+
+  it("retries console capture after a domain enable fails during attach", async () => {
+    const { api } = fakeApi();
+    (api.sendCommand as ReturnType<typeof vi.fn>).mockImplementation(
+      async (_target, method: string) => {
+        if (method === "Log.enable") throw new Error("restricted");
+        return {};
+      },
+    );
+    const cdp = new ChromiumCdp(api);
+    // Attach is best-effort: Log.enable fails but attach still succeeds,
+    // leaving the tab unmarked so capture can be retried.
+    await cdp.ensureAttached(12);
+    const afterAttach = (api.sendCommand as ReturnType<typeof vi.fn>).mock.calls.filter(
       ([, method]) => method === "Runtime.enable" || method === "Log.enable",
     );
-    expect(enableCalls).toHaveLength(2);
+    expect(afterAttach).toHaveLength(2);
+
+    // Before the fix the "attempted" flag was set before success, so this
+    // was a no-op and the tab silently returned no console output forever.
+    // Now it retries both domains.
+    await cdp.ensureConsoleCapture(12);
+    const afterRetry = (api.sendCommand as ReturnType<typeof vi.fn>).mock.calls.filter(
+      ([, method]) => method === "Runtime.enable" || method === "Log.enable",
+    );
+    expect(afterRetry).toHaveLength(4);
   });
 
   it("retries and surfaces Network.enable failures for explicit capture", async () => {

@@ -48,8 +48,8 @@ pub struct DaemonState {
     /// Per-session "pending interrupt" signal. The WS event handler
     /// `mark`s the session when the user clicks the agent-window
     /// mask's stop button; the IPC tool-dispatch handler
-    /// `try_consume`s on the way in so the next mutating tool call
-    /// is rejected with `UserAborted`. Independent of
+    /// `try_consume`s on the way in so the next browser-input-dispatching
+    /// tool call is rejected with `UserAborted`. Independent of
     /// `SessionRegistry` because the signal is a transient runtime
     /// control state.
     pub session_interrupts: Arc<SessionInterruptRegistry>,
@@ -90,6 +90,7 @@ pub struct DaemonHandle {
     ws: WsHandle,
     ipc: Option<IpcHandle>,
     session_idle_task: JoinHandle<()>,
+    browser_liveness_task: JoinHandle<()>,
 }
 
 impl DaemonHandle {
@@ -98,12 +99,14 @@ impl DaemonHandle {
         ws: WsHandle,
         ipc: Option<IpcHandle>,
         session_idle_task: JoinHandle<()>,
+        browser_liveness_task: JoinHandle<()>,
     ) -> Self {
         Self {
             state,
             ws,
             ipc,
             session_idle_task,
+            browser_liveness_task,
         }
     }
 
@@ -124,6 +127,8 @@ impl DaemonHandle {
     pub async fn shutdown(self) {
         self.session_idle_task.abort();
         let _ = await_join(self.session_idle_task).await;
+        self.browser_liveness_task.abort();
+        let _ = await_join(self.browser_liveness_task).await;
         self.ws.shutdown.notify_waiters();
         let _ = await_join(self.ws.task).await;
         if let Some(ipc) = self.ipc {

@@ -390,6 +390,17 @@ pub enum StopSessionError {
 /// of live sessions.
 const SESSION_ID_MAX_RESERVE_ATTEMPTS: u32 = 64;
 
+/// Agent Window creation hints forwarded to the extension on
+/// `tool.session_start`. `None` fields keep the extension-side defaults
+/// (focused window, browser-chosen size).
+#[derive(Debug, Default, Clone, Copy)]
+pub struct AgentWindowOptions {
+    /// Optional outer size as `(width, height)` CSS pixels.
+    pub size: Option<(u32, u32)>,
+    /// Optional focus hint (`None` = extension default: focused).
+    pub focused: Option<bool>,
+}
+
 /// Ask the chosen browser to create a fresh Agent Window for a brand-new
 /// session id, registering the result on success.
 ///
@@ -401,6 +412,7 @@ pub async fn start_session(
     sessions: &Arc<SessionRegistry>,
     queues: &Arc<ToolQueueRegistry>,
     requested: Option<&str>,
+    window: AgentWindowOptions,
     connect_wait: Duration,
     timeout_dur: Duration,
 ) -> Result<Session, StartSessionError> {
@@ -427,6 +439,9 @@ pub async fn start_session(
     let params = SessionStartParams {
         session_id: session_id.0.clone(),
         browser_instance_id: Some(client.id.0.clone()),
+        width: window.size.map(|(width, _)| width),
+        height: window.size.map(|(_, height)| height),
+        focused: window.focused,
     };
     let rpc_id = next_rpc_id("sess-start");
     let request = RequestFrame {
@@ -535,10 +550,9 @@ pub async fn stop_session(
             Ok(result)
         }
         Err(DispatchError::Rpc(err)) => {
-            // After an extension SW restart the daemon still owns the
-            // session entry (the generation-guard ensures we do not
-            // purge across reconnects), but the extension's in-memory
-            // SessionManager is reset and now answers `not_found`.
+            // A legacy extension or an unusual reconnect race may still
+            // leave a daemon session after the extension's in-memory
+            // SessionManager has reset and now answers `not_found`.
             // Treat that as an authoritative signal that the session is
             // already gone and reconcile our local state instead of
             // leaving an orphan row visible to `bsk session list`

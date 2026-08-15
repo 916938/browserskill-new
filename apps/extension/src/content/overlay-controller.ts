@@ -1,3 +1,4 @@
+import type { OverlayMode } from "@/lib/overlay-bridge";
 import type { BorrowRequestData } from "./BorrowConfirmationOverlay";
 import type { HelpRequestData } from "./HelpRequestOverlay";
 import type { RecordRequestData } from "./RecordOverlay";
@@ -9,6 +10,7 @@ export interface OverlayState {
   controlVisible: boolean;
   interrupting: boolean;
   activeSessionId: string | null;
+  controlMode: OverlayMode;
   automationBypassCount: number;
   /**
    * After record Finish/Stop clears `activeRecord`, the session is still
@@ -16,6 +18,12 @@ export interface OverlayState {
    * so 「Agent 正在控制」does not flash between RecordOverlay and teardown.
    */
   suppressControlAfterRecord: boolean;
+  /**
+   * User preference (chrome.storage, toggled from the popup): hide the
+   * control hints — status pill, orange glow, and the input blocker that
+   * comes with them. Not session state; survives overlay resets.
+   */
+  controlHintsHidden: boolean;
 }
 
 type MutableOverlayState = Omit<OverlayState, "controlVisible">;
@@ -31,8 +39,10 @@ export class OverlayController {
     activeRecord: null,
     interrupting: false,
     activeSessionId: null,
+    controlMode: "hidden",
     automationBypassCount: 0,
     suppressControlAfterRecord: false,
+    controlHintsHidden: false,
   };
 
   snapshot(): OverlayState {
@@ -44,7 +54,7 @@ export class OverlayController {
   }
 
   isControlVisible(): boolean {
-    return this.state.activeSessionId !== null;
+    return this.state.activeSessionId !== null && this.state.controlMode === "control";
   }
 
   addBorrowRequest(request: BorrowRequestData): void {
@@ -61,6 +71,25 @@ export class OverlayController {
   activateAgentSession(sessionId: string): void {
     this.state.activeSessionId = sessionId;
     this.state.interrupting = false;
+    this.state.controlMode = "control";
+  }
+
+  applyAgentControlMode(sessionId: string | null, mode: OverlayMode): void {
+    if (mode === "control" && sessionId) {
+      this.state.activeSessionId = sessionId;
+      this.state.interrupting = false;
+      this.state.controlMode = "control";
+      return;
+    }
+    if ((mode === "interrupting" || mode === "paused") && sessionId) {
+      this.state.activeSessionId = sessionId;
+      this.state.interrupting = mode === "interrupting";
+      this.state.controlMode = mode;
+      return;
+    }
+    this.state.activeSessionId = null;
+    this.state.interrupting = false;
+    this.state.controlMode = "hidden";
   }
 
   setInterrupting(interrupting: boolean): void {
@@ -107,6 +136,10 @@ export class OverlayController {
     }
   }
 
+  setControlHintsHidden(hidden: boolean): void {
+    this.state.controlHintsHidden = hidden;
+  }
+
   resetAgentOverlays(sessionId: string): HelpRequestData | null {
     if (this.state.activeSessionId && this.state.activeSessionId !== sessionId) {
       return null;
@@ -118,6 +151,7 @@ export class OverlayController {
       activeRecord: null,
       interrupting: false,
       activeSessionId: null,
+      controlMode: "hidden",
       automationBypassCount: 0,
       suppressControlAfterRecord: false,
     };
@@ -129,6 +163,7 @@ export class OverlayController {
 export function shouldShowAgentControlOverlay(state: OverlayState): boolean {
   return (
     state.controlVisible &&
+    !state.controlHintsHidden &&
     !state.suppressControlAfterRecord &&
     state.activeHelp === null &&
     state.activeRecord === null

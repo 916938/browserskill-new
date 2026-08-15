@@ -23,6 +23,9 @@
       "disabled": "Off"
     },
     "connectionToggleTitle": "BrowserSkill 连接",
+    "controlHintsToggleTitle": "控制提示",
+    "controlHintsToggleHint": "Agent 控制页面时显示提示条和橙色闪光。",
+    "controlHintsInfoLabel": "控制提示说明",
     "versionSkewWarning": "扩展协议 v{{extensionProtocol}}，daemon 协议 v{{daemonProtocol}}。",
     "upgradeAvailable": "可升级",
     "launcher": {
@@ -113,17 +116,18 @@
   },
   "helpRequest": {
     "title": "Agent 需要你的帮助",
+    "compactStatus": "当前 Agent 仍在等待你完成此步骤",
     "noteLabel": "给 Agent 的备注（可选）",
     "notePlaceholder": "给 Agent 留言（可选）",
-    "continue": "继续",
-    "cancel": "取消",
+    "continue": "完成并交还控制权",
+    "cancel": "取消请求",
     "collapse": "折叠",
     "expand": "展开",
     "dragHandle": "拖动以移动",
     "notificationTitle": "BrowserSkill：Agent 需要你的帮助"
   },
   "recordOverlay": {
-    "recording": "正在录制用户操作",
+    "recording": "正在录制你的操作",
     "finish": "结束"
   }
 }

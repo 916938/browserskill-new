@@ -25,7 +25,7 @@ fn main() -> ExitCode {
     if !matches!(cli.command, Command::Daemon(_)) {
         init_cli_tracing(&cli.flags);
     }
-    cli::update::maybe_spawn_background_check(&cli.flags, &cli.command);
+    cli::update::print_update_hint_from_cache(&cli.flags, &cli.command);
 
     let format = if cli.flags.json {
         Format::Json
@@ -81,8 +81,11 @@ fn dispatch(cli: Cli, format: Format) -> Result<(), CliError> {
         Command::Browsers => cli::browsers::dispatch(format),
         Command::Tab(cmd) => cli::tab::dispatch(cmd, format),
         Command::Templates(cmd) => cli::templates::dispatch(cmd, format),
+        Command::Window(cmd) => cli::window::dispatch(cmd, format),
+        Command::Emulate(args) => cli::emulate::dispatch(args, format),
         Command::Screenshot(args) => cli::screenshot::dispatch(args, format),
         Command::Snapshot(args) => cli::snapshot::dispatch(args, format),
+        Command::Observe(args) => cli::observe::dispatch(args, format),
         Command::Console(args) => cli::console::dispatch(args, format),
         Command::Network(args) => cli::network::dispatch(args, format),
         Command::GetHtml(args) => cli::get_html::dispatch(args, format),
@@ -91,6 +94,7 @@ fn dispatch(cli: Cli, format: Format) -> Result<(), CliError> {
         Command::NavigateForward(args) => cli::navigate::dispatch_navigate_forward(args, format),
         Command::Reload(args) => cli::navigate::dispatch_reload(args, format),
         Command::Click(args) => cli::interaction::dispatch_click(args, format),
+        Command::Hover(args) => cli::interaction::dispatch_hover(args, format),
         Command::Fill(args) => cli::interaction::dispatch_fill(args, format),
         Command::Press(args) => cli::interaction::dispatch_press(args, format),
         Command::Select(args) => cli::interaction::dispatch_select(args, format),

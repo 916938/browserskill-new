@@ -3,10 +3,12 @@ import {
   defaultStorage,
   generateDefaultLabel,
   getConnectionEnabled,
+  getControlHintsHidden,
   getLabel,
   getOrCreateInstanceId,
   STORAGE_KEYS,
   setConnectionEnabled,
+  setControlHintsHidden,
   setLabel,
 } from "../instance-id";
 
@@ -94,6 +96,28 @@ describe("instance-id", () => {
     await setConnectionEnabled(false, backend);
     expect(store[STORAGE_KEYS.CONNECTION_ENABLED]).toBe(false);
     expect(await getConnectionEnabled(backend)).toBe(false);
+  });
+
+  it("getControlHintsHidden returns false when storage is empty", async () => {
+    const { backend } = fakeStorage();
+    expect(await getControlHintsHidden(backend)).toBe(false);
+  });
+
+  it("getControlHintsHidden returns persisted boolean values", async () => {
+    const { backend } = fakeStorage({ [STORAGE_KEYS.CONTROL_HINTS_HIDDEN]: true });
+    expect(await getControlHintsHidden(backend)).toBe(true);
+  });
+
+  it("getControlHintsHidden treats non-boolean stored values as shown", async () => {
+    const { backend } = fakeStorage({ [STORAGE_KEYS.CONTROL_HINTS_HIDDEN]: "true" });
+    expect(await getControlHintsHidden(backend)).toBe(false);
+  });
+
+  it("setControlHintsHidden persists the value retrievable by getControlHintsHidden", async () => {
+    const { backend, store } = fakeStorage();
+    await setControlHintsHidden(true, backend);
+    expect(store[STORAGE_KEYS.CONTROL_HINTS_HIDDEN]).toBe(true);
+    expect(await getControlHintsHidden(backend)).toBe(true);
   });
 });
 
@@ -926,11 +950,12 @@ describe("STORAGE_KEYS (edge cases)", () => {
     expect(STORAGE_KEYS.INSTANCE_ID).toBe("bsk_instance_id");
     expect(STORAGE_KEYS.LABEL).toBe("bh_label");
     expect(STORAGE_KEYS.CONNECTION_ENABLED).toBe("bh_connection_enabled");
+    expect(STORAGE_KEYS.CONTROL_HINTS_HIDDEN).toBe("bsk_control_hints_hidden");
   });
 
   it("is a frozen/as const object (immutable)", () => {
-    // Verify the object has exactly 3 keys
-    expect(Object.keys(STORAGE_KEYS)).toHaveLength(3);
+    // Verify the object has exactly 4 keys
+    expect(Object.keys(STORAGE_KEYS)).toHaveLength(4);
     // Verify all values are strings
     for (const value of Object.values(STORAGE_KEYS)) {
       expect(typeof value).toBe("string");

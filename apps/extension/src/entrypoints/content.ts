@@ -1,9 +1,11 @@
 import { i18n } from "@browser-skill/i18n";
 import { I18nextProvider } from "@browser-skill/i18n/react";
 import React from "react";
+import { flushSync } from "react-dom";
 import ReactDOM from "react-dom/client";
 import { BorrowConfirmationOverlay } from "@/content/BorrowConfirmationOverlay";
 import { ControlOverlay } from "@/content/ControlOverlay";
+import { createCaptureSuppressController } from "@/content/capture-suppress";
 import { HelpRequestOverlay } from "@/content/HelpRequestOverlay";
 import overlayCss from "@/content/overlay.css?inline";
 import { OverlayController, shouldShowAgentControlOverlay } from "@/content/overlay-controller";
@@ -14,29 +16,40 @@ import {
   type RecordCaptureController,
 } from "@/content/record-capture";
 import {
-  HELP_RESPONSE,
+  type CaptureSuppressAck,
+  type CaptureSuppressMessage,
+  isCaptureSuppressMessage,
+} from "@/lib/capture-suppress-bridge";
+import {
+  HELP_ACK,
+  HELP_FINISH,
+  HELP_QUERY,
+  type HelpAckMessage,
   type HelpCancelMessage,
+  type HelpFinishMessage,
+  type HelpQueryResponse,
   type HelpRequestMessage,
-  type HelpResponseMessage,
   isHelpCancelMessage,
   isHelpRequestMessage,
 } from "@/lib/help-bridge";
+import { getControlHintsHidden, STORAGE_KEYS } from "@/lib/instance-id";
 import {
   isOverlayAgentOverlayResetMessage,
+  isOverlayAgentStateMessage,
   OVERLAY_AUTOMATION_BYPASS,
-  OVERLAY_MSG_WHO_AM_I,
+  OVERLAY_MSG_READY,
   type OverlayAgentOverlayResetMessage,
+  type OverlayAgentStateMessage,
   type OverlayAutomationBypassMessage,
-  type OverlayWhoAmIResponse,
 } from "@/lib/overlay-bridge";
 import { sendInterrupt } from "@/lib/overlay-interrupt-client";
 import {
   RECORD_FINISH,
   RECORD_QUERY,
+  type RecordQueryResponse,
   type RecordStartAck,
   type RecordStopAck,
 } from "@/lib/record-bridge";
-import { SESSIONS_LIVE_FLAG_KEY } from "@/lib/sessions-live-flag";
 import type {
   BorrowCancelMessage,
   BorrowRequestMessage,
@@ -55,14 +68,24 @@ export default defineContentScript({
     if (window.top !== window) return;
 
     const overlays = new OverlayController();
-    let activeHelpRespond: ((outcome: "continued" | "cancelled", note?: string) => void) | null =
-      null;
     let recordCapture: RecordCaptureController | null = null;
     let activeRecordRequestId: string | null = null;
     let reactRoot: ReactDOM.Root | null = null;
     let overlayHost: HTMLElement | null = null;
+    let overlayContainer: HTMLElement | null = null;
+    let activeAgentState: OverlayAgentStateMessage | null = null;
     let hostLossReported = false;
     let remountInProgress = false;
+
+    // Load the user's control-hints preference up front so an already-active
+    // Agent session does not flash the overlay before the stored value lands.
+    try {
+      overlays.setControlHintsHidden(await getControlHintsHidden());
+    } catch (err) {
+      console.debug("[bsk overlay] control-hints preference read failed", err);
+    }
+
+    const captureSuppress = createCaptureSuppressController(() => overlayHost);
 
     const ui = await createShadowRootUi(ctx, {
       name: "browser-skill-overlay",
@@ -73,56 +96,141 @@ export default defineContentScript({
         shadowHost.setAttribute("aria-hidden", "true");
         shadowHost.setAttribute("data-bsk-overlay", "");
         overlayHost = shadowHost;
+        overlayContainer = container;
         hostLossReported = false;
+        // A host rebuilt mid-capture must stay hidden until `end` arrives.
+        captureSuppress.onHostMounted(shadowHost);
         const app = document.createElement("div");
         app.className = "bsk-overlay-root";
         container.append(app);
         reactRoot = ReactDOM.createRoot(app);
-        renderOverlay();
+        renderAll();
+        void requestOverlayState();
         return reactRoot;
       },
       onRemove(root) {
         overlayHost = null;
+        overlayContainer = null;
         root?.unmount();
         reactRoot = null;
       },
     });
 
-    function renderOverlay() {
+    function setOverlaySurfaceState(active: boolean, blocking: boolean): void {
+      const host = overlayHost;
+      const container = overlayContainer;
+      if (!host || !container) return;
+
+      if (active) {
+        host.setAttribute("data-bsk-overlay-surface", "");
+        if (blocking) {
+          host.setAttribute("data-bsk-overlay-blocking", "");
+        } else {
+          host.removeAttribute("data-bsk-overlay-blocking");
+        }
+        Object.assign(container.style, {
+          position: "fixed",
+          inset: "0",
+          pointerEvents: "none",
+        });
+        return;
+      }
+
+      host.removeAttribute("data-bsk-overlay-surface");
+      host.removeAttribute("data-bsk-overlay-blocking");
+      container.style.removeProperty("position");
+      container.style.removeProperty("inset");
+      container.style.removeProperty("pointer-events");
+    }
+
+    function setOverlayHostHiddenFromAccessibility(hidden: boolean): void {
+      const host = overlayHost;
+      if (!host) return;
+
+      if (!hidden) {
+        host.removeAttribute("aria-hidden");
+        return;
+      }
+
+      const focusedInShadow = host.shadowRoot?.activeElement;
+      if (focusedInShadow instanceof HTMLElement) {
+        focusedInShadow.blur();
+      }
+      if (document.activeElement === host) {
+        host.blur();
+      }
+      host.setAttribute("aria-hidden", "true");
+    }
+
+    function renderReactOverlays(): void {
       const overlayState = overlays.snapshot();
-      reactRoot?.render(
-        React.createElement(
-          I18nextProvider,
-          { i18n },
-          React.createElement(
-            React.Fragment,
-            null,
-            React.createElement(BorrowConfirmationOverlay, {
-              requests: overlayState.borrowRequests,
-            }),
-            React.createElement(ControlOverlay, {
-              visible: shouldShowAgentControlOverlay(overlayState),
-              interrupting: overlayState.interrupting,
-              automationBypass: overlayState.automationBypassCount > 0,
-              onInterrupt: handleInterrupt,
-            }),
-            React.createElement(HelpRequestOverlay, { request: overlayState.activeHelp }),
-            React.createElement(RecordOverlay, { request: overlayState.activeRecord }),
-          ),
-        ),
+      const controlOverlayVisible = shouldShowAgentControlOverlay(overlayState);
+      const interactiveOverlayVisible =
+        overlayState.borrowRequests.length > 0 ||
+        overlayState.activeHelp !== null ||
+        overlayState.activeRecord !== null;
+      setOverlayHostHiddenFromAccessibility(!interactiveOverlayVisible);
+      setOverlaySurfaceState(
+        controlOverlayVisible,
+        controlOverlayVisible && overlayState.automationBypassCount === 0,
       );
+      const root = reactRoot;
+      if (!root) return;
+      flushSync(() => {
+        root.render(
+          React.createElement(
+            I18nextProvider,
+            { i18n },
+            React.createElement(
+              React.Fragment,
+              null,
+              React.createElement(BorrowConfirmationOverlay, {
+                requests: overlayState.borrowRequests,
+              }),
+              React.createElement(HelpRequestOverlay, { request: overlayState.activeHelp }),
+              React.createElement(RecordOverlay, { request: overlayState.activeRecord }),
+              React.createElement(ControlOverlay, {
+                visible: controlOverlayVisible,
+                interrupting: overlayState.interrupting,
+                automationBypass: overlayState.automationBypassCount > 0,
+                onInterrupt: handleInterrupt,
+              }),
+            ),
+          ),
+        );
+      });
+    }
+
+    function renderAll(): void {
+      renderReactOverlays();
+    }
+
+    async function waitForRenderedOverlayUpdate(): Promise<void> {
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+    }
+
+    function clearCurrentAgentSession(): void {
+      const sessionId = overlays.snapshot().activeSessionId;
+      if (!sessionId) return;
+      resetAgentOverlayState(sessionId);
+    }
+
+    function applyOverlayState(state: OverlayAgentStateMessage): void {
+      activeAgentState = state;
+      overlays.applyAgentControlMode(state.sessionId, state.mode);
+      renderAll();
     }
 
     function resetAgentOverlayState(sessionId: string) {
       const previousHelp = overlays.resetAgentOverlays(sessionId);
       if (previousHelp) {
-        activeHelpRespond?.("cancelled");
-        activeHelpRespond = null;
+        void sendHelpFinish(previousHelp.id, "cancelled");
       }
       recordCapture?.dispose();
       recordCapture = null;
       activeRecordRequestId = null;
-      renderOverlay();
+      renderAll();
     }
 
     function handleInterrupt() {
@@ -134,12 +242,8 @@ export default defineContentScript({
         return;
       }
       overlays.setInterrupting(true);
-      renderOverlay();
+      renderAll();
       void sendInterrupt((msg) => chrome.runtime.sendMessage(msg), sessionId).then((reply) => {
-        // Always retract the mask after the round trip resolves
-        // (success, failure, or timeout). Cancellation is fire-and-
-        // forget on the daemon side; the user must not be stuck
-        // behind a transient issue. The Agent Window stays open.
         resetAgentOverlayState(sessionId);
         if (!reply.ok) {
           console.warn("[bsk overlay] interrupt did not get a clean ack from daemon");
@@ -153,11 +257,17 @@ export default defineContentScript({
         | BorrowCancelMessage
         | HelpRequestMessage
         | HelpCancelMessage
+        | CaptureSuppressMessage
         | OverlayAgentOverlayResetMessage
+        | OverlayAgentStateMessage
         | OverlayAutomationBypassMessage,
       _sender: chrome.runtime.MessageSender,
-      sendResponse: (response: BorrowResponseMessage | HelpResponseMessage) => void,
+      sendResponse: (response: BorrowResponseMessage | HelpAckMessage | CaptureSuppressAck) => void,
     ) => {
+      if (isCaptureSuppressMessage(message)) {
+        return captureSuppress.handleMessage(message, sendResponse);
+      }
+
       if (isRecordContentMessage(message)) {
         const needsAsync = handleRecordContentMessage(
           message,
@@ -170,9 +280,10 @@ export default defineContentScript({
             setCapture: (capture) => {
               recordCapture = capture;
             },
-            onStart: (requestId) => {
+            onStart: (requestId, startedAtMs) => {
               overlays.setAgentRecordRequest({
                 id: requestId,
+                ...(typeof startedAtMs === "number" ? { startedAtMs } : {}),
                 onFinish: () => {
                   void chrome.runtime.sendMessage({
                     type: RECORD_FINISH,
@@ -180,11 +291,11 @@ export default defineContentScript({
                   });
                 },
               });
-              renderOverlay();
+              renderAll();
             },
             onStop: () => {
               overlays.clearAgentRecordRequest(activeRecordRequestId ?? undefined);
-              renderOverlay();
+              renderAll();
             },
           },
           sendResponse as unknown as
@@ -202,7 +313,12 @@ export default defineContentScript({
       ) {
         const bypassMsg = message as OverlayAutomationBypassMessage;
         overlays.setAutomationBypass(bypassMsg.enabled);
-        renderOverlay();
+        renderAll();
+        return false;
+      }
+
+      if (isOverlayAgentStateMessage(message)) {
+        applyOverlayState(message);
         return false;
       }
 
@@ -213,48 +329,37 @@ export default defineContentScript({
 
       if (message.type === "borrow-cancel") {
         overlays.removeBorrowRequest(message.requestId);
-        renderOverlay();
+        renderAll();
         return false;
       }
 
       if (isHelpCancelMessage(message)) {
         const state = overlays.snapshot();
         if (state.activeHelp && state.activeHelp.id === message.requestId) {
-          activeHelpRespond?.("cancelled");
+          overlays.clearAgentHelpRequest(message.requestId);
+          renderAll();
         }
         return false;
       }
 
       if (isHelpRequestMessage(message)) {
         const helpMsg = message as HelpRequestMessage;
-        let responded = false;
-        const respond = (outcome: "continued" | "cancelled", note?: string) => {
-          if (responded) return;
-          responded = true;
-          const reply: HelpResponseMessage = {
-            type: HELP_RESPONSE,
-            outcome,
-            ...(note ? { note } : {}),
-          };
-          sendResponse(reply);
-          activeHelpRespond = null;
-          overlays.clearAgentHelpRequest(helpMsg.requestId);
-          renderOverlay();
-        };
         const previousHelp = overlays.setAgentHelpRequest({
           id: helpMsg.requestId,
           prompt: helpMsg.prompt,
           ...(helpMsg.title ? { title: helpMsg.title } : {}),
+          ...(helpMsg.displayMode ? { displayMode: helpMsg.displayMode } : {}),
           selectors: helpMsg.selectors,
-          onContinue: (note: string) => respond("continued", note.trim() ? note : undefined),
-          onCancel: () => respond("cancelled"),
+          onContinue: (note: string) =>
+            void sendHelpFinish(helpMsg.requestId, "continued", note.trim() ? note : undefined),
+          onCancel: () => void sendHelpFinish(helpMsg.requestId, "cancelled"),
         });
-        if (previousHelp) {
-          activeHelpRespond?.("cancelled");
+        if (previousHelp && previousHelp.id !== helpMsg.requestId) {
+          void sendHelpFinish(previousHelp.id, "cancelled");
         }
-        activeHelpRespond = respond;
-        renderOverlay();
-        return true; // async sendResponse
+        renderAll();
+        sendResponse({ type: HELP_ACK, ok: true });
+        return false;
       }
 
       if (message.type === "borrow-request") {
@@ -264,7 +369,7 @@ export default defineContentScript({
           responded = true;
           sendResponse({ type: "borrow-response", allowed });
           overlays.removeBorrowRequest(message.requestId);
-          renderOverlay();
+          renderAll();
         };
 
         overlays.addBorrowRequest({
@@ -275,41 +380,78 @@ export default defineContentScript({
           onAllow: () => respond(true),
           onDeny: () => respond(false),
         });
-        renderOverlay();
+        renderAll();
         return true;
       }
 
       return false;
     };
 
-    async function syncAgentOverlay(): Promise<void> {
-      if (!(await anySessionLive())) return;
-      try {
-        const reply = (await chrome.runtime.sendMessage({
-          kind: OVERLAY_MSG_WHO_AM_I,
-        })) as OverlayWhoAmIResponse | undefined;
-        if (!reply?.sessionId) return;
+    async function sendHelpFinish(
+      requestId: string,
+      outcome: "continued" | "cancelled",
+      note?: string,
+    ): Promise<void> {
+      const msg: HelpFinishMessage = {
+        type: HELP_FINISH,
+        requestId,
+        outcome,
+        ...(note ? { note } : {}),
+      };
+      overlays.clearAgentHelpRequest(requestId);
+      renderAll();
+      await waitForRenderedOverlayUpdate();
+      await chrome.runtime.sendMessage(msg).catch((err) => {
+        console.debug("[bsk overlay] help finish failed", err);
+      });
+    }
 
-        // Query / re-arm recording *before* activating the control overlay so
-        // record start (navigate → content load) does not flash
-        // 「Agent 正在控制」before RecordOverlay mounts.
-        let recordQuery: { active?: boolean; requestId?: string } | undefined;
+    function mountHelpRequest(helpMsg: Omit<HelpRequestMessage, "type">): void {
+      overlays.setAgentHelpRequest({
+        id: helpMsg.requestId,
+        prompt: helpMsg.prompt,
+        ...(helpMsg.title ? { title: helpMsg.title } : {}),
+        ...(helpMsg.displayMode ? { displayMode: helpMsg.displayMode } : {}),
+        selectors: helpMsg.selectors,
+        onContinue: (note: string) =>
+          void sendHelpFinish(helpMsg.requestId, "continued", note.trim() ? note : undefined),
+        onCancel: () => void sendHelpFinish(helpMsg.requestId, "cancelled"),
+      });
+    }
+
+    async function queryActiveHelpWithRetry(): Promise<void> {
+      for (let attempt = 0; attempt < 6; attempt += 1) {
         try {
-          recordQuery = (await chrome.runtime.sendMessage({
-            type: RECORD_QUERY,
-          })) as { active?: boolean; requestId?: string } | undefined;
+          const helpQuery = (await chrome.runtime.sendMessage({
+            type: HELP_QUERY,
+          })) as HelpQueryResponse | undefined;
+          if (helpQuery?.active && helpQuery.request) {
+            mountHelpRequest(helpQuery.request);
+            renderAll();
+            return;
+          }
         } catch (err) {
-          console.debug("[bsk overlay] record query failed", err);
+          console.debug("[bsk overlay] help query failed", err);
         }
+        await new Promise((resolve) => window.setTimeout(resolve, 150));
+      }
+    }
 
+    async function queryActiveRecord(): Promise<void> {
+      try {
+        const recordQuery = (await chrome.runtime.sendMessage({
+          type: RECORD_QUERY,
+        })) as RecordQueryResponse | undefined;
         if (
           recordQuery?.active &&
           typeof recordQuery.requestId === "string" &&
           overlays.snapshot().activeRecord === null
         ) {
           const requestId = recordQuery.requestId;
+          const startedAtMs = recordQuery.startedAtMs;
           overlays.setAgentRecordRequest({
             id: requestId,
+            ...(typeof startedAtMs === "number" ? { startedAtMs } : {}),
             onFinish: () => {
               void chrome.runtime.sendMessage({
                 type: RECORD_FINISH,
@@ -317,22 +459,51 @@ export default defineContentScript({
               });
             },
           });
+          renderAll();
         }
-
-        overlays.activateAgentSession(reply.sessionId);
-        renderOverlay();
       } catch (err) {
-        console.debug("[bsk overlay] syncAgentOverlay failed", err);
+        console.debug("[bsk overlay] record query failed", err);
+      }
+    }
+
+    async function refreshAuxiliaryOverlayState(): Promise<void> {
+      await Promise.all([queryActiveHelpWithRetry(), queryActiveRecord()]);
+    }
+
+    async function requestOverlayState(): Promise<void> {
+      try {
+        const state = (await chrome.runtime.sendMessage({
+          kind: OVERLAY_MSG_READY,
+        })) as OverlayAgentStateMessage | undefined;
+        if (state && isOverlayAgentStateMessage(state)) {
+          applyOverlayState(state);
+        }
+        void refreshAuxiliaryOverlayState();
+      } catch (err) {
+        console.debug("[bsk overlay] overlay.ready failed", err);
       }
     }
 
     const onPageShow = (event: PageTransitionEvent) => {
-      if (event.persisted) void syncAgentOverlay();
+      if (event.persisted) void requestOverlayState();
     };
+
+    // Live-apply popup toggles of the control-hints preference.
+    const onStorageChange = (
+      changes: Record<string, chrome.storage.StorageChange>,
+      areaName: string,
+    ) => {
+      if (areaName !== "local") return;
+      const change = changes[STORAGE_KEYS.CONTROL_HINTS_HIDDEN];
+      if (!change) return;
+      overlays.setControlHintsHidden(change.newValue === true);
+      renderAll();
+    };
+    chrome.storage.onChanged.addListener(onStorageChange);
 
     ui.mount();
     chrome.runtime.onMessage.addListener(onMessage);
-    void syncAgentOverlay();
+    void requestOverlayState();
 
     window.addEventListener("pageshow", onPageShow);
 
@@ -344,7 +515,8 @@ export default defineContentScript({
           remountInProgress = true;
           try {
             ui.mount();
-            void syncAgentOverlay();
+            if (activeAgentState) applyOverlayState(activeAgentState);
+            void requestOverlayState();
           } finally {
             remountInProgress = false;
           }
@@ -359,6 +531,7 @@ export default defineContentScript({
     ctx.onInvalidated(() => {
       hostObserver.disconnect();
       chrome.runtime.onMessage.removeListener(onMessage);
+      chrome.storage.onChanged.removeListener(onStorageChange);
       window.removeEventListener("pageshow", onPageShow);
       // Restore history hooks / remove capture listeners before the CS unloads.
       recordCapture?.dispose();
@@ -367,16 +540,3 @@ export default defineContentScript({
     });
   },
 });
-
-async function anySessionLive(): Promise<boolean> {
-  if (!chrome.storage?.session?.get) return true;
-  try {
-    const result = (await chrome.storage.session.get({
-      [SESSIONS_LIVE_FLAG_KEY]: false,
-    })) as Record<string, unknown> | undefined;
-    return Boolean(result?.[SESSIONS_LIVE_FLAG_KEY]);
-  } catch (err) {
-    console.debug("[bsk overlay] sessions-live flag read failed", err);
-    return true;
-  }
-}

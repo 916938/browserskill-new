@@ -30,7 +30,10 @@ export type RpcErrorReason =
   | "option_not_found"
   | "single_select_value_count"
   | "tab_not_active"
-  | "borrow_conflict";
+  | "restricted_tab_url"
+  | "borrow_conflict"
+  | "screenshot_capture_failed"
+  | "cleanup_failed";
 
 export interface RpcErrorData {
   reason?: RpcErrorReason;
@@ -313,6 +316,22 @@ export interface SnapshotResult {
   dialogs?: JavaScriptDialogInfo[];
 }
 
+export interface ObserveParams extends SnapshotParams {
+  debug_surfaces?: boolean;
+}
+
+export interface ObserveResult extends SnapshotResult {
+  debug?: {
+    surface_probes?: Array<{
+      trigger_backend_node_id: number;
+      trigger_point?: { x: number; y: number };
+      trigger_action: string;
+      sub_items: string[];
+      confidence?: string;
+    }>;
+  };
+}
+
 export interface GetHtmlParams {
   session_id: string;
   tab_id?: number;
@@ -398,6 +417,25 @@ export interface ClickParams {
 }
 
 export interface ClickResult {
+  tab_id: number;
+  used_ref?: string;
+  used_selector?: string;
+  x: number;
+  y: number;
+  dialogs?: JavaScriptDialogInfo[];
+}
+
+export interface HoverParams {
+  session_id: string;
+  ref?: string;
+  selector?: string;
+  tab_id?: number;
+  modifiers?: KeyModifier[];
+  settle_ms?: number;
+  timeout_ms?: number;
+}
+
+export interface HoverResult {
   tab_id: number;
   used_ref?: string;
   used_selector?: string;
@@ -514,7 +552,28 @@ export interface HelpTarget {
   selector?: string;
 }
 
-export type HelpOutcome = "continued" | "cancelled" | "timed_out" | "navigated";
+export type HelpOutcome =
+  | "continued"
+  | "cancelled"
+  | "timed_out"
+  | "completed"
+  | "navigated"
+  | "disabled";
+
+export interface HelpCompletionCondition {
+  url_contains?: string;
+  url_matches?: string;
+  selector_exists?: string;
+  selector_missing?: string;
+  text_exists?: string;
+  text_missing?: string;
+}
+
+export interface HelpCompletionCriteria {
+  any?: HelpCompletionCondition[];
+  all?: HelpCompletionCondition[];
+  stable_for_ms?: number;
+}
 
 export interface ResolvedTarget {
   matched: boolean;
@@ -528,14 +587,73 @@ export interface RequestHelpParams {
   prompt: string;
   title?: string;
   targets?: HelpTarget[];
+  completion_criteria?: HelpCompletionCriteria;
   timeout_ms?: number;
 }
 
 export interface RequestHelpResult {
   outcome: HelpOutcome;
+  completed_by?: "system";
   note?: string;
   tab_id: number;
   resolved_targets?: ResolvedTarget[];
+}
+
+// --------------------------------------------------------------------------
+// Device-emulation payloads — tool.emulate (mirror bsk-protocol emulate.rs)
+// --------------------------------------------------------------------------
+
+export interface UserAgentBrandVersion {
+  brand: string;
+  version: string;
+}
+
+/** Mirror of CDP `Emulation.UserAgentMetadata`; all fields optional. */
+export interface UserAgentMetadata {
+  brands?: UserAgentBrandVersion[];
+  full_version?: string;
+  platform?: string;
+  platform_version?: string;
+  architecture?: string;
+  model?: string;
+  mobile?: boolean;
+}
+
+/**
+ * Concrete emulation overrides for one tab. The extension merges each
+ * request field by field onto the tab's remembered emulation state:
+ * fields present here overwrite the stored value, absent fields keep
+ * it, and the merged state is applied as a whole.
+ */
+export interface EmulateOverrides {
+  width?: number;
+  height?: number;
+  device_scale_factor?: number;
+  mobile?: boolean;
+  user_agent?: string;
+  accept_language?: string;
+  user_agent_metadata?: UserAgentMetadata;
+  touch?: boolean;
+  max_touch_points?: number;
+}
+
+export interface EmulateParams {
+  session_id: string;
+  tab_id?: number;
+  /** Clear every emulation override on the tab. Exclusive with `overrides`. */
+  off?: boolean;
+  /** Overrides to apply. Required unless `off` is set. */
+  overrides?: EmulateOverrides;
+}
+
+export interface EmulateResult {
+  tab_id: number;
+  /** True when overrides were cleared (`off`); false when applied. */
+  cleared: boolean;
+  /** Echo of the overrides that were applied. Absent when cleared. */
+  applied?: EmulateOverrides;
+  /** Scope note: overrides are per-tab (CDP target), not inherited by new tabs. */
+  note?: string;
 }
 
 // --------------------------------------------------------------------------
@@ -585,6 +703,11 @@ export type DraftTraceStep =
       page_url?: string;
     }
   | {
+      op: "hover";
+      target: TargetDescriptor;
+      page_url?: string;
+    }
+  | {
       op: "fill";
       target: TargetDescriptor;
       value: string;
@@ -617,6 +740,7 @@ export type DraftTraceStep =
 export type Step =
   | ({ op: "navigate" } & StepCommon & { to: string })
   | ({ op: "click" } & StepCommon & { target: TargetDescriptor })
+  | ({ op: "hover" } & StepCommon & { target: TargetDescriptor })
   | ({ op: "fill" } & StepCommon & {
         target: TargetDescriptor;
         value: string;

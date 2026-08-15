@@ -1,18 +1,21 @@
 import { useTranslation } from "@browser-skill/i18n/react";
-import { Badge, Button, cn, Input, Label } from "@browser-skill/ui";
+import { Badge, Button, Input, Label } from "@browser-skill/ui";
 import {
-  RiApps2Line,
   RiArrowLeftLine,
   RiArrowRightSLine,
   RiCheckLine,
   RiFileCopyLine,
+  RiInformationLine,
 } from "@remixicon/react";
 import { type ChangeEvent, useEffect, useState } from "react";
 import { PROTOCOL_VERSION } from "@/transport/handshake";
+import functionIconUrl from "../../../assets/function.svg";
 import { ConnectionStatusIndicator } from "./connection-status-indicator";
 import { POPUP_FEATURES, type PopupView } from "./features";
 import { TemplateView } from "./template-view";
+import { Switch } from "./switch";
 import { type PopupStatusState, useConnectionState } from "./use-connection-state";
+import { useControlHintsHidden } from "./use-control-hints-hidden";
 
 const STATE_LABEL_KEYS = {
   disconnected: "popup.stateLabel.disconnected",
@@ -38,6 +41,7 @@ function getLogoSrc() {
 export function App() {
   const { t } = useTranslation("extension");
   const { snapshot, statusState, setLabel, setConnectionEnabled } = useConnectionState();
+  const [controlHintsHidden, setControlHintsHidden] = useControlHintsHidden();
   const [view, setView] = useState<PopupView>("main");
   const [copiedInstanceId, setCopiedInstanceId] = useState(false);
   const [purposeDraft, setPurposeDraft] = useState("");
@@ -170,12 +174,17 @@ export function App() {
             type="button"
             variant="ghost"
             size="icon"
-            className="size-7 shrink-0 rounded-md"
+            className="group size-8 shrink-0 rounded-md"
             aria-label={t("popup.launcher.title")}
             onClick={() => setView("features")}
             data-slot="popup-launcher"
           >
-            <RiApps2Line className="size-4" aria-hidden />
+            <img
+              src={functionIconUrl}
+              alt=""
+              className="size-6 opacity-35 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"
+              data-slot="popup-launcher-icon"
+            />
           </Button>
         )}
       </header>
@@ -201,26 +210,12 @@ export function App() {
                 >
                   {t(STATE_BADGE_KEYS[statusState])}
                 </Badge>
-                <button
-                  type="button"
-                  role="switch"
-                  aria-checked={snapshot.connectionEnabled}
+                <Switch
+                  checked={snapshot.connectionEnabled}
+                  onCheckedChange={setConnectionEnabled}
                   aria-label={t("popup.connectionToggleTitle")}
                   data-slot="popup-connection-toggle"
-                  className={cn(
-                    "relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border border-transparent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
-                    snapshot.connectionEnabled ? "bg-primary" : "bg-muted",
-                  )}
-                  onClick={() => setConnectionEnabled(!snapshot.connectionEnabled)}
-                >
-                  <span
-                    className={cn(
-                      "pointer-events-none block size-4 rounded-full bg-background shadow-sm transition-transform",
-                      snapshot.connectionEnabled ? "translate-x-4" : "translate-x-0.5",
-                    )}
-                    aria-hidden
-                  />
-                </button>
+                />
               </div>
             </div>
             {isSkewed && (
@@ -234,6 +229,41 @@ export function App() {
                 })}
               </p>
             )}
+          </section>
+
+          <section
+            className="rounded-xl border border-border/80 bg-card/60 px-3 py-2.5"
+            data-slot="popup-control-hints-card"
+          >
+            <div className="flex items-center justify-between gap-2">
+              <span className="flex min-w-0 items-center gap-1">
+                <span className="truncate text-sm font-medium">
+                  {t("popup.controlHintsToggleTitle")}
+                </span>
+                <span className="group relative inline-flex shrink-0">
+                  <button
+                    type="button"
+                    aria-label={t("popup.controlHintsInfoLabel")}
+                    data-slot="popup-control-hints-info"
+                    className="flex size-4 items-center justify-center rounded-full text-muted-foreground/70 transition-colors hover:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+                  >
+                    <RiInformationLine className="size-3.5" aria-hidden />
+                  </button>
+                  <span
+                    role="tooltip"
+                    className="pointer-events-none absolute bottom-full left-0 z-10 mb-1.5 w-56 whitespace-normal rounded-md bg-foreground/65 px-2 py-1 text-[10px] font-medium leading-snug text-background opacity-0 shadow-md backdrop-blur-sm transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
+                  >
+                    {t("popup.controlHintsToggleHint")}
+                  </span>
+                </span>
+              </span>
+              <Switch
+                checked={!controlHintsHidden}
+                onCheckedChange={(shown) => setControlHintsHidden(!shown)}
+                aria-label={t("popup.controlHintsToggleTitle")}
+                data-slot="popup-control-hints-toggle"
+              />
+            </div>
           </section>
 
           {snapshot.lastError && (

@@ -10,6 +10,7 @@ pub mod console;
 pub mod daemon;
 pub mod dialogs;
 pub mod doctor;
+pub mod emulate;
 pub mod ensure_daemon;
 pub mod error;
 pub mod evaluate;
@@ -21,6 +22,7 @@ pub mod invoke;
 pub mod logs;
 pub mod navigate;
 pub mod network;
+pub mod observe;
 pub mod record;
 pub mod record_state;
 pub mod render_error;
@@ -32,20 +34,23 @@ pub mod tab;
 pub mod templates;
 pub mod update;
 pub mod waits;
+pub mod window;
 
 use clap::{Args, Parser, Subcommand};
 
 use crate::cli::completion::CompletionArgs;
 use crate::cli::console::ConsoleArgs;
 use crate::cli::daemon::DaemonCmd;
+use crate::cli::emulate::EmulateArgs;
 use crate::cli::evaluate::EvaluateArgs;
 use crate::cli::get_html::GetHtmlArgs;
 use crate::cli::human_loop::RequestHelpArgs;
 use crate::cli::install_skill::InstallSkillArgs;
-use crate::cli::interaction::{ClickArgs, FillArgs, PressArgs, SelectArgs};
+use crate::cli::interaction::{ClickArgs, FillArgs, HoverArgs, PressArgs, SelectArgs};
 use crate::cli::invoke::InvokeArgs;
 use crate::cli::navigate::{NavigateCommand, NavigateHistoryArgs, ReloadArgs};
 use crate::cli::network::NetworkArgs;
+use crate::cli::observe::ObserveArgs;
 use crate::cli::record::RecordCmd;
 use crate::cli::screenshot::ScreenshotArgs;
 use crate::cli::session::SessionCmd;
@@ -54,6 +59,7 @@ use crate::cli::tab::TabCmd;
 use crate::cli::templates::TemplatesCmd;
 use crate::cli::update::UpdateArgs;
 use crate::cli::waits::{WaitForNavigationArgs, WaitMsArgs};
+use crate::cli::window::WindowCmd;
 
 /// Tool calls wait slightly longer than the daemon's 30s tool timeout so
 /// callers receive the structured daemon timeout instead of dropping the
@@ -125,11 +131,20 @@ pub enum Command {
     /// Manage profile templates (CRUD + apply).
     Templates(TemplatesCmd),
 
+    /// Agent Window management commands.
+    Window(WindowCmd),
+
+    /// Emulate a mobile device environment (viewport, UA, touch) on a tab.
+    Emulate(EmulateArgs),
+
     /// Capture a PNG of the active tab or a snapshot ref element.
     Screenshot(ScreenshotArgs),
 
     /// Produce an indented aria-snapshot with @eN refs.
     Snapshot(SnapshotArgs),
+
+    /// Produce a semantic VOM observation with perception probes.
+    Observe(ObserveArgs),
 
     /// Read buffered console/log/exception messages.
     Console(ConsoleArgs),
@@ -157,6 +172,9 @@ pub enum Command {
 
     /// Click a snapshot ref or CSS selector.
     Click(ClickArgs),
+
+    /// Hover a snapshot ref or CSS selector.
+    Hover(HoverArgs),
 
     /// Fill an input / textarea / contenteditable.
     Fill(FillArgs),

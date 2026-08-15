@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { AgentWindowApi } from "../agent-window";
+import type { AgentWindowApi, AgentWindowCreateOptions } from "../agent-window";
 import { SessionManager } from "../manager";
 
 function fakeAgentWindow(): AgentWindowApi & {
@@ -8,7 +8,7 @@ function fakeAgentWindow(): AgentWindowApi & {
   ensureActiveTabMock: ReturnType<typeof vi.fn>;
 } {
   let nextId = 100;
-  const createMock = vi.fn(async (_url: string) => {
+  const createMock = vi.fn(async (_url: string, _opts?: AgentWindowCreateOptions) => {
     const id = nextId++;
     return id;
   });
@@ -30,7 +30,7 @@ describe("SessionManager", () => {
     const sm = new SessionManager({ agentWindow: aw, now: () => 1700000000000 });
     const ctx = await sm.start("aa11");
     expect(aw.createMock).toHaveBeenCalledOnce();
-    expect(aw.createMock).toHaveBeenCalledWith("about:blank");
+    expect(aw.createMock).toHaveBeenCalledWith("about:blank", {});
     expect(aw.ensureActiveTabMock).toHaveBeenCalledOnce();
     expect(aw.ensureActiveTabMock).toHaveBeenCalledWith(100, "about:blank");
     expect(ctx.sessionId).toBe("aa11");
@@ -38,6 +38,24 @@ describe("SessionManager", () => {
     expect(ctx.createdAtMs).toBe(1700000000000);
     expect(ctx.refStore.isEmpty()).toBe(true);
     expect(ctx.borrowedTabs.size).toBe(0);
+  });
+  it("forwards an optional window size when starting a session", async () => {
+    const aw = fakeAgentWindow();
+    const sm = new SessionManager({ agentWindow: aw });
+    const ctx = await sm.start("aa11", { size: { width: 1280, height: 800 } });
+    expect(aw.createMock).toHaveBeenCalledWith("about:blank", {
+      size: { width: 1280, height: 800 },
+    });
+    expect(ctx.agentWindowId).toBe(100);
+  });
+
+  it("forwards an explicit unfocused start to the Agent Window", async () => {
+    const aw = fakeAgentWindow();
+    const sm = new SessionManager({ agentWindow: aw });
+
+    await sm.start("aa11", { focused: false });
+
+    expect(aw.createMock).toHaveBeenCalledWith("about:blank", { focused: false });
   });
 
   it("indexes the session by sessionId and agent window id", async () => {
@@ -55,6 +73,52 @@ describe("SessionManager", () => {
     const sm = new SessionManager({ agentWindow: fakeAgentWindow() });
     await sm.start("aa11");
     await expect(sm.start("aa11")).rejects.toThrow(/already exists/);
+  });
+
+  it("removes a newly created Agent Window when startup is aborted", async () => {
+    const aw = fakeAgentWindow();
+    let resolveCreate: (windowId: number) => void = () => {};
+    aw.createMock.mockImplementationOnce(
+      () =>
+        new Promise<number>((resolve) => {
+          resolveCreate = resolve;
+        }),
+    );
+    const sm = new SessionManager({ agentWindow: aw });
+    const controller = new AbortController();
+    const pending = sm.start("aa11", { signal: controller.signal });
+
+    controller.abort();
+    resolveCreate(777);
+
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    expect(aw.removeMock).toHaveBeenCalledWith(777);
+    expect(sm.has("aa11")).toBe(false);
+  });
+
+  it("removes an incomplete Agent Window when active-tab setup fails", async () => {
+    const aw = fakeAgentWindow();
+    aw.ensureActiveTabMock.mockRejectedValueOnce(new Error("tab setup failed"));
+    const sm = new SessionManager({ agentWindow: aw });
+
+    await expect(sm.start("aa11")).rejects.toThrow("tab setup failed");
+
+    expect(aw.removeMock).toHaveBeenCalledWith(100);
+    expect(sm.has("aa11")).toBe(false);
+  });
+
+  it("surfaces the orphan Agent Window id when startup cleanup fails", async () => {
+    const aw = fakeAgentWindow();
+    aw.ensureActiveTabMock.mockRejectedValueOnce(new Error("tab setup failed"));
+    aw.removeMock.mockRejectedValueOnce(new Error("window removal denied"));
+    const sm = new SessionManager({ agentWindow: aw });
+
+    await expect(sm.start("aa11")).rejects.toMatchObject({
+      name: "SessionStartCleanupError",
+      windowId: 100,
+      message: expect.stringMatching(/cleanup of Agent Window 100 failed.*window removal denied/),
+    });
+    expect(sm.has("aa11")).toBe(false);
   });
 
   it("stop() closes the Agent Window and forgets the session", async () => {

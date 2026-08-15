@@ -45,6 +45,14 @@ fn main() {
     dump!(SessionStopParams, "tool_session_stop_params");
     dump!(SessionStopResult, "tool_session_stop_result");
 
+    dump!(WindowResizeParams, "tool_window_resize_params");
+    dump!(WindowResizeResult, "tool_window_resize_result");
+
+    dump!(EmulateParams, "tool_emulate_params");
+    dump!(EmulateResult, "tool_emulate_result");
+    dump!(EmulateOverrides, "tool_emulate_overrides");
+    dump!(UserAgentMetadata, "tool_emulate_user_agent_metadata");
+
     dump!(TabListParams, "tool_tab_list_params");
     dump!(TabListResult, "tool_tab_list_result");
     dump!(TabCreateParams, "tool_tab_create_params");
@@ -69,6 +77,8 @@ fn main() {
 
     dump!(ClickParams, "tool_click_params");
     dump!(ClickResult, "tool_click_result");
+    dump!(HoverParams, "tool_hover_params");
+    dump!(HoverResult, "tool_hover_result");
     dump!(FillParams, "tool_fill_params");
     dump!(FillResult, "tool_fill_result");
     dump!(PressParams, "tool_press_params");
@@ -78,6 +88,8 @@ fn main() {
 
     dump!(SnapshotParams, "tool_snapshot_params");
     dump!(SnapshotResult, "tool_snapshot_result");
+    dump!(ObserveParams, "tool_observe_params");
+    dump!(ObserveResult, "tool_observe_result");
     dump!(GetHtmlParams, "tool_get_html_params");
     dump!(GetHtmlResult, "tool_get_html_result");
     dump!(ScreenshotParams, "tool_screenshot_params");

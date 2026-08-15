@@ -5,6 +5,7 @@ use std::time::Duration;
 use bsk::cli::daemon::{DaemonCmd, parse_duration};
 use bsk::cli::navigate::NavigateCmd;
 use bsk::cli::record::{RecordCmd, RecordSub};
+use bsk::cli::session::{SessionCmd, SessionSub};
 use bsk::{Cli, Command};
 use clap::Parser;
 
@@ -188,6 +189,24 @@ fn parses_click_count_alias() {
 }
 
 #[test]
+fn parses_hover_with_settle() {
+    let cli = parse(&[
+        "bsk",
+        "hover",
+        "@e1",
+        "--session",
+        "s1",
+        "--settle",
+        "300ms",
+    ]);
+    let Command::Hover(args) = cli.command else {
+        panic!("expected hover command");
+    };
+    assert_eq!(args.target.as_deref(), Some("@e1"));
+    assert_eq!(args.settle, 300);
+}
+
+#[test]
 fn rejects_zero_click_count() {
     assert!(
         Cli::try_parse_from(["bsk", "click", "@e1", "--session", "s1", "--count", "0"]).is_err()
@@ -226,4 +245,271 @@ fn parses_record_start_without_url() {
     };
     assert_eq!(args.browser.as_deref(), Some("022ca8ac"));
     assert!(args.url.is_none());
+}
+
+#[test]
+fn parses_session_start_with_window_size() {
+    use bsk::cli::session::{SessionCmd, SessionSub};
+    let cli = parse(&[
+        "bsk", "session", "start", "--width", "1280", "--height", "800",
+    ]);
+    let Command::Session(SessionCmd {
+        sub: SessionSub::Start(args),
+    }) = cli.command
+    else {
+        panic!("expected session start subcommand");
+    };
+    assert_eq!(args.width, Some(1280));
+    assert_eq!(args.height, Some(800));
+}
+
+#[test]
+fn session_start_window_size_defaults_to_none() {
+    use bsk::cli::session::{SessionCmd, SessionSub};
+    let cli = parse(&["bsk", "session", "start"]);
+    let Command::Session(SessionCmd {
+        sub: SessionSub::Start(args),
+    }) = cli.command
+    else {
+        panic!("expected session start subcommand");
+    };
+    assert!(args.width.is_none());
+    assert!(args.height.is_none());
+}
+
+#[test]
+fn rejects_out_of_range_session_start_window_size() {
+    assert!(Cli::try_parse_from(["bsk", "session", "start", "--width", "99"]).is_err());
+    assert!(Cli::try_parse_from(["bsk", "session", "start", "--height", "7681"]).is_err());
+    assert!(Cli::try_parse_from(["bsk", "session", "start", "--width", "abc"]).is_err());
+}
+
+#[test]
+fn parses_window_resize() {
+    use bsk::cli::window::{WindowCmd, WindowSub};
+    let cli = parse(&[
+        "bsk",
+        "window",
+        "resize",
+        "--session",
+        "s1",
+        "--width",
+        "1280",
+        "--height",
+        "800",
+    ]);
+    let Command::Window(WindowCmd {
+        sub: WindowSub::Resize(args),
+    }) = cli.command
+    else {
+        panic!("expected window resize subcommand");
+    };
+    assert_eq!(args.session, "s1");
+    assert_eq!(args.width, 1280);
+    assert_eq!(args.height, 800);
+}
+
+#[test]
+fn rejects_invalid_window_resize_dimensions() {
+    assert!(
+        Cli::try_parse_from([
+            "bsk",
+            "window",
+            "resize",
+            "--session",
+            "s1",
+            "--width",
+            "99",
+            "--height",
+            "800"
+        ])
+        .is_err()
+    );
+    assert!(
+        Cli::try_parse_from([
+            "bsk",
+            "window",
+            "resize",
+            "--session",
+            "s1",
+            "--width",
+            "1280",
+            "--height",
+            "7681"
+        ])
+        .is_err()
+    );
+    // width/height are required for resize.
+    assert!(Cli::try_parse_from(["bsk", "window", "resize", "--session", "s1"]).is_err());
+}
+
+#[test]
+fn parses_emulate_with_device_preset() {
+    use bsk::cli::emulate::EmulateArgs;
+    let cli = parse(&["bsk", "emulate", "--session", "s1", "--device", "iphone-14"]);
+    let Command::Emulate(EmulateArgs {
+        session,
+        device,
+        off,
+        ..
+    }) = cli.command
+    else {
+        panic!("expected emulate subcommand");
+    };
+    assert_eq!(session, "s1");
+    assert_eq!(device.as_deref(), Some("iphone-14"));
+    assert!(!off);
+}
+
+#[test]
+fn parses_emulate_manual_overrides() {
+    let cli = parse(&[
+        "bsk",
+        "emulate",
+        "--session",
+        "s1",
+        "--width",
+        "390",
+        "--height",
+        "844",
+        "--dpr",
+        "3",
+        "--mobile",
+        "--ua",
+        "Mozilla/5.0 (iPhone)",
+        "--accept-language",
+        "zh-CN",
+        "--touch",
+        "--max-touch-points",
+        "5",
+        "--tab-id",
+        "7",
+    ]);
+    let Command::Emulate(args) = cli.command else {
+        panic!("expected emulate subcommand");
+    };
+    assert_eq!(args.width, Some(390));
+    assert_eq!(args.height, Some(844));
+    assert_eq!(args.dpr, Some(3.0));
+    assert!(args.mobile);
+    assert_eq!(args.ua.as_deref(), Some("Mozilla/5.0 (iPhone)"));
+    assert_eq!(args.accept_language.as_deref(), Some("zh-CN"));
+    assert!(args.touch);
+    assert_eq!(args.max_touch_points, Some(5));
+    assert_eq!(args.tab_id, Some(7));
+}
+
+#[test]
+fn parses_emulate_off() {
+    let cli = parse(&["bsk", "emulate", "--session", "s1", "--off"]);
+    let Command::Emulate(args) = cli.command else {
+        panic!("expected emulate subcommand");
+    };
+    assert!(args.off);
+}
+
+#[test]
+fn parses_emulate_no_mobile_no_touch() {
+    let cli = parse(&[
+        "bsk",
+        "emulate",
+        "--session",
+        "s1",
+        "--device",
+        "iphone-14",
+        "--no-mobile",
+        "--no-touch",
+    ]);
+    let Command::Emulate(args) = cli.command else {
+        panic!("expected emulate subcommand");
+    };
+    assert!(args.no_mobile);
+    assert!(args.no_touch);
+    assert!(!args.mobile);
+    assert!(!args.touch);
+}
+
+#[test]
+fn rejects_conflicting_emulate_flags() {
+    for extra in [
+        &["--mobile", "--no-mobile"][..],
+        &["--touch", "--no-touch"][..],
+    ] {
+        let mut argv = vec!["bsk", "emulate", "--session", "s1", "--device", "iphone-14"];
+        argv.extend_from_slice(extra);
+        assert!(Cli::try_parse_from(argv).is_err());
+    }
+}
+
+#[test]
+fn rejects_invalid_emulate_values() {
+    // Zero / out-of-range dimensions.
+    assert!(
+        Cli::try_parse_from([
+            "bsk",
+            "emulate",
+            "--session",
+            "s1",
+            "--width",
+            "0",
+            "--height",
+            "844"
+        ])
+        .is_err()
+    );
+    // Non-positive dpr.
+    assert!(
+        Cli::try_parse_from([
+            "bsk",
+            "emulate",
+            "--session",
+            "s1",
+            "--width",
+            "390",
+            "--height",
+            "844",
+            "--dpr",
+            "0"
+        ])
+        .is_err()
+    );
+    assert!(
+        Cli::try_parse_from([
+            "bsk",
+            "emulate",
+            "--session",
+            "s1",
+            "--width",
+            "390",
+            "--height",
+            "844",
+            "--dpr",
+            "abc"
+        ])
+        .is_err()
+    );
+    // Zero touch points.
+    assert!(
+        Cli::try_parse_from([
+            "bsk",
+            "emulate",
+            "--session",
+            "s1",
+            "--max-touch-points",
+            "0"
+        ])
+        .is_err()
+    );
+}
+
+#[test]
+fn parses_session_start_no_focus() {
+    let cli = parse(&["bsk", "session", "start", "--no-focus"]);
+    let Command::Session(SessionCmd {
+        sub: SessionSub::Start(args),
+    }) = cli.command
+    else {
+        panic!("expected session start subcommand");
+    };
+    assert!(args.no_focus);
 }

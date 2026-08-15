@@ -26,7 +26,9 @@ use bsk_protocol::system::{
     BrowserListParams, BrowserStatusEntry, SessionStatusEntry, StatusParams, StatusResult,
     VersionSkewEntry,
 };
-use bsk_protocol::tools::{ReturnFailure, WaitMsParams, WaitMsResult};
+use bsk_protocol::tools::{
+    HelpOutcome, RequestHelpResult, ReturnFailure, WaitMsParams, WaitMsResult,
+};
 use bsk_protocol::{
     CancelParams, CancelResult, ErrorCode, Method, PingResult, ResponseBody, RpcError, RpcId,
 };
@@ -40,8 +42,8 @@ use tracing::{debug, warn};
 use super::abort::AbortRegistry;
 use super::queue::{DEFAULT_TOOL_TIMEOUT, DispatchError};
 use super::sessions::{
-    SessionId, StartSessionError, StopSessionError, snapshot_status_entries, start_session,
-    stop_session,
+    AgentWindowOptions, SessionId, StartSessionError, StopSessionError, snapshot_status_entries,
+    start_session, stop_session,
 };
 use super::state::{DAEMON_VERSION, DaemonState, PROTOCOL_VERSION};
 
@@ -227,16 +229,20 @@ pub fn full_handler(status: DaemonStatus, state: Arc<DaemonState>) -> RpcHandler
                 | Method::ToolTabSelect
                 | Method::ToolTabBorrow
                 | Method::ToolTabReturn
+                | Method::ToolWindowResize
+                | Method::ToolEmulate
                 | Method::ToolScreenshot
                 | Method::ToolConsole
                 | Method::ToolNetwork
                 | Method::ToolSnapshot
+                | Method::ToolObserve
                 | Method::ToolGetHtml
                 | Method::ToolNavigate
                 | Method::ToolNavigateBack
                 | Method::ToolNavigateForward
                 | Method::ToolReload
                 | Method::ToolClick
+                | Method::ToolHover
                 | Method::ToolFill
                 | Method::ToolPress
                 | Method::ToolSelect
@@ -286,6 +292,19 @@ async fn handle_tool_dispatch(
     method: Method,
     params: Value,
 ) -> ResponseBody {
+    // `BSK_REQUEST_HELP=off` (unattended mode): never forward the
+    // blocking human-in-loop call to the extension; answer immediately
+    // with a synthetic `disabled` result.
+    if method == Method::ToolRequestHelp && crate::cli::human_loop::request_help_disabled() {
+        let result = RequestHelpResult {
+            outcome: HelpOutcome::Disabled,
+            completed_by: None,
+            note: Some(crate::cli::human_loop::REQUEST_HELP_DISABLED_NOTE.into()),
+            tab_id: params.get("tab_id").and_then(Value::as_i64).unwrap_or(0),
+            resolved_targets: None,
+        };
+        return ResponseBody::Ok(serde_json::to_value(result).unwrap_or(Value::Null));
+    }
     let session_id = match params.get("session_id").and_then(|v| v.as_str()) {
         Some(s) if !s.is_empty() => SessionId(s.to_string()),
         _ => {
@@ -298,16 +317,14 @@ async fn handle_tool_dispatch(
     };
     // Pre-flight: if the user has clicked the agent-window mask's
     // stop button, every session carries a one-shot "pending
-    // interrupt" marker. The marker is consumed by the next
-    // *mutating* tool call (which is rejected with `UserAborted`).
-    // Read-only tools (snapshot / get_html / waits / tab_list) and
-    // session-lifecycle RPCs pass through transparently — gating
-    // them would prevent the agent from observing page state
-    // before asking the user, or from cleanly tearing down the
-    // session. Classification lives on `Method::is_mutating()` so
-    // adding a new tool variant requires an explicit
-    // classification call.
-    if method.is_mutating() && state.session_interrupts.try_consume(&session_id) {
+    // interrupt" marker. The marker is consumed by the next method
+    // that dispatches browser/page input (which is rejected with
+    // `UserAborted`). Passive reads and control-plane RPCs pass through
+    // transparently — gating them would prevent the agent from observing
+    // page state before asking the user, or from cleanly tearing down the
+    // session. Classification lives on `Method::effect()` so adding a new
+    // tool variant requires an explicit classification call.
+    if method.requires_interrupt_gate() && state.session_interrupts.try_consume(&session_id) {
         return ResponseBody::Err(RpcError {
             code: ErrorCode::UserAborted,
             message: "tool dispatch rejected: pending user interrupt. The user explicitly requested to stop. Ask the user how to proceed before issuing further actions.".into(),
@@ -433,10 +450,10 @@ async fn handle_wait_ms(
 ///    * **Queued** — the worker's pre-flight observes the cancelled
 ///      token and short-circuits with `cancelled` before any WS
 ///      frame leaves the daemon (review C2 fix).
-///    * **Forwarded** — the worker's `tokio::select!` returns
-///      `cancelled` immediately, AND we additionally push a WS-side
-///      `cancel { rpc_id: ws_rpc_id }` frame so the extension's
-///      dispatcher can trip its `AbortController`.
+///    * **Forwarded** — we push a WS-side `cancel { rpc_id: ws_rpc_id }`
+///      frame so the extension's dispatcher can trip its
+///      `AbortController`; the worker keeps the session busy until the
+///      extension returns its final result or the cleanup timeout expires.
 ///
 /// Returns `{ cancelled }` reflecting whether either surface
 /// matched. The RPC itself never errors — a cancelled tool surfaces
@@ -532,6 +549,12 @@ fn tool_dispatch_timeout(params: &Value) -> Result<Duration, RpcError> {
 struct CliSessionStartParams {
     #[serde(default)]
     pub browser_instance_id: Option<String>,
+    #[serde(default)]
+    pub width: Option<u32>,
+    #[serde(default)]
+    pub height: Option<u32>,
+    #[serde(default)]
+    pub focused: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -623,6 +646,9 @@ async fn handle_session_start(state: &Arc<DaemonState>, params: Value) -> Result
     let params: CliSessionStartParams = if params.is_null() {
         CliSessionStartParams {
             browser_instance_id: None,
+            width: None,
+            height: None,
+            focused: None,
         }
     } else {
         serde_json::from_value(params).map_err(|err| RpcError {
@@ -631,11 +657,28 @@ async fn handle_session_start(state: &Arc<DaemonState>, params: Value) -> Result
             data: None,
         })?
     };
+    // `--width` without `--height` (or vice versa) is rejected: the
+    // extension only accepts a complete size pair.
+    let window_size = match (params.width, params.height) {
+        (Some(width), Some(height)) => Some((width, height)),
+        (None, None) => None,
+        _ => {
+            return Err(RpcError {
+                code: ErrorCode::InvalidParams,
+                message: "width and height must be given together".into(),
+                data: None,
+            });
+        }
+    };
     match start_session(
         &state.browsers,
         &state.sessions,
         &state.tool_queues,
         params.browser_instance_id.as_deref(),
+        AgentWindowOptions {
+            size: window_size,
+            focused: params.focused,
+        },
         state.config.extension_connect_wait,
         DEFAULT_RPC_TIMEOUT,
     )

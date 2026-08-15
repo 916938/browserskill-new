@@ -2,6 +2,7 @@ import { i18n } from "@browser-skill/i18n";
 import { ChromiumCdp } from "@/browser-driver/chromium-cdp";
 import { applyTemplate } from "@/lib/apply-template";
 import { ConnectionController } from "@/lib/connection-controller";
+import { startHeartbeat } from "@/lib/heartbeat";
 import {
   getConnectionEnabled,
   setConnectionEnabled as persistConnectionEnabled,
@@ -9,16 +10,21 @@ import {
 } from "@/lib/instance-id";
 import { startKeepalive } from "@/lib/keepalive";
 import {
+  OVERLAY_AGENT_STATE,
   OVERLAY_AUTOMATION_BYPASS,
   OVERLAY_MSG_INTERRUPT,
+  OVERLAY_MSG_READY,
   OVERLAY_MSG_WHO_AM_I,
+  type OverlayAgentStateMessage,
   type OverlayInterruptRequest,
   type OverlayInterruptResponse,
   type OverlayMessage,
+  type OverlayMode,
 } from "@/lib/overlay-bridge";
 import { POPUP_PORT_NAME, type PopupInbound, type PopupOutbound } from "@/lib/popup-bridge";
 import { attachSessionsLiveFlag } from "@/lib/sessions-live-flag";
 import { initTemplateClient, templateClient } from "@/lib/template-client";
+import { createDisconnectCleanup } from "@/session-manager/disconnect-cleanup";
 import { attachSessionEventHandler } from "@/session-manager/event-handler";
 import { SessionManager } from "@/session-manager/manager";
 import {
@@ -46,17 +52,108 @@ export default defineBackground(() => {
   const sessions = new SessionManager();
   const cdp = new ChromiumCdp();
   const sessionsLive = attachSessionsLiveFlag({ manager: sessions });
+  let overlayGeneration = 0;
+  const controlModes = new Map<string, OverlayMode>();
+
+  function setControlMode(sessionId: string, mode: OverlayMode): void {
+    if (controlModes.get(sessionId) === mode) return;
+    controlModes.set(sessionId, mode);
+    overlayGeneration += 1;
+    const ctx = sessions.get(sessionId);
+    if (ctx) void pushOverlayStateForWindow(ctx.agentWindowId);
+  }
+
+  function overlayStateForWindow(windowId?: number): OverlayAgentStateMessage {
+    const ctx = typeof windowId === "number" ? sessions.findByWindowId(windowId) : null;
+    if (!ctx) {
+      return {
+        type: OVERLAY_AGENT_STATE,
+        sessionId: null,
+        mode: "hidden",
+        generation: overlayGeneration,
+      };
+    }
+    return {
+      type: OVERLAY_AGENT_STATE,
+      sessionId: ctx.sessionId,
+      mode: controlModes.get(ctx.sessionId) ?? "control",
+      generation: overlayGeneration,
+    };
+  }
+
+  async function pushOverlayStateToTab(
+    tabId: number,
+    state: OverlayAgentStateMessage,
+  ): Promise<void> {
+    try {
+      await chrome.tabs.sendMessage(tabId, state);
+    } catch {
+      // Restricted pages and not-yet-loaded content scripts cannot receive messages.
+    }
+  }
+
+  async function pushOverlayStateForWindow(windowId: number): Promise<void> {
+    const state = overlayStateForWindow(windowId);
+    const tabs = await chrome.tabs.query({ windowId });
+    await Promise.all(
+      tabs.map((tab) =>
+        typeof tab.id === "number" ? pushOverlayStateToTab(tab.id, state) : Promise.resolve(),
+      ),
+    );
+  }
+
+  function pushAllAgentOverlayStates(): void {
+    const windowIds = new Set(sessions.list().map((ctx) => ctx.agentWindowId));
+    for (const windowId of windowIds) {
+      void pushOverlayStateForWindow(windowId);
+    }
+  }
+
+  function onOverlaySessionStateChanged(): void {
+    void sessionsLive.syncFromManager();
+    const liveSessionIds = new Set(sessions.list().map((ctx) => ctx.sessionId));
+    for (const sessionId of controlModes.keys()) {
+      if (!liveSessionIds.has(sessionId)) controlModes.delete(sessionId);
+    }
+    overlayGeneration += 1;
+    pushAllAgentOverlayStates();
+  }
+
+  function onBrowserControlResumed(sessionId: string): void {
+    const ctx = sessions.get(sessionId);
+    if (!ctx) return;
+    setControlMode(sessionId, "control");
+  }
+
+  function pushOverlayStateForAgentWindow(windowId: number): void {
+    if (!sessions.findByWindowId(windowId)) return;
+    void pushOverlayStateForWindow(windowId);
+  }
+  chrome.tabs.onActivated.addListener((activeInfo) => {
+    pushOverlayStateForAgentWindow(activeInfo.windowId);
+  });
+  chrome.tabs.onUpdated.addListener((_tabId, changeInfo, tab) => {
+    if (changeInfo.status !== "complete") return;
+    if (typeof tab.windowId !== "number") return;
+    pushOverlayStateForAgentWindow(tab.windowId);
+  });
   // Re-sync the storage.session flag on SW startup so a previous SW's
   // stale `true` does not keep waking us on every page load until the
   // first mutation (review M4/M5 round 3 m-R3-1).
   void sessionsLive.refresh();
+  const cleanupAfterDisconnect = createDisconnectCleanup({
+    manager: sessions,
+    sessionStopDeps: { cdp },
+    onSessionsChanged: () => {
+      void sessionsLive.syncFromManager();
+    },
+  });
   const dispatcher = new ToolDispatcher({
     transport,
     sessions,
     cdp,
-    onSessionsChanged: () => {
-      void sessionsLive.syncFromManager();
-    },
+    onSessionsChanged: onOverlaySessionStateChanged,
+    onBrowserControlResumed,
     approveBorrow: (ctx) =>
       requestBorrowConfirmation(ctx.tabId, {
         ...(ctx.signal !== undefined ? { signal: ctx.signal } : {}),
@@ -126,9 +223,7 @@ export default defineBackground(() => {
     manager: sessions,
     transport,
     cdp,
-    onSessionsChanged: () => {
-      void sessionsLive.syncFromManager();
-    },
+    onSessionsChanged: onOverlaySessionStateChanged,
   });
 
   // MV3 service worker keepalive + reconnect supervisor (review M4/M5
@@ -142,9 +237,61 @@ export default defineBackground(() => {
     shouldConnect: () => controller.isConnectionEnabled,
   });
 
+  // Application-level heartbeat (Chrome 116+): while the post-handshake
+  // link is live, beat every 20s so WebSocket activity keeps the service
+  // worker — and thus the daemon connection — alive during use, rather
+  // than depending on the boundary-hugging 30s keepalive alarm. The
+  // daemon also uses these beats to reap a silently-dead browser.
+  startHeartbeat({
+    send: (frame) => transport.send(frame),
+    onActiveChange: (cb) =>
+      controller.subscribe((snap) =>
+        cb(snap.state === "connected" || snap.state === "version_skew"),
+      ),
+  });
+
+  // Wake-driven reconnect (best effort). An MV3 service worker is killed
+  // across OS sleep regardless of any keepalive, and the setTimeout-based
+  // transport backoff dies with it. These Chrome lifecycle events revive
+  // the worker and let us reconnect immediately instead of waiting for
+  // the next 30s alarm tick. They only help when the daemon is actually
+  // running; a cold daemon is (re)spawned by the next `bsk` command.
+  const reconnectIfNeeded = () => {
+    if (!controller.isConnectionEnabled) return;
+    if (transport.state === "connected") return;
+    void transport.connect().catch((err) => {
+      console.debug("[browser-skill] wake reconnect attempt failed", err);
+    });
+  };
+  if (typeof chrome.runtime?.onStartup?.addListener === "function") {
+    chrome.runtime.onStartup.addListener(reconnectIfNeeded);
+  }
+  if (typeof chrome.idle?.onStateChanged?.addListener === "function") {
+    chrome.idle.onStateChanged.addListener((state) => {
+      // "active" fires when the user returns from idle/locked — the most
+      // reliable "machine just woke" signal we get.
+      if (state === "active") reconnectIfNeeded();
+    });
+    // Treat >60s of no input as idle so the active transition is timely.
+    chrome.idle.setDetectionInterval?.(60);
+  }
+
   void (async () => {
     const connectionEnabled = await getConnectionEnabled();
-    await controller.attach(transport, detectBrowserMeta(), connectionEnabled);
+    await controller.attach(transport, detectBrowserMeta(), connectionEnabled, {
+      beforeDisconnect: async () => {
+        const report = await cleanupAfterDisconnect();
+        if (report.failures.length > 0) {
+          console.warn("[browser-skill] session cleanup before disconnect was incomplete", report);
+        }
+      },
+      onDisconnected: async () => {
+        const report = await cleanupAfterDisconnect();
+        if (report.failures.length > 0) {
+          console.warn("[browser-skill] session cleanup after disconnect was incomplete", report);
+        }
+      },
+    });
   })().catch((err) => {
     console.error("[browser-skill] controller failed to attach", err);
   });
@@ -160,9 +307,19 @@ export default defineBackground(() => {
       return false;
     }
 
+    if (msg.kind === OVERLAY_MSG_READY) {
+      sendResponse(overlayStateForWindow(sender.tab?.windowId));
+      return false;
+    }
+
     if (msg.kind === OVERLAY_MSG_INTERRUPT) {
       const req = msg as OverlayInterruptRequest;
+      const ctx = sessions.get(req.sessionId);
+      if (ctx) setControlMode(req.sessionId, "interrupting");
       void handleOverlayInterrupt(transport, req.sessionId).then((reply) => {
+        if (reply.ok && sessions.get(req.sessionId)) {
+          setControlMode(req.sessionId, "paused");
+        }
         sendResponse(reply);
       });
       return true; // keep channel open
