@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-09-XX
+
+从 2026-09-06 起，CLI / Extension / DSH Plugin 共用同一 semver（沿用上游 0.2.0 起的版本方案）。
+
+### Changed
+
+- 合并上游 `Tencent/main`（`47ac947`）的 182 个提交：文件上传下载、VOM 语义图与 hover 感知、DSH Harness 插件、`evals/browser` 测试台、统一发布脚本等。
+- 三组件版本号统一为 `0.2.2`（此前 CLI `0.2.1`、Extension / DSH Plugin `0.2.0`）。
+- 冲突取舍保留 fork 特性：fork 安装 URL、`skill/SKILL.md` 的多浏览器与智能标签指引、`bsk invoke` 的 `clap_complete` 补全、Profile 模板（`TemplateRegistry`）；上游新增能力与其并存。
+
+### Fixed
+
+- `daemon/file_transfer.rs`：`set_private_dir` / `set_private_file` 在非 Unix 平台参数未使用，导致 `clippy -D warnings` 编译失败（上游同样存在）。
+
+## [上游合并前的 Unreleased 记录]
+
 ### Added
 
 - Added the `@browser-skill/vom` workspace package and semantic VOM capture/rendering pipeline.
@@ -40,6 +56,90 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > This section describes the post-merge `chain` branch at commit `cfbc286`. Existing tags `cli-v0.2.1` and `ext-v0.1.6` predate this merge and do not contain the complete change set above.
 
 ---
+
+## Upstream 0.2.0 — 2026-09-02（合并自 Tencent/BrowserSkill）
+
+### Added
+- File transfer: upload and download support across CLI, Extension, and DSH Plugin
+- File transfer: drag-and-drop upload (`drop-to-upload`)
+- VOM semantic graph, name enrichment, and hover perception modules
+- VOM hover probing (opt-in via `observe` parameter)
+- DSH Plugin: browser tool parity with CLI commands
+- Edge Add-ons automated publishing in CI
+- Protocol upgrade reminder when CLI / Extension protocol versions differ
+- Browser evaluation harness (`evals/browser/`)
+- Unified release script (`scripts/release.mjs`)
+
+### Changed
+- **Version scheme**: all three components now share the same semver
+- VOM rendering algorithm optimizations
+- Leaner SKILL.md agent instructions
+- DSH Plugin: simplified browser commands
+- Borrow confirmation UX — proactive focus and longer timeout
+- PiP window now has a close button
+
+### Fixed
+- Screenshot media type detection (was hard-coded to `image/png`)
+- DSH Plugin session lifecycle stability
+- DSH Plugin Cordis package ID mismatch
+- Observation thumbnail media type sniffing
+- Upload/download race conditions and layout bypass issues
+- VOM repeated name and safety policy issues
+
+---
+
+*Previous releases used independent version numbers per component.*
+
+## CLI 0.1.11 / Extension 0.1.7 / DSH Plugin 0.1.2 — 2026-08-26 ~ 2026-08-29
+
+### Added
+- DSH Plugin sidebar integration, session lifecycle, and archive cleanup
+- Recorder iframe and OOPIF support
+
+### Changed
+- VOM functional refactor
+
+### Fixed
+- Recorder safety policy and bug fixes
+
+## CLI 0.1.10 / Extension 0.1.6 — 2026-08-08
+
+### Added
+- VOM observation recording and settled-state detection
+- Record overlay timer
+
+### Fixed
+- Browser keepalive disconnect handling
+
+## CLI 0.1.9 / Extension 0.1.5 — 2026-07-29
+
+### Added
+- CLI auto-update mechanism
+- Trace v3 protocol and recorder
+
+### Fixed
+- MV3 keepalive disconnect
+
+## CLI 0.1.8 / Extension 0.1.4 — 2026-07-22
+
+### Added
+- More browser interaction actions
+
+### Fixed
+- Windows named-pipe hash-only path issue
+
+## CLI 0.1.7 / Extension 0.1.3 — 2026-07-07
+
+Initial public release pair.
+
+## CLI 0.1.6 — 2026-06-30
+
+### Fixed
+- Minor CLI fixes
+
+## CLI 0.1.5 / Extension 0.1.2 — 2026-06-22
+
+First tagged releases.
 
 ## [CLI v0.2.0] & [Extension v0.1.4] - 2026-07-24
 

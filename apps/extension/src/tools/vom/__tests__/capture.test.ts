@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { OVERLAY_HOST_MARKER_ATTR, OVERLAY_HOST_NAME } from "../../../lib/overlay-bridge";
-import { captureViewModel, collectOverlayExcludedBackendIds } from "../capture";
+import { captureViewModel, collectOverlayExcludedBackendIds, probeHoverSurfaces } from "../capture";
 
 // Minimal but format-accurate captureSnapshot reply: a body with one
 // fixed full-screen overlay div carrying a password input.
@@ -18,6 +18,8 @@ function fakeSnapshotReply() {
     "auto",
     "type",
     "password",
+    "value",
+    "hunter2",
   ];
   const i = (s: string) => S.indexOf(s);
   return {
@@ -29,11 +31,12 @@ function fakeSnapshotReply() {
           nodeType: [1, 1, 1, 1],
           nodeName: [i("html"), i("body"), i("div"), i("input")],
           backendNodeId: [10, 11, 12, 13],
-          attributes: [[], [], [], [i("type"), i("password")]],
+          attributes: [[], [], [], [i("type"), i("password"), i("value"), i("hunter2")]],
+          inputValue: { index: [3], value: [i("hunter2")] },
         },
         layout: {
           nodeIndex: [1, 2, 3],
-          // styles columns follow requested computedStyles order: [position, pointer-events]
+          // Legacy fixture: omitted style columns fall back to visible defaults.
           styles: [
             [i("static"), i("auto")],
             [i("fixed"), i("auto")],
@@ -217,7 +220,8 @@ function makeCdp(snapshot: unknown) {
                 {
                   state: "filled",
                   sensitive: true,
-                  defaultValue: "",
+                  defaultValue: "hunter2",
+                  value: "hunter2",
                   placeholder: "secret",
                 },
               ],
@@ -247,11 +251,10 @@ describe("captureViewModel", () => {
     expect(input?.attrs).toEqual({ type: "password" });
   });
 
-  it("does not run conditional surface probes by default", async () => {
+  it("never hovers the page while capturing", async () => {
     const cdp = makeCdp(fakeSnapshotReply());
-    const result = await captureViewModel(cdp, 4);
+    await captureViewModel(cdp, 4);
 
-    expect(result.surfaceProbes).toEqual([]);
     expect(cdp.send).not.toHaveBeenCalledWith(4, "Input.dispatchMouseEvent", expect.anything());
   });
 
@@ -262,10 +265,11 @@ describe("captureViewModel", () => {
 
     expect(input).toMatchObject({
       formState: "filled",
-      formDefaultValue: "",
       formPlaceholder: "secret",
+      attrs: { type: "password" },
     });
     expect(input?.formValue).toBeUndefined();
+    expect(input?.formDefaultValue).toBeUndefined();
     expect(cdp.send).toHaveBeenCalledWith(
       4,
       "Runtime.evaluate",
@@ -314,9 +318,10 @@ describe("captureViewModel", () => {
       }) as unknown as <T>(tabId: number, method: string, params?: object) => Promise<T>,
     };
 
-    const result = await captureViewModel(cdp, 4, { conditionalSurfaceProbe: true });
+    const captured = await captureViewModel(cdp, 4);
+    const surfaceProbes = await probeHoverSurfaces(cdp, 4, captured.nodes);
 
-    expect(result.surfaceProbes).toEqual([
+    expect(surfaceProbes).toEqual([
       {
         triggerBackendNodeId: 12,
         triggerPoint: { x: 956, y: 32 },
@@ -373,9 +378,10 @@ describe("captureViewModel", () => {
       }) as unknown as <T>(tabId: number, method: string, params?: object) => Promise<T>,
     };
 
-    const result = await captureViewModel(cdp, 4, { conditionalSurfaceProbe: true });
+    const captured = await captureViewModel(cdp, 4);
+    const surfaceProbes = await probeHoverSurfaces(cdp, 4, captured.nodes);
 
-    expect(result.surfaceProbes).toEqual([
+    expect(surfaceProbes).toEqual([
       expect.objectContaining({
         triggerBackendNodeId: 12,
         subItems: ["My profile", "Sign out"],
@@ -417,7 +423,8 @@ describe("captureViewModel", () => {
       }) as unknown as <T>(tabId: number, method: string, params?: object) => Promise<T>,
     };
 
-    await captureViewModel(cdp, 4, { conditionalSurfaceProbe: true });
+    const captured = await captureViewModel(cdp, 4);
+    await probeHoverSurfaces(cdp, 4, captured.nodes);
 
     expect(hoverMoves).toBe(1);
   });
@@ -677,6 +684,46 @@ describe("captureViewModel", () => {
     expect(nodes.find((n) => n.backendNodeId === 11)?.cursor).toBe("auto");
   });
 
+  it("captures painted visibility as DOM fallback evidence", async () => {
+    const S = ["html", "body", "button", "static", "auto", "visible", "hidden", "1", "0"];
+    const i = (value: string) => S.indexOf(value);
+    const snapshot = {
+      strings: S,
+      documents: [
+        {
+          nodes: {
+            parentIndex: [-1, 0, 1, 1, 1],
+            nodeName: [i("html"), i("body"), i("button"), i("button"), i("button")],
+            backendNodeId: [10, 11, 12, 13, 14],
+            attributes: [[], [], [], [], []],
+          },
+          layout: {
+            nodeIndex: [1, 2, 3, 4],
+            styles: [
+              [i("static"), i("auto"), i("auto"), i("visible"), i("1")],
+              [i("static"), i("auto"), i("auto"), i("visible"), i("1")],
+              [i("static"), i("auto"), i("auto"), i("hidden"), i("1")],
+              [i("static"), i("auto"), i("auto"), i("visible"), i("0")],
+            ],
+            bounds: [
+              [0, 0, 1000, 800],
+              [10, 10, 100, 30],
+              [10, 50, 100, 30],
+              [10, 90, 100, 30],
+            ],
+            paintOrders: [0, 1, 2, 3],
+          },
+        },
+      ],
+    };
+
+    const { nodes } = await captureViewModel(makeCdp(snapshot), 4);
+
+    expect(nodes.find((node) => node.backendNodeId === 12)?.rendered).toBe(true);
+    expect(nodes.find((node) => node.backendNodeId === 13)?.rendered).toBe(false);
+    expect(nodes.find((node) => node.backendNodeId === 14)?.rendered).toBe(false);
+  });
+
   it("subtracts scroll offset to make rects viewport-relative", async () => {
     const cdp = {
       send: vi.fn(async (_t: number, method: string) => {
@@ -692,9 +739,7 @@ describe("captureViewModel", () => {
     };
     const { nodes } = await captureViewModel(cdp, 4);
     const div = nodes.find((n) => n.backendNodeId === 12);
-    // local rect preserves viewport-relative scroll math.
     expect(div?.localRect?.y).toBe(-200);
-    // exported rect is clipped to the top-level viewport before VOM consumes it.
     expect(div?.rect).toMatchObject({ y: 0, h: 600 });
   });
 
@@ -839,6 +884,7 @@ describe("captureViewModel", () => {
       strings: S,
       documents: [
         {
+          frameId: "main-frame",
           scrollOffsetX: 0,
           scrollOffsetY: 0,
           nodes: {
@@ -866,6 +912,7 @@ describe("captureViewModel", () => {
         },
         // documents[1]: the iframe's sub-document with a login input
         {
+          frameId: "child-frame",
           scrollOffsetX: 0,
           scrollOffsetY: 0,
           nodes: {
@@ -895,7 +942,14 @@ describe("captureViewModel", () => {
         throw new Error(method);
       }) as unknown as <T>(tabId: number, method: string, params?: object) => Promise<T>,
     };
-    const { nodes, iframeNodes } = await captureViewModel(cdp, 4);
+    const {
+      nodes,
+      iframeNodes,
+      frameNodes,
+      frameOwnerBackendNodeIds,
+      frameParentIds,
+      rootFrameId,
+    } = await captureViewModel(cdp, 4);
     // Main frame has 4 nodes; iframe is included
     expect(nodes.find((n) => n.backendNodeId === 13)?.tag).toBe("iframe");
     // iframeNodes keyed by the <iframe> element's backendNodeId=13
@@ -908,9 +962,13 @@ describe("captureViewModel", () => {
     expect(input?.ownerFrameBackendNodeId).toBe(13);
     expect(input?.localRect).toEqual({ x: 0, y: 0, w: 200, h: 40 });
     expect(input?.rect).toEqual({ x: 100, y: 300, w: 200, h: 40 });
+    expect(rootFrameId).toBe("main-frame");
+    expect(frameNodes?.get("child-frame")).toBe(subNodes);
+    expect(frameOwnerBackendNodeIds?.get("child-frame")).toBe(13);
+    expect(frameParentIds?.get("child-frame")).toBe("main-frame");
   });
 
-  it("clips iframe sub-document rects to the iframe viewport in top coordinates", async () => {
+  it("captures iframe documents without requiring owner-frame geometry", async () => {
     const S = [
       "html",
       "body",
@@ -938,16 +996,10 @@ describe("captureViewModel", () => {
             contentDocumentIndex: { index: [2], value: [1] },
           },
           layout: {
-            nodeIndex: [1, 2],
-            styles: [
-              [i("static"), i("auto")],
-              [i("static"), i("auto")],
-            ],
-            bounds: [
-              [0, 0, 1000, 800],
-              [950, 760, 200, 100],
-            ],
-            paintOrders: [0, 1],
+            nodeIndex: [1],
+            styles: [[i("static"), i("auto")]],
+            bounds: [[0, 0, 1000, 800]],
+            paintOrders: [0],
           },
         },
         {
@@ -985,7 +1037,7 @@ describe("captureViewModel", () => {
     const input = iframeNodes.get(13)?.find((n) => n.backendNodeId === 101);
 
     expect(input?.localRect).toEqual({ x: 20, y: 20, w: 120, h: 60 });
-    expect(input?.rect).toEqual({ x: 970, y: 780, w: 30, h: 20 });
+    expect(input?.rect).toBeNull();
   });
 
   it("recursively normalizes nested iframe sub-documents", async () => {
@@ -1080,8 +1132,10 @@ describe("captureViewModel", () => {
     const nestedIframe = iframeNodes.get(13)?.find((n) => n.backendNodeId === 23);
     const input = iframeNodes.get(23)?.find((n) => n.backendNodeId === 31);
 
+    expect(nestedIframe?.localRect).toEqual({ x: 5, y: 6, w: 100, h: 80 });
     expect(nestedIframe?.rect).toEqual({ x: 15, y: 26, w: 100, h: 80 });
     expect(input?.ownerFrameBackendNodeId).toBe(23);
+    expect(input?.localRect).toEqual({ x: 1, y: 2, w: 40, h: 20 });
     expect(input?.rect).toEqual({ x: 16, y: 28, w: 40, h: 20 });
   });
 

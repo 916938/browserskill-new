@@ -13,7 +13,7 @@
 </p>
 
 **BrowserSkill** connects Cursor, Claude Code, Codex, OpenClaw, CodeBuddy,
-WorkBuddy, Pi, Hermes Agent, and other shell-capable AI agents to your already logged-in
+WorkBuddy, Pi, Hermes Agent, DeepSeek Harness, and other AI agents to your already logged-in
 browser.
 
 Need the agent to touch a tab you already have open? It must borrow that tab
@@ -70,7 +70,8 @@ Set up browser-skill on this machine by following https://raw.githubusercontent.
 
 <br>
 
-Install the CLI, then install the extension from the [Chrome Web Store](https://chromewebstore.google.com/detail/hhcmgoofomhgciiibhipgmgkgnoenaoi).
+Install the CLI, then install the extension from the [Chrome Web Store](https://chromewebstore.google.com/detail/hhcmgoofomhgciiibhipgmgkgnoenaoi)
+or [Edge Add-ons](https://microsoftedge.microsoft.com/addons/detail/browserskill/emacgiaaaiojkkpkddmmdfhmokgmnikg).
 
 #### 1. Install the `bsk` CLI
 
@@ -94,7 +95,14 @@ bsk --version
 
 #### 2. Install the browser extension
 
-Install BrowserSkill from the [Chrome Web Store](https://chromewebstore.google.com/detail/hhcmgoofomhgciiibhipgmgkgnoenaoi).
+Install BrowserSkill from your browser's store:
+
+| Browser | Store listing |
+| --- | --- |
+| Chrome | [Chrome Web Store](https://chromewebstore.google.com/detail/hhcmgoofomhgciiibhipgmgkgnoenaoi) |
+| Microsoft Edge | [Edge Add-ons](https://microsoftedge.microsoft.com/addons/detail/browserskill/emacgiaaaiojkkpkddmmdfhmokgmnikg) |
+
+On other Chromium-based browsers, install the Chrome Web Store build.
 
 #### 3. Install the skill
 
@@ -126,7 +134,8 @@ internal variants and install paths.
 
 Other shell-capable agent harnesses are supported too. Copy
 [`skill/SKILL.md`](skill/SKILL.md) into your harness's skills directory as
-`browser-skill/SKILL.md` to install the skill manually.
+`browser-skill/SKILL.md` to install the skill manually. DeepSeek Harness uses a
+dedicated plugin instead — see [DeepSeek Harness plugin](#deepseek-harness-plugin).
 
 </details>
 
@@ -135,6 +144,26 @@ Start a new Agent session and write a prompt that needs the browser, for example
 ```text
 /browser-skill open example.com and summarize what is on the page.
 ```
+
+## DeepSeek Harness plugin
+
+Using [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`dsh`)?
+BrowserSkill ships a first-class dsh plugin on npm as
+[`@wxg-prc-cpg/browser-skill-dsh-plugin`](https://www.npmjs.com/package/@wxg-prc-cpg/browser-skill-dsh-plugin).
+It injects native `browser_*` tools (no shelling out to `bsk`) and a live Web UI
+overlay of each Agent Window.
+
+Add it to a dsh profile, then start that profile:
+
+```sh
+dsh plugin --profile web add @wxg-prc-cpg/browser-skill-dsh-plugin
+dsh --profile web
+```
+
+The plugin carries its own copy of the skill, so `bsk install-skill` is not needed
+for dsh — but the `bsk` CLI and the browser extension are still prerequisites. See
+the [plugin README](packages/dsh-plugin-browserskill/README.md) for the tool list,
+configuration, and the observation overlay.
 
 ## How It Works
 
@@ -169,7 +198,9 @@ flowchart TB
 
 The agent never talks to the browser directly. It asks the `bsk` CLI to perform a
 browser task; the local daemon routes that request to the extension; the
-extension runs it in an Agent Window.
+extension runs it in an Agent Window. DeepSeek Harness takes the same path
+through the [plugin](#deepseek-harness-plugin): the agent calls injected
+`browser_*` tools, and the plugin invokes `bsk` on its behalf.
 
 ## Multiple Browsers
 
@@ -197,6 +228,8 @@ The repository is a Cargo + pnpm workspace:
 - `crates/bsk-protocol` — shared wire types and JSON schemas
 - `apps/extension` — browser extension
 - `packages/ui` and `packages/i18n` — shared extension UI support
+- `packages/dsh-plugin-browserskill` — DeepSeek Harness plugin (`@wxg-prc-cpg/browser-skill-dsh-plugin`)
+- [`evals/browser`](evals/browser/README.md) — deterministic local pages and agent-neutral browser capability evaluation
 
 ### Building the extension from source
 

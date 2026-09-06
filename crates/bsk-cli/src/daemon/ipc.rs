@@ -27,7 +27,8 @@ use bsk_protocol::system::{
     VersionSkewEntry,
 };
 use bsk_protocol::tools::{
-    HelpOutcome, RequestHelpResult, ReturnFailure, WaitMsParams, WaitMsResult,
+    DownloadParams, DownloadResult, HelpOutcome, RequestHelpResult, ReturnFailure,
+    TransferBeginParams, TransferIdParams, UploadParams, WaitMsParams, WaitMsResult,
 };
 use bsk_protocol::{
     CancelParams, CancelResult, ErrorCode, Method, PingResult, ResponseBody, RpcError, RpcId,
@@ -61,6 +62,10 @@ pub type RpcHandler = Arc<
 >;
 
 const DEFAULT_RPC_TIMEOUT: Duration = Duration::from_secs(15);
+// The upload transaction owns its operation deadline and may need a bounded
+// cleanup before it can return a useful structured error. Keep only that
+// transport alive slightly longer so it does not replace the result.
+const EXTENSION_RESPONSE_GRACE: Duration = Duration::from_secs(2);
 /// Upper bound on `wait_for_browser_ms` accepted over IPC.
 const MAX_BROWSER_WAIT: Duration = Duration::from_secs(60);
 // `session.stop` fast-fails while another tool is active; this budget
@@ -206,15 +211,15 @@ pub fn full_handler(status: DaemonStatus, state: Arc<DaemonState>) -> RpcHandler
                     Ok(v) => ResponseBody::Ok(v),
                     Err(e) => ResponseBody::Err(e),
                 },
-                Method::SessionStart => match handle_session_start(&state, params).await {
+                Method::SessionStart => match handle_session_start(&state, rpc_id, params).await {
                     Ok(v) => ResponseBody::Ok(v),
                     Err(e) => ResponseBody::Err(e),
                 },
-                Method::SessionStop => match handle_session_stop(&state, params).await {
+                Method::SessionStop => match handle_session_stop(&state, rpc_id, params).await {
                     Ok(v) => ResponseBody::Ok(v),
                     Err(e) => ResponseBody::Err(e),
                 },
-                Method::SessionStopAll => match handle_session_stop_all(&state).await {
+                Method::SessionStopAll => match handle_session_stop_all_rpc(&state, rpc_id).await {
                     Ok(v) => ResponseBody::Ok(v),
                     Err(e) => ResponseBody::Err(e),
                 },
@@ -223,6 +228,11 @@ pub fn full_handler(status: DaemonStatus, state: Arc<DaemonState>) -> RpcHandler
                     Ok(v) => ResponseBody::Ok(v),
                     Err(e) => ResponseBody::Err(e),
                 },
+                Method::TransferBegin => handle_transfer_begin(&state, params),
+                Method::TransferChunk => handle_transfer_chunk(&state, params),
+                Method::TransferFinish => handle_transfer_finish(&state, params),
+                Method::TransferRead => handle_transfer_read(&state, params),
+                Method::TransferRelease => handle_transfer_release(&state, params),
                 Method::ToolTabList
                 | Method::ToolTabCreate
                 | Method::ToolTabClose
@@ -246,6 +256,8 @@ pub fn full_handler(status: DaemonStatus, state: Arc<DaemonState>) -> RpcHandler
                 | Method::ToolFill
                 | Method::ToolPress
                 | Method::ToolSelect
+                | Method::ToolUpload
+                | Method::ToolDownload
                 | Method::ToolEvaluate
                 | Method::ToolWaitForNavigation
                 | Method::ToolRequestHelp
@@ -331,7 +343,7 @@ async fn handle_tool_dispatch(
             data: None,
         });
     }
-    let timeout = match tool_dispatch_timeout(&params) {
+    let timeout = match tool_dispatch_transport_timeout(&method, &params) {
         Ok(timeout) => timeout,
         Err(err) => return ResponseBody::Err(err),
     };
@@ -345,24 +357,180 @@ async fn handle_tool_dispatch(
             });
         }
     };
+    let mut params = params;
+    let mut download_transfer_id: Option<String> = None;
+    if method == Method::ToolUpload {
+        let mut upload: UploadParams = match serde_json::from_value(params) {
+            Ok(v) => v,
+            Err(err) => return ResponseBody::Err(invalid_params(err.to_string())),
+        };
+        if upload.files.is_empty() || upload.files.len() > super::file_transfer::MAX_UPLOAD_FILES {
+            return ResponseBody::Err(invalid_params(format!(
+                "upload requires 1..={} files",
+                super::file_transfer::MAX_UPLOAD_FILES
+            )));
+        }
+        let ids: Vec<String> = upload.files.iter().map(|f| f.transfer_id.clone()).collect();
+        let paths = match state.transfers.resolve_uploads(&session_id.0, &ids) {
+            Ok(v) => v,
+            Err(err) => return ResponseBody::Err(err),
+        };
+        for (file, path) in upload.files.iter_mut().zip(paths) {
+            file.staged_path = Some(path.to_string_lossy().into_owned());
+        }
+        params = serde_json::to_value(upload).unwrap_or(Value::Null);
+    } else if method == Method::ToolDownload {
+        let mut download: DownloadParams = match serde_json::from_value(params) {
+            Ok(v) => v,
+            Err(err) => return ResponseBody::Err(invalid_params(err.to_string())),
+        };
+        let staging = match state.transfers.begin_download(&session_id.0) {
+            Ok(v) => v,
+            Err(err) => return ResponseBody::Err(err),
+        };
+        download.browser_relative_dir = Some(staging.browser_relative_dir);
+        download.max_byte_size = Some(super::file_transfer::MAX_TRANSFER_BYTES);
+        download_transfer_id = Some(staging.transfer_id);
+        params = serde_json::to_value(download).unwrap_or(Value::Null);
+    }
     let entry = inflight_guard.entry();
     // `record_stop` must reach the extension while `record_await` holds the
     // serial busy lock — finishing the recording unblocks await.
     let outcome = if method == Method::ToolRecordStop {
         state
             .tool_queues
-            .dispatch_unlocked(&session_id, method, params, timeout, Some(entry))
+            .dispatch_unlocked(&session_id, method.clone(), params, timeout, Some(entry))
             .await
     } else {
         state
             .tool_queues
-            .dispatch(&session_id, method, params, timeout, Some(entry))
+            .dispatch(&session_id, method.clone(), params, timeout, Some(entry))
             .await
     };
     drop(inflight_guard);
     match outcome {
+        Ok(v) if method == Method::ToolDownload => {
+            let id = download_transfer_id.expect("download transfer allocated");
+            let mut result: DownloadResult = match serde_json::from_value(v) {
+                Ok(v) => v,
+                Err(err) => {
+                    state
+                        .transfers
+                        .release(TransferIdParams { transfer_id: id });
+                    return ResponseBody::Err(RpcError {
+                        code: ErrorCode::ProtocolError,
+                        message: format!("invalid tool.download result: {err}"),
+                        data: None,
+                    });
+                }
+            };
+            let Some(path) = result.browser_path.take() else {
+                state
+                    .transfers
+                    .release(TransferIdParams { transfer_id: id });
+                return ResponseBody::Err(RpcError {
+                    code: ErrorCode::ProtocolError,
+                    message: "tool.download returned no browser_path".into(),
+                    data: None,
+                });
+            };
+            match state
+                .transfers
+                .import_download(&id, std::path::Path::new(&path))
+            {
+                Ok(size) => {
+                    result.byte_size = size;
+                    result.transfer_id = Some(id);
+                    ResponseBody::Ok(serde_json::to_value(result).unwrap_or(Value::Null))
+                }
+                Err(err) => {
+                    state
+                        .transfers
+                        .release(TransferIdParams { transfer_id: id });
+                    ResponseBody::Err(err)
+                }
+            }
+        }
         Ok(v) => ResponseBody::Ok(v),
-        Err(err) => ResponseBody::Err(err.into_rpc()),
+        Err(err) => {
+            if let Some(id) = download_transfer_id {
+                state
+                    .transfers
+                    .release(TransferIdParams { transfer_id: id });
+            }
+            ResponseBody::Err(err.into_rpc())
+        }
+    }
+}
+
+fn handle_transfer_begin(state: &Arc<DaemonState>, params: Value) -> ResponseBody {
+    let p: TransferBeginParams = match serde_json::from_value(params) {
+        Ok(v) => v,
+        Err(err) => return ResponseBody::Err(invalid_params(err.to_string())),
+    };
+    if state
+        .sessions
+        .get(&SessionId(p.session_id.clone()))
+        .is_none()
+    {
+        return ResponseBody::Err(RpcError {
+            code: ErrorCode::NotFound,
+            message: format!("session {} unknown", p.session_id),
+            data: None,
+        });
+    }
+    match state.transfers.begin_upload(p) {
+        Ok(v) => ResponseBody::Ok(serde_json::to_value(v).unwrap_or(Value::Null)),
+        Err(err) => ResponseBody::Err(err),
+    }
+}
+
+fn handle_transfer_chunk(state: &Arc<DaemonState>, params: Value) -> ResponseBody {
+    let p = match serde_json::from_value(params) {
+        Ok(v) => v,
+        Err(err) => return ResponseBody::Err(invalid_params(err.to_string())),
+    };
+    match state.transfers.write_chunk(p) {
+        Ok(v) => ResponseBody::Ok(serde_json::to_value(v).unwrap_or(Value::Null)),
+        Err(err) => ResponseBody::Err(err),
+    }
+}
+
+fn handle_transfer_finish(state: &Arc<DaemonState>, params: Value) -> ResponseBody {
+    let p = match serde_json::from_value(params) {
+        Ok(v) => v,
+        Err(err) => return ResponseBody::Err(invalid_params(err.to_string())),
+    };
+    match state.transfers.finish_upload(p) {
+        Ok(v) => ResponseBody::Ok(serde_json::to_value(v).unwrap_or(Value::Null)),
+        Err(err) => ResponseBody::Err(err),
+    }
+}
+
+fn handle_transfer_read(state: &Arc<DaemonState>, params: Value) -> ResponseBody {
+    let p = match serde_json::from_value(params) {
+        Ok(v) => v,
+        Err(err) => return ResponseBody::Err(invalid_params(err.to_string())),
+    };
+    match state.transfers.read_chunk(p) {
+        Ok(v) => ResponseBody::Ok(serde_json::to_value(v).unwrap_or(Value::Null)),
+        Err(err) => ResponseBody::Err(err),
+    }
+}
+
+fn handle_transfer_release(state: &Arc<DaemonState>, params: Value) -> ResponseBody {
+    let p: TransferIdParams = match serde_json::from_value(params) {
+        Ok(v) => v,
+        Err(err) => return ResponseBody::Err(invalid_params(err.to_string())),
+    };
+    ResponseBody::Ok(serde_json::to_value(state.transfers.release(p)).unwrap_or(Value::Null))
+}
+
+fn invalid_params(message: impl Into<String>) -> RpcError {
+    RpcError {
+        code: ErrorCode::InvalidParams,
+        message: message.into(),
+        data: None,
     }
 }
 
@@ -441,8 +609,9 @@ async fn handle_wait_ms(
 /// cancellation surfaces (M10.2 + review C2):
 ///
 /// 1. [`AbortRegistry`] — answers daemon-local cancellable runners
-///    (currently `tool.wait_ms`). If a token is registered we trip it
-///    and stop.
+///    (`tool.wait_ms` and `session.*` lifecycle calls). If a token is
+///    registered we trip it and stop. Lifecycle handlers forward their
+///    own WS cancel after preserving request-before-cancel ordering.
 /// 2. [`super::inflight::ToolInflightRegistry`] — every IPC-tracked
 ///    `tool.*` RPC, registered the moment the IPC handler accepts the
 ///    request. Trips the entry's cancel token regardless of whether
@@ -538,6 +707,16 @@ fn tool_dispatch_timeout(params: &Value) -> Result<Duration, RpcError> {
         data: None,
     })?;
     Ok(Duration::from_millis(u64::from(ms)))
+}
+
+fn tool_dispatch_transport_timeout(method: &Method, params: &Value) -> Result<Duration, RpcError> {
+    tool_dispatch_timeout(params).map(|timeout| {
+        if matches!(method, Method::ToolUpload | Method::ToolDownload) {
+            timeout.saturating_add(EXTENSION_RESPONSE_GRACE)
+        } else {
+            timeout
+        }
+    })
 }
 
 // Local CLI-facing shapes. Intentionally distinct from
@@ -642,7 +821,20 @@ fn clamp_browser_wait(wait_ms: Option<u64>) -> Option<Duration> {
     ))
 }
 
-async fn handle_session_start(state: &Arc<DaemonState>, params: Value) -> Result<Value, RpcError> {
+async fn handle_session_start(
+    state: &Arc<DaemonState>,
+    rpc_id: RpcId,
+    params: Value,
+) -> Result<Value, RpcError> {
+    let abort_guard = state
+        .abort_registry
+        .register(rpc_id)
+        .map_err(|err| RpcError {
+            code: ErrorCode::ProtocolError,
+            message: format!("session.start cancellation registration failed: {err:?}"),
+            data: None,
+        })?;
+    let cancel = abort_guard.token().clone();
     let params: CliSessionStartParams = if params.is_null() {
         CliSessionStartParams {
             browser_instance_id: None,
@@ -681,6 +873,7 @@ async fn handle_session_start(state: &Arc<DaemonState>, params: Value) -> Result
         },
         state.config.extension_connect_wait,
         DEFAULT_RPC_TIMEOUT,
+        Some(cancel),
     )
     .await
     {
@@ -704,6 +897,8 @@ fn map_start_error(err: StartSessionError) -> RpcError {
         StartSessionError::AmbiguousBrowserLabel { .. } => ErrorCode::InvalidParams,
         StartSessionError::IdExhausted => ErrorCode::ProtocolError,
         StartSessionError::Timeout => ErrorCode::Timeout,
+        StartSessionError::Cancelled => ErrorCode::Cancelled,
+        StartSessionError::CleanupFailed { .. } => ErrorCode::ProtocolError,
         StartSessionError::TransportClosed => ErrorCode::ProtocolError,
         StartSessionError::ExtensionError(inner) => inner.code,
     };
@@ -719,6 +914,16 @@ fn map_start_error(err: StartSessionError) -> RpcError {
             "label": label,
             "instance_ids": instance_ids,
         })),
+        StartSessionError::CleanupFailed {
+            session_id,
+            agent_window_id,
+            ..
+        } => Some(serde_json::json!({
+            "reason": "cleanup_failed",
+            "session_id": session_id.0,
+            "agent_window_id": agent_window_id,
+        })),
+        StartSessionError::ExtensionError(inner) => inner.data.clone(),
         _ => None,
     };
     RpcError {
@@ -728,7 +933,20 @@ fn map_start_error(err: StartSessionError) -> RpcError {
     }
 }
 
-async fn handle_session_stop(state: &Arc<DaemonState>, params: Value) -> Result<Value, RpcError> {
+async fn handle_session_stop(
+    state: &Arc<DaemonState>,
+    rpc_id: RpcId,
+    params: Value,
+) -> Result<Value, RpcError> {
+    let abort_guard = state
+        .abort_registry
+        .register(rpc_id)
+        .map_err(|err| RpcError {
+            code: ErrorCode::ProtocolError,
+            message: format!("session.stop cancellation registration failed: {err:?}"),
+            data: None,
+        })?;
+    let cancel = abort_guard.token().clone();
     let params: CliSessionStopParams = if params.is_null() {
         CliSessionStopParams {
             session_id: None,
@@ -742,7 +960,7 @@ async fn handle_session_stop(state: &Arc<DaemonState>, params: Value) -> Result<
         })?
     };
     if params.all {
-        return handle_session_stop_all(state).await;
+        return handle_session_stop_all(state, Some(cancel)).await;
     }
     let session_id = match params.session_id {
         Some(s) => SessionId(s),
@@ -761,10 +979,12 @@ async fn handle_session_stop(state: &Arc<DaemonState>, params: Value) -> Result<
         &state.session_interrupts,
         &session_id,
         DEFAULT_SESSION_STOP_TIMEOUT,
+        Some(cancel),
     )
     .await
     {
         Ok(stop) => {
+            state.transfers.release_session(&session_id.0);
             let result = CliSessionStopResult {
                 stopped: vec![session_id.0],
                 failed: Vec::new(),
@@ -812,7 +1032,25 @@ fn map_stop_error(err: StopSessionError) -> RpcError {
     }
 }
 
-async fn handle_session_stop_all(state: &Arc<DaemonState>) -> Result<Value, RpcError> {
+async fn handle_session_stop_all_rpc(
+    state: &Arc<DaemonState>,
+    rpc_id: RpcId,
+) -> Result<Value, RpcError> {
+    let abort_guard = state
+        .abort_registry
+        .register(rpc_id)
+        .map_err(|err| RpcError {
+            code: ErrorCode::ProtocolError,
+            message: format!("session.stop_all cancellation registration failed: {err:?}"),
+            data: None,
+        })?;
+    handle_session_stop_all(state, Some(abort_guard.token().clone())).await
+}
+
+async fn handle_session_stop_all(
+    state: &Arc<DaemonState>,
+    cancel: Option<super::abort::AbortToken>,
+) -> Result<Value, RpcError> {
     let ids: Vec<SessionId> = state
         .sessions
         .snapshot()
@@ -824,6 +1062,16 @@ async fn handle_session_stop_all(state: &Arc<DaemonState>) -> Result<Value, RpcE
     let mut returned_tab_ids = Vec::new();
     let mut return_failures = Vec::new();
     for id in ids {
+        if cancel
+            .as_ref()
+            .is_some_and(super::abort::AbortToken::is_cancelled)
+        {
+            return Err(RpcError {
+                code: ErrorCode::Cancelled,
+                message: "session.stop_all was cancelled".into(),
+                data: None,
+            });
+        }
         match stop_session(
             &state.browsers,
             &state.sessions,
@@ -831,10 +1079,12 @@ async fn handle_session_stop_all(state: &Arc<DaemonState>) -> Result<Value, RpcE
             &state.session_interrupts,
             &id,
             DEFAULT_SESSION_STOP_TIMEOUT,
+            cancel.clone(),
         )
         .await
         {
             Ok(stop) => {
+                state.transfers.release_session(&id.0);
                 stopped.push(id.0);
                 returned_tab_ids.extend(stop.returned_tab_ids);
                 return_failures.extend(stop.return_failures);
@@ -855,6 +1105,15 @@ async fn handle_session_stop_all(state: &Arc<DaemonState>) -> Result<Value, RpcE
                 });
                 returned_tab_ids.extend(stop.returned_tab_ids);
                 return_failures.extend(stop.return_failures);
+            }
+            Err(err)
+                if matches!(
+                    &err,
+                    StopSessionError::ExtensionError(inner)
+                        if inner.code == ErrorCode::Cancelled
+                ) =>
+            {
+                return Err(map_stop_error(err));
             }
             Err(err) => {
                 debug!(session = %id, ?err, "session.stop_all: failure (continuing)");
@@ -1417,6 +1676,30 @@ mod tests {
         });
         let got = tool_dispatch_timeout(&params).expect("timeout parses");
         assert_eq!(got, std::time::Duration::from_millis(300_000));
+    }
+
+    #[test]
+    fn extension_transport_outlives_the_operation_deadline() {
+        let params = serde_json::json!({
+            "session_id": "abcd",
+            "timeout_ms": 60_000,
+        });
+        let dispatch_timeout =
+            tool_dispatch_transport_timeout(&Method::ToolUpload, &params).unwrap();
+
+        assert_eq!(dispatch_timeout, Duration::from_secs(62));
+    }
+
+    #[test]
+    fn extension_response_grace_does_not_change_other_tools() {
+        let params = serde_json::json!({
+            "session_id": "abcd",
+            "timeout_ms": 60_000,
+        });
+        let dispatch_timeout =
+            tool_dispatch_transport_timeout(&Method::ToolClick, &params).unwrap();
+
+        assert_eq!(dispatch_timeout, Duration::from_secs(60));
     }
 
     #[test]

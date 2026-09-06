@@ -21,6 +21,11 @@ export type LayerKind = "page" | "modal" | "mask";
 export interface VomNode {
   id: number;
   parentId: number | null;
+  backendNodeId?: number;
+  frameId?: string;
+  contextScopeId?: string;
+  /** False for semantic-only nodes that cannot be addressed through CDP. */
+  referenceable?: boolean;
 
   role?: string;
   name?: string;
@@ -52,6 +57,8 @@ export interface VomNode {
 export interface VomScene {
   viewport: Viewport;
   nodes: VomNode[];
+  /** Root document whose paint order defines page-level blocking layers. */
+  rootFrameId?: string;
   surfaces?: CondSurface[];
   activeScopeBlocks?: ActiveScopeBlock[];
 }
@@ -59,6 +66,10 @@ export interface VomScene {
 export interface VomOptions {
   maxDepth?: number;
   maxTokens?: number;
+  /**
+   * When true, form values are rendered as masks instead of literal values.
+   */
+  redactValues?: boolean;
   /**
    * Experimental: filter refs that are geometrically blocked by foreground
    * fixed/absolute/sticky regions. Disabled by default and does not alter the
@@ -79,9 +90,23 @@ export interface ActiveScopeBlock {
   lines: string[];
 }
 
+export interface VomRef {
+  ref: string;
+  backendNodeId: number;
+  frameId?: string;
+}
+
+export interface RenderedRef extends VomRef {
+  role?: string;
+  name?: string;
+  ctx?: string;
+  /** Zero-based line index in `VomResult.text`. */
+  line: number;
+}
+
 export interface VomResult {
   text: string;
-  refs: Array<{ ref: string; backendNodeId: number }>;
+  refs: RenderedRef[];
   truncated: boolean;
 }
 

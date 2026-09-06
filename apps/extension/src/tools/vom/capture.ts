@@ -1,15 +1,17 @@
 // CDP capture adapter: DOMSnapshot.captureSnapshot + Page.getLayoutMetrics
 // → CapturedNode[] + Viewport. This is the ONLY VOM module that touches
 // raw CDP. The captureSnapshot reply is columnar (parallel arrays + a
-// shared string table); we request exactly three computed styles so the
-// `styles` columns are [position, pointer-events, cursor] in that order.
+// shared string table); requested computed styles are decoded through
+// STYLE_COL so capture and visibility policy share one explicit contract.
 
 import type { Rect, Viewport } from "@browser-skill/vom";
 import { evaluateHoverTrigger } from "@/lib/hover-trigger-policy";
 import { isOverlayHostNode, OVERLAY_HOST_SELECTOR } from "../../lib/overlay-bridge";
+import { childFrameProjection, type GeometryProjection, projectRectToViewport } from "../geometry";
 import type { CdpRunner } from "../shared";
+import { clearHover, ProbeBudget, waitForHover } from "./hover-perception";
 
-const REQUESTED_STYLES = ["position", "pointer-events", "cursor"] as const;
+const REQUESTED_STYLES = ["position", "pointer-events", "cursor", "visibility", "opacity"] as const;
 const STYLE_COL = Object.fromEntries(
   REQUESTED_STYLES.map((name, index) => [name, index]),
 ) as Record<(typeof REQUESTED_STYLES)[number], number>;
@@ -17,13 +19,14 @@ const STYLE_COL = Object.fromEntries(
 export interface CapturedNode {
   backendNodeId: number;
   parentBackendNodeId: number | null;
+  frameId?: string;
   /** Owning iframe backend node id; `null` for the top-level document. */
   ownerFrameBackendNodeId?: number | null;
   tag: string;
   attrs: Record<string, string>;
   /** Top-level viewport-relative CSS px, clipped to the owning frame viewport. */
   rect: Rect | null;
-  /** Frame-local viewport-relative CSS px before top-level translation/clipping. */
+  /** Frame-local viewport-relative CSS px before top-level projection. */
   localRect?: Rect | null;
   paintOrder: number;
   position: string;
@@ -36,6 +39,12 @@ export interface CapturedNode {
    * `textContent`: the live parser always sets it, hand-built fixtures may not.
    */
   cursor?: string;
+  /**
+   * Whether the live DOM snapshot provides a painted, non-hidden box for this
+   * node. Semantic resolution uses this only for DOM fallback nodes; AX-backed
+   * nodes remain authoritative even when they are outside the viewport.
+   */
+  rendered?: boolean;
   textContent?: string;
   formState?: "empty" | "filled" | "default";
   formValue?: string;
@@ -57,14 +66,16 @@ export interface CapturedViewModel {
   nodes: CapturedNode[];
   viewport: Viewport;
   iframeNodes: CapturedIframeNodes;
-  surfaceProbes?: CapturedSurfaceProbe[];
+  frameNodes?: Map<string, CapturedNode[]>;
+  frameOwnerBackendNodeIds?: Map<string, number>;
+  /** Explicit DOMSnapshot frame ancestry; never inferred from backend node ids. */
+  frameParentIds?: Map<string, string>;
+  rootFrameId?: string;
   /** Backend node ids belonging to the agent overlay host + its shadow subtree. */
   excludedBackendNodeIds: Set<number>;
 }
 
 export interface CaptureViewModelOptions {
-  conditionalSurfaceProbe?: boolean;
-  hoverProbeBypassOverlay?: (tabId: number, enabled: boolean) => Promise<void>;
   signal?: AbortSignal;
 }
 
@@ -92,7 +103,12 @@ interface SparseArray {
   value: number[];
 }
 
+interface RareBooleanData {
+  index: number[];
+}
+
 interface SnapshotDocument {
+  frameId?: string | number;
   scrollOffsetX?: number;
   scrollOffsetY?: number;
   nodes?: {
@@ -107,6 +123,10 @@ interface SnapshotDocument {
     nodeValue?: number[];
     /** Maps node array index → index into `documents[]` for frame content. */
     contentDocumentIndex?: SparseArray;
+    inputValue?: SparseArray;
+    textValue?: SparseArray;
+    inputChecked?: RareBooleanData;
+    optionSelected?: RareBooleanData;
   };
   layout?: {
     nodeIndex?: number[];
@@ -114,6 +134,12 @@ interface SnapshotDocument {
     bounds?: number[][];
     paintOrders?: number[];
   };
+}
+
+function snapshotFrameId(document: SnapshotDocument, strings: string[]): string | undefined {
+  if (typeof document.frameId === "string") return document.frameId || undefined;
+  if (typeof document.frameId === "number") return str(strings, document.frameId) || undefined;
+  return undefined;
 }
 
 interface SnapshotReply {
@@ -133,6 +159,25 @@ interface LayoutMetricsReply {
 
 function isFormControlTag(tag: string): boolean {
   return tag === "input" || tag === "textarea" || tag === "select";
+}
+
+function isSensitiveFormControl(node: Pick<CapturedNode, "tag" | "attrs">): boolean {
+  return node.tag === "input" && (node.attrs.type ?? "").toLowerCase() === "password";
+}
+
+function snapshotFormState(
+  value: string | undefined,
+  defaultValue: string,
+  hasDefaultValue: boolean,
+  sensitive: boolean,
+): CapturedNode["formState"] {
+  if (sensitive) {
+    if (value === undefined && !hasDefaultValue) return undefined;
+    return (value ?? defaultValue) === "" ? "empty" : "filled";
+  }
+  if (value === undefined) return undefined;
+  if (value === "") return "empty";
+  return value === defaultValue ? "default" : "filled";
 }
 
 const MAX_FORM_ENRICH_CONTROLS = 250;
@@ -166,9 +211,8 @@ function formStateBatchExpression(maxControls: number): string {
       return {
         state,
         sensitive,
-        defaultValue,
         placeholder,
-        ...(sensitive ? {} : { value: rawValue }),
+        ...(sensitive ? {} : { value: rawValue, defaultValue }),
       };
     };
     const collect = (doc) => {
@@ -210,10 +254,14 @@ function applyFormStates(nodes: CapturedNode[], states: CapturedFormState[]): vo
     index += 1;
     if (!state) continue;
     node.formState = state.state;
-    node.formDefaultValue = state.defaultValue ?? "";
     node.formPlaceholder = state.placeholder ?? "";
-    if (!state.sensitive && state.value !== undefined) {
-      node.formValue = state.value;
+    if (state.sensitive || isSensitiveFormControl(node)) {
+      delete node.formValue;
+      delete node.formDefaultValue;
+      delete node.attrs.value;
+    } else {
+      node.formDefaultValue = state.defaultValue ?? "";
+      if (state.value !== undefined) node.formValue = state.value;
     }
   }
 }
@@ -272,9 +320,9 @@ interface ParseDocumentResult {
 }
 
 interface FrameContext {
+  frameId?: string;
   ownerFrameBackendNodeId: number | null;
-  originInTop: { x: number; y: number };
-  clipRectInTop: Rect;
+  projection: GeometryProjection | null;
   scrollX: number;
   scrollY: number;
 }
@@ -291,38 +339,6 @@ function devicePixelRatio(metrics: LayoutMetricsReply): number {
   const dpr = layoutW / cssW;
   if (!Number.isFinite(dpr) || dpr <= 0) return 1;
   return dpr >= 1 ? dpr : 1;
-}
-
-function viewportRect(viewport: Viewport): Rect {
-  return { x: 0, y: 0, w: Math.max(0, viewport.width), h: Math.max(0, viewport.height) };
-}
-
-function intersectRects(a: Rect, b: Rect): Rect | null {
-  const x1 = Math.max(a.x, b.x);
-  const y1 = Math.max(a.y, b.y);
-  const x2 = Math.min(a.x + a.w, b.x + b.w);
-  const y2 = Math.min(a.y + a.h, b.y + b.h);
-  if (x2 <= x1 || y2 <= y1) return null;
-  return { x: x1, y: y1, w: x2 - x1, h: y2 - y1 };
-}
-
-function rectInTop(localRect: Rect, context: FrameContext): Rect | null {
-  const translated = {
-    x: context.originInTop.x + localRect.x,
-    y: context.originInTop.y + localRect.y,
-    w: localRect.w,
-    h: localRect.h,
-  };
-  return intersectRects(translated, context.clipRectInTop);
-}
-
-function unclipRectInTop(localRect: Rect, context: FrameContext): Rect {
-  return {
-    x: context.originInTop.x + localRect.x,
-    y: context.originInTop.y + localRect.y,
-    w: localRect.w,
-    h: localRect.h,
-  };
 }
 
 function sparseIndexMap(sparse: SparseArray | undefined): Map<number, number> {
@@ -349,7 +365,16 @@ function collectBackendIdsFromDomNode(node: CdpDomNode | undefined, out: Set<num
   }
 }
 
-const MAX_HOVER_PROBE_MS = 2_000;
+/**
+ * Ceiling for the whole hover-surface phase.
+ *
+ * The previous 2000 was only a floor: the loop checked elapsed time at the top,
+ * so a candidate could start with 1ms left and still run its two settle
+ * windows, pushing real cost to ~2.6s. This is that true ceiling, now actually
+ * enforced by an up-front affordability check, so the same number of candidates
+ * get probed under a bound that no longer lies.
+ */
+const MAX_HOVER_PROBE_MS = 2_600;
 const MAX_HOVER_TRIGGERS = 6;
 const MAX_HOVER_SURFACES = 3;
 const HOVER_SETTLE_MS = 300;
@@ -446,36 +471,6 @@ function hoverStateExpression(): string {
     for (const el of Array.from(document.querySelectorAll(selectors))) push(el);
     return items.slice(0, 400);
   })()`;
-}
-
-async function wait(ms: number, signal?: AbortSignal): Promise<void> {
-  throwIfAborted(signal);
-  await new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(() => {
-      signal?.removeEventListener("abort", onAbort);
-      resolve();
-    }, ms);
-    const onAbort = () => {
-      clearTimeout(timer);
-      signal?.removeEventListener("abort", onAbort);
-      reject(captureAbortError());
-    };
-    signal?.addEventListener("abort", onAbort, { once: true });
-  });
-}
-
-async function clearHover(cdp: CdpRunner, tabId: number): Promise<void> {
-  await cdp
-    .send(tabId, "Input.dispatchMouseEvent", {
-      type: "mouseMoved",
-      x: -10,
-      y: -10,
-    })
-    .catch(() =>
-      cdp.send(tabId, "Input.dispatchMouseEvent", { type: "mouseMoved", x: 0, y: 0 }).catch(() => {
-        // best effort
-      }),
-    );
 }
 
 function capturedText(node: CapturedNode): string | undefined {
@@ -625,13 +620,35 @@ function confidenceForHover(
   return "low";
 }
 
-async function probeHoverSurfaces(
+/**
+ * One candidate costs two settle windows (baseline + post-hover) plus a few
+ * CDP round trips. Used to decide whether the next candidate still fits the
+ * budget before paying for it.
+ */
+const HOVER_CANDIDATE_COST_MS = HOVER_SETTLE_MS * 2;
+
+export interface HoverSurfaceProbeOptions {
+  signal?: AbortSignal;
+}
+
+/**
+ * Hovers a bounded set of likely menu triggers and reports the sub-items each
+ * one reveals.
+ *
+ * Runs after DOM *and* accessibility capture. Hovering can open menus and
+ * change layout, so probing between the two captures would leave the DOM half
+ * of an observation describing the page before the change and the AX half
+ * describing it after.
+ *
+ * The caller owns the overlay bypass span (see `withOverlayBypass`).
+ */
+export async function probeHoverSurfaces(
   cdp: CdpRunner,
   tabId: number,
   nodes: CapturedNode[],
-  options: CaptureViewModelOptions,
+  options: HoverSurfaceProbeOptions = {},
 ): Promise<CapturedSurfaceProbe[]> {
-  const started = Date.now();
+  const budget = new ProbeBudget(MAX_HOVER_PROBE_MS);
   try {
     throwIfAborted(options.signal);
     const cssScan = await cdp.send<RuntimeEvaluateReply>(tabId, "Runtime.evaluate", {
@@ -646,60 +663,54 @@ async function probeHoverSurfaces(
     const results: CapturedSurfaceProbe[] = [];
     const seen = new Set<number>();
     throwIfAborted(options.signal);
-    await options.hoverProbeBypassOverlay?.(tabId, true).catch(() => undefined);
-    try {
+    for (const candidate of candidates.slice(0, MAX_HOVER_TRIGGERS)) {
       throwIfAborted(options.signal);
-      for (const candidate of candidates.slice(0, MAX_HOVER_TRIGGERS)) {
+      if (!budget.canAfford(HOVER_CANDIDATE_COST_MS)) break;
+      if (results.length >= MAX_HOVER_SURFACES) break;
+      if (seen.has(candidate.backendNodeId)) continue;
+      try {
+        await clearHover(cdp, tabId);
         throwIfAborted(options.signal);
-        if (Date.now() - started > MAX_HOVER_PROBE_MS) break;
-        if (results.length >= MAX_HOVER_SURFACES) break;
-        if (seen.has(candidate.backendNodeId)) continue;
-        try {
-          await clearHover(cdp, tabId);
-          throwIfAborted(options.signal);
-          await wait(HOVER_SETTLE_MS, options.signal);
-          const baselineReply = await cdp.send<RuntimeEvaluateReply>(tabId, "Runtime.evaluate", {
-            expression: hoverStateExpression(),
-            returnByValue: true,
-          });
-          throwIfAborted(options.signal);
-          const baselineItems = runtimeValue<HoverRuntimeItem[]>(baselineReply) ?? [];
+        await waitForHover(HOVER_SETTLE_MS, options.signal);
+        const baselineReply = await cdp.send<RuntimeEvaluateReply>(tabId, "Runtime.evaluate", {
+          expression: hoverStateExpression(),
+          returnByValue: true,
+        });
+        throwIfAborted(options.signal);
+        const baselineItems = runtimeValue<HoverRuntimeItem[]>(baselineReply) ?? [];
 
-          throwIfAborted(options.signal);
-          await cdp.send(tabId, "Input.dispatchMouseEvent", {
-            type: "mouseMoved",
-            x: candidate.x,
-            y: candidate.y,
-          });
-          throwIfAborted(options.signal);
-          await wait(HOVER_SETTLE_MS, options.signal);
-          const collected = await cdp.send<RuntimeEvaluateReply>(tabId, "Runtime.evaluate", {
-            expression: hoverStateExpression(),
-            returnByValue: true,
-          });
-          throwIfAborted(options.signal);
-          const subItems = diffHoverItems(
-            baselineItems,
-            runtimeValue<HoverRuntimeItem[]>(collected) ?? [],
-          );
-          if (subItems.length === 0) continue;
-          seen.add(candidate.backendNodeId);
-          results.push({
-            triggerBackendNodeId: candidate.backendNodeId,
-            triggerPoint: { x: candidate.x, y: candidate.y },
-            triggerAction: "hover",
-            subItems,
-            confidence: confidenceForHover(candidate, subItems),
-          });
-        } catch (error) {
-          if (isAbortError(error)) throw error;
-          continue;
-        } finally {
-          await clearHover(cdp, tabId);
-        }
+        throwIfAborted(options.signal);
+        await cdp.send(tabId, "Input.dispatchMouseEvent", {
+          type: "mouseMoved",
+          x: candidate.x,
+          y: candidate.y,
+        });
+        throwIfAborted(options.signal);
+        await waitForHover(HOVER_SETTLE_MS, options.signal);
+        const collected = await cdp.send<RuntimeEvaluateReply>(tabId, "Runtime.evaluate", {
+          expression: hoverStateExpression(),
+          returnByValue: true,
+        });
+        throwIfAborted(options.signal);
+        const subItems = diffHoverItems(
+          baselineItems,
+          runtimeValue<HoverRuntimeItem[]>(collected) ?? [],
+        );
+        if (subItems.length === 0) continue;
+        seen.add(candidate.backendNodeId);
+        results.push({
+          triggerBackendNodeId: candidate.backendNodeId,
+          triggerPoint: { x: candidate.x, y: candidate.y },
+          triggerAction: "hover",
+          subItems,
+          confidence: confidenceForHover(candidate, subItems),
+        });
+      } catch (error) {
+        if (isAbortError(error)) throw error;
+        continue;
+      } finally {
+        await clearHover(cdp, tabId);
       }
-    } finally {
-      await options.hoverProbeBypassOverlay?.(tabId, false).catch(() => undefined);
     }
     return results;
   } catch (err) {
@@ -805,6 +816,12 @@ function parseDocumentNodes(
   const posCol = STYLE_COL.position;
   const peCol = STYLE_COL["pointer-events"];
   const cursorCol = STYLE_COL.cursor;
+  const visibilityCol = STYLE_COL.visibility;
+  const opacityCol = STYLE_COL.opacity;
+  const inputValues = sparseIndexMap(dn.inputValue);
+  const textValues = sparseIndexMap(dn.textValue);
+  const checkedInputs = new Set(dn.inputChecked?.index ?? []);
+  const selectedOptions = new Set(dn.optionSelected?.index ?? []);
 
   // Collect visible text from #text child nodes so element CapturedNodes
   // carry a textContent value usable as a button/link label fallback.
@@ -845,6 +862,7 @@ function parseDocumentNodes(
     let position = "static";
     let pointerEvents = "auto";
     let cursor = "auto";
+    let rendered = false;
     const li = layoutByNode.get(n);
     if (li !== undefined) {
       const b = dl?.bounds?.[li];
@@ -855,13 +873,23 @@ function parseDocumentNodes(
           w: b[2] / dpr,
           h: b[3] / dpr,
         };
-        rect = rectInTop(localRect, context);
+        const bounds = context.projection
+          ? projectRectToViewport(localRect, context.projection)
+          : null;
+        rect = bounds ? { x: bounds.x, y: bounds.y, w: bounds.width, h: bounds.height } : null;
       }
       paintOrder = dl?.paintOrders?.[li] ?? 0;
       const styleRow = dl?.styles?.[li] ?? [];
       position = str(strings, styleRow[posCol]) || "static";
       pointerEvents = str(strings, styleRow[peCol]) || "auto";
       cursor = str(strings, styleRow[cursorCol]) || "auto";
+      const visibility = str(strings, styleRow[visibilityCol]) || "visible";
+      const opacity = str(strings, styleRow[opacityCol]) || "1";
+      rendered =
+        localRect !== null &&
+        visibility !== "hidden" &&
+        visibility !== "collapse" &&
+        (Number.parseFloat(opacity) || 0) > 0;
     }
 
     // Skip non-element nodes (#text, #cdata-section, etc.) — they carry no
@@ -870,9 +898,24 @@ function parseDocumentNodes(
 
     const textContent = nodeTextContent.get(n);
 
+    const rawFormValueIndex = tag === "textarea" ? textValues.get(n) : inputValues.get(n);
+    const rawFormValue =
+      rawFormValueIndex !== undefined ? str(strings, rawFormValueIndex) : undefined;
+    const sensitive = isSensitiveFormControl({ tag, attrs });
+    const formDefaultValue = attrs.value ?? "";
+    const formValue = sensitive ? undefined : rawFormValue;
+    const formState = snapshotFormState(
+      rawFormValue,
+      formDefaultValue,
+      Object.prototype.hasOwnProperty.call(attrs, "value"),
+      sensitive,
+    );
+    if (sensitive) delete attrs.value;
+
     nodes.push({
       backendNodeId,
       parentBackendNodeId,
+      ...(context.frameId ? { frameId: context.frameId } : {}),
       ownerFrameBackendNodeId: context.ownerFrameBackendNodeId,
       tag,
       attrs,
@@ -882,7 +925,18 @@ function parseDocumentNodes(
       position,
       pointerEvents,
       cursor,
+      rendered,
       textContent,
+      ...(formValue !== undefined ? { formValue } : {}),
+      ...(tag === "input" || tag === "textarea"
+        ? {
+            formPlaceholder: attrs.placeholder ?? "",
+            ...(!sensitive ? { formDefaultValue } : {}),
+            ...(formState ? { formState } : {}),
+          }
+        : {}),
+      ...(checkedInputs.has(n) ? { formValue: "true", formState: "filled" } : {}),
+      ...(selectedOptions.has(n) ? { formValue: attrs.value ?? textContent ?? "" } : {}),
     });
   }
   return { nodes, excludedBackendNodeIds };
@@ -890,6 +944,8 @@ function parseDocumentNodes(
 
 interface ParseFrameDocumentsResult {
   iframeNodes: CapturedIframeNodes;
+  frameOwnerBackendNodeIds: Map<string, number>;
+  frameParentIds: Map<string, string>;
   excludedBackendNodeIds: Set<number>;
 }
 
@@ -903,10 +959,14 @@ function parseChildFrameDocuments(
   visited = new Set<number>(),
 ): ParseFrameDocumentsResult {
   const iframeNodes: CapturedIframeNodes = new Map();
+  const frameOwnerBackendNodeIds = new Map<string, number>();
+  const frameParentIds = new Map<string, string>();
   const excludedBackendNodeIds = new Set<number>();
   const parentDoc = documents[parentDocIndex];
   const cdi = sparseIndexMap(parentDoc?.nodes?.contentDocumentIndex);
-  if (cdi.size === 0) return { iframeNodes, excludedBackendNodeIds };
+  if (cdi.size === 0) {
+    return { iframeNodes, frameOwnerBackendNodeIds, frameParentIds, excludedBackendNodeIds };
+  }
 
   const parentBackendIds = parentDoc?.nodes?.backendNodeId ?? [];
   const parentNodeByBackendId = new Map(parentNodes.map((node) => [node.backendNodeId, node]));
@@ -918,19 +978,15 @@ function parseChildFrameDocuments(
     const iframeBackendId = parentBackendIds[nodeArrayIdx];
     if (iframeBackendId === undefined) continue;
     const iframeNode = parentNodeByBackendId.get(iframeBackendId);
-    if (!iframeNode?.localRect) continue;
-
-    const iframeRectInTop = unclipRectInTop(iframeNode.localRect, parentContext);
-    const childClip = intersectRects(iframeRectInTop, parentContext.clipRectInTop);
-    if (!childClip) {
-      iframeNodes.set(iframeBackendId, []);
-      continue;
-    }
+    const projection =
+      parentContext.projection && iframeNode?.localRect
+        ? childFrameProjection(parentContext.projection, iframeNode.localRect)
+        : null;
 
     const childContext: FrameContext = {
+      frameId: snapshotFrameId(childDoc, strings),
       ownerFrameBackendNodeId: iframeBackendId,
-      originInTop: { x: iframeRectInTop.x, y: iframeRectInTop.y },
-      clipRectInTop: childClip,
+      projection,
       scrollX: childDoc.scrollOffsetX ?? 0,
       scrollY: childDoc.scrollOffsetY ?? 0,
     };
@@ -938,6 +994,10 @@ function parseChildFrameDocuments(
     nextVisited.add(childDocIndex);
     const parsed = parseDocumentNodes(childDoc, strings, dpr, childContext);
     iframeNodes.set(iframeBackendId, parsed.nodes);
+    if (childContext.frameId) {
+      frameOwnerBackendNodeIds.set(childContext.frameId, iframeBackendId);
+      if (parentContext.frameId) frameParentIds.set(childContext.frameId, parentContext.frameId);
+    }
     for (const id of parsed.excludedBackendNodeIds) excludedBackendNodeIds.add(id);
 
     const nested = parseChildFrameDocuments(
@@ -952,10 +1012,16 @@ function parseChildFrameDocuments(
     for (const [nestedFrameId, nestedNodes] of nested.iframeNodes) {
       iframeNodes.set(nestedFrameId, nestedNodes);
     }
+    for (const [frameId, ownerBackendNodeId] of nested.frameOwnerBackendNodeIds) {
+      frameOwnerBackendNodeIds.set(frameId, ownerBackendNodeId);
+    }
+    for (const [frameId, parentFrameId] of nested.frameParentIds) {
+      frameParentIds.set(frameId, parentFrameId);
+    }
     for (const id of nested.excludedBackendNodeIds) excludedBackendNodeIds.add(id);
   }
 
-  return { iframeNodes, excludedBackendNodeIds };
+  return { iframeNodes, frameOwnerBackendNodeIds, frameParentIds, excludedBackendNodeIds };
 }
 
 export async function captureViewModel(
@@ -964,7 +1030,13 @@ export async function captureViewModel(
   options: CaptureViewModelOptions = {},
 ): Promise<CapturedViewModel> {
   throwIfAborted(options.signal);
-  const metrics = await cdp.send<LayoutMetricsReply>(tabId, "Page.getLayoutMetrics", {});
+  let metrics: LayoutMetricsReply = {};
+  try {
+    metrics = await cdp.send<LayoutMetricsReply>(tabId, "Page.getLayoutMetrics", {});
+  } catch (error) {
+    if (isAbortError(error)) throw error;
+    console.debug("[bsk capture] layout metrics unavailable", error);
+  }
   throwIfAborted(options.signal);
   const dpr = devicePixelRatio(metrics);
   const vpSrc = metrics.cssLayoutViewport ?? metrics.layoutViewport ?? {};
@@ -992,15 +1064,18 @@ export async function captureViewModel(
       nodes: [],
       viewport,
       iframeNodes: new Map(),
-      surfaceProbes: [],
       excludedBackendNodeIds: new Set(),
     };
   }
 
   const topContext: FrameContext = {
+    frameId: snapshotFrameId(doc0, strings),
     ownerFrameBackendNodeId: null,
-    originInTop: { x: 0, y: 0 },
-    clipRectInTop: viewportRect(viewport),
+    projection: {
+      sourceClips: [],
+      edges: [],
+      topViewport: viewport,
+    },
     scrollX,
     scrollY,
   };
@@ -1017,10 +1092,26 @@ export async function captureViewModel(
   await enrichFormControlStates(cdp, tabId, [nodes, ...iframeNodes.values()], options.signal);
   throwIfAborted(options.signal);
 
-  const surfaceProbes = options.conditionalSurfaceProbe
-    ? await probeHoverSurfaces(cdp, tabId, nodes, options)
-    : [];
-  throwIfAborted(options.signal);
+  const frameNodes = new Map<string, CapturedNode[]>();
+  if (topContext.frameId) frameNodes.set(topContext.frameId, nodes);
+  for (const iframeFrameNodes of iframeNodes.values()) {
+    const frameId = iframeFrameNodes.find((node) => node.frameId)?.frameId;
+    if (frameId) frameNodes.set(frameId, iframeFrameNodes);
+  }
+  for (const [frameId, ownerBackendNodeId] of frameParsed.frameOwnerBackendNodeIds) {
+    if (!frameNodes.has(frameId)) {
+      frameNodes.set(frameId, iframeNodes.get(ownerBackendNodeId) ?? []);
+    }
+  }
 
-  return { nodes, viewport, iframeNodes, surfaceProbes, excludedBackendNodeIds };
+  return {
+    nodes,
+    viewport,
+    iframeNodes,
+    frameNodes,
+    frameOwnerBackendNodeIds: frameParsed.frameOwnerBackendNodeIds,
+    frameParentIds: frameParsed.frameParentIds,
+    ...(topContext.frameId ? { rootFrameId: topContext.frameId } : {}),
+    excludedBackendNodeIds,
+  };
 }

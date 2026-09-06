@@ -4,6 +4,7 @@ import type { Transport } from "@/transport/transport";
 import type {
   ClickParams,
   ConsoleParams,
+  DownloadParams,
   EmulateParams,
   EvaluateParams,
   FillParams,
@@ -28,10 +29,12 @@ import type {
   ScreenshotParams,
   SelectParams,
   SnapshotParams,
+  UploadParams,
   WaitForNavigationParams,
 } from "@/transport/types";
 import { isRequestFrame } from "@/transport/types";
 import { handleConsole } from "./console";
+import { handleDownload } from "./download";
 import { type EmulateCdpRunner, handleEmulate } from "./emulate";
 import { handleEvaluate } from "./evaluate";
 import { handleRequestHelp } from "./human-loop";
@@ -51,7 +54,12 @@ import {
   handleScreenshot,
   handleSnapshot,
 } from "./observation";
-import { handleRecordAwait, handleRecordStart, handleRecordStop } from "./record";
+import {
+  handleRecordAwait,
+  handleRecordStart,
+  handleRecordStop,
+  type RecordRuntimeDeps,
+} from "./record";
 import {
   handleSessionStart,
   handleSessionStop,
@@ -61,6 +69,7 @@ import {
 import { chromeTabsApi, lookupSession, resolveTargetTab } from "./shared";
 import {
   type BorrowConfirmationApprover,
+  chromeTabMutationApi,
   handleTabBorrow,
   handleTabClose,
   handleTabCreate,
@@ -74,6 +83,7 @@ import {
   type TabReturnParams,
   type TabSelectParams,
 } from "./tabs";
+import { handleUpload } from "./upload";
 import { handleWaitForNavigation } from "./waits";
 import { handleWindowResize, type WindowResizeParams } from "./window";
 
@@ -99,6 +109,7 @@ export interface DispatcherDeps {
   transport: Transport;
   sessions: SessionManager;
   cdp?: DispatcherCdpRunner;
+  recording?: RecordRuntimeDeps;
   /**
    * Invoked whenever a dispatched RPC may have changed the live
    * session set (currently `tool.session_start` and
@@ -108,6 +119,8 @@ export interface DispatcherDeps {
   onSessionsChanged?: () => void;
   /** Invoked before a tool that dispatches page input or mutates browser state is forwarded. */
   onBrowserControlResumed?: (sessionId: string) => void;
+  /** Invoked after a tab is explicitly claimed so its overlay can be refreshed immediately. */
+  onAgentTabClaimed?: (tabId: number, windowId: number) => void;
   /** User approval for `tool.tab_borrow` (overlay in content script). */
   approveBorrow?: BorrowConfirmationApprover;
   /** i18n notification copy for `tool.request_help` (resolved per-call). */
@@ -134,8 +147,10 @@ export class ToolDispatcher {
   private readonly transport: Transport;
   private readonly sessions: SessionManager;
   private readonly cdp?: DispatcherCdpRunner;
+  private readonly recording?: RecordRuntimeDeps;
   private readonly onSessionsChanged?: () => void;
   private readonly onBrowserControlResumed?: (sessionId: string) => void;
+  private readonly onAgentTabClaimed?: (tabId: number, windowId: number) => void;
   private readonly approveBorrow?: BorrowConfirmationApprover;
   private readonly helpNotificationCopy?: () => { title: string; body: string };
   private subscription: { dispose(): void } | null = null;
@@ -153,8 +168,10 @@ export class ToolDispatcher {
     this.transport = deps.transport;
     this.sessions = deps.sessions;
     this.cdp = deps.cdp;
+    this.recording = deps.recording;
     this.onSessionsChanged = deps.onSessionsChanged;
     this.onBrowserControlResumed = deps.onBrowserControlResumed;
+    this.onAgentTabClaimed = deps.onAgentTabClaimed;
     this.approveBorrow = deps.approveBorrow;
     this.helpNotificationCopy = deps.helpNotificationCopy;
   }
@@ -290,12 +307,25 @@ export class ToolDispatcher {
         await this.releaseHoverLatch((req.params as SessionStopParams).session_id);
         return handleSessionStop(this.sessions, req.params as SessionStopParams, {
           cdp: this.cdp,
+          // Must be wired in production: the agent-tab cleanup and the
+          // window-release decision (issue #57) read these deps directly
+          // and silently no-op when they are absent.
+          tabManagement: { tabs: chromeTabMutationApi },
+          tabsQuery: chromeTabsApi,
+          signal,
         });
       }
       case "tool.tab_list":
         return handleTabList(this.sessions, req.params as TabListParams, chromeTabsApi, signal);
-      case "tool.tab_create":
-        return handleTabCreate(this.sessions, req.params as TabCreateParams, { signal });
+      case "tool.tab_create": {
+        const result = await handleTabCreate(this.sessions, req.params as TabCreateParams, {
+          signal,
+        });
+        if (!isRpcError(result)) {
+          this.onAgentTabClaimed?.(result.tab_id, result.window_id);
+        }
+        return result;
+      }
       case "tool.tab_close":
         return this.withHoverReleaseForRequest(
           req.params as TabCloseParams,
@@ -304,11 +334,16 @@ export class ToolDispatcher {
         );
       case "tool.tab_select":
         return handleTabSelect(this.sessions, req.params as TabSelectParams, { signal });
-      case "tool.tab_borrow":
-        return handleTabBorrow(this.sessions, req.params as TabBorrowParams, {
+      case "tool.tab_borrow": {
+        const result = await handleTabBorrow(this.sessions, req.params as TabBorrowParams, {
           signal,
           approveBorrow: this.approveBorrow,
         });
+        if (!isRpcError(result)) {
+          this.onAgentTabClaimed?.(result.tab_id, result.agent_window_id);
+        }
+        return result;
+      }
       case "tool.tab_return":
         return handleTabReturn(this.sessions, req.params as TabReturnParams, { signal });
       case "tool.window_resize":
@@ -374,7 +409,11 @@ export class ToolDispatcher {
                 ? {
                     cdp: this.cdp,
                     tabsApi: chromeTabsCaptureApi,
-                    conditionalSurfaceProbe: !this.hasHoverLatchForScope(hoverScope),
+                    // Active hover probing is opt-in. A held hover latch still
+                    // suppresses it, because probing would move the cursor off
+                    // the element the caller is deliberately holding.
+                    conditionalSurfaceProbe:
+                      params.probe_hover === true && !this.hasHoverLatchForScope(hoverScope),
                     hoverProbeBypassOverlay: bypassOverlay,
                   }
                 : undefined,
@@ -504,6 +543,40 @@ export class ToolDispatcher {
             ),
           signal,
         );
+      case "tool.upload":
+        return this.withHoverReleaseForRequest(
+          req.params as UploadParams,
+          () =>
+            this.cdp
+              ? handleUpload(this.sessions, req.params as UploadParams, {
+                  cdp: this.cdp,
+                  tabsApi: chromeTabsApi,
+                  signal,
+                  bypassOverlay,
+                })
+              : Promise.resolve({
+                  code: "unsupported",
+                  message: "upload requires CDP",
+                } satisfies RpcError),
+          signal,
+        );
+      case "tool.download":
+        return this.withHoverReleaseForRequest(
+          req.params as DownloadParams,
+          () =>
+            this.cdp
+              ? handleDownload(this.sessions, req.params as DownloadParams, {
+                  cdp: this.cdp,
+                  tabsApi: chromeTabsApi,
+                  signal,
+                  bypassOverlay,
+                })
+              : Promise.resolve({
+                  code: "unsupported",
+                  message: "download requires CDP",
+                } satisfies RpcError),
+          signal,
+        );
       case "tool.evaluate":
         return handleEvaluate(
           this.sessions,
@@ -530,44 +603,26 @@ export class ToolDispatcher {
           signal,
         });
       case "tool.record_start":
-        return handleRecordStart(this.sessions, req.params as RecordStartParams, {
-          tabsApi: chromeTabsApi,
-          sendToTab: (tabId, msg) => chrome.tabs.sendMessage(tabId, msg),
-          bypassOverlay: async (tabId, enabled) => {
-            try {
-              await chrome.tabs.sendMessage(tabId, {
-                type: OVERLAY_AUTOMATION_BYPASS,
-                enabled,
-              });
-            } catch {
-              // Content script may be unavailable on restricted pages.
-            }
-          },
-          ...(this.cdp ? { cdp: this.cdp } : {}),
-          signal,
-        });
+        return this.recording
+          ? handleRecordStart(this.sessions, req.params as RecordStartParams, {
+              ...this.recording,
+              signal,
+            })
+          : recordingRuntimeUnavailable();
       case "tool.record_stop":
-        return handleRecordStop(this.sessions, req.params as RecordStopParams, {
-          tabsApi: chromeTabsApi,
-          sendToTab: (tabId, msg) => chrome.tabs.sendMessage(tabId, msg),
-          bypassOverlay: async (tabId, enabled) => {
-            try {
-              await chrome.tabs.sendMessage(tabId, {
-                type: OVERLAY_AUTOMATION_BYPASS,
-                enabled,
-              });
-            } catch {
-              // Content script may be unavailable on restricted pages.
-            }
-          },
-          signal,
-        });
+        return this.recording
+          ? handleRecordStop(this.sessions, req.params as RecordStopParams, {
+              ...this.recording,
+              signal,
+            })
+          : recordingRuntimeUnavailable();
       case "tool.record_await":
-        return handleRecordAwait(this.sessions, req.params as RecordAwaitParams, {
-          tabsApi: chromeTabsApi,
-          sendToTab: (tabId, msg) => chrome.tabs.sendMessage(tabId, msg),
-          signal,
-        });
+        return this.recording
+          ? handleRecordAwait(this.sessions, req.params as RecordAwaitParams, {
+              ...this.recording,
+              signal,
+            })
+          : recordingRuntimeUnavailable();
       default:
         return {
           code: "unknown_method",
@@ -703,6 +758,13 @@ function isRpcError(v: unknown): v is RpcError {
   );
 }
 
+function recordingRuntimeUnavailable(): RpcError {
+  return {
+    code: "protocol_error",
+    message: "recording runtime is unavailable",
+  };
+}
+
 function sessionIdForBrowserControlMethod(req: RequestFrame): string | null {
   switch (req.method) {
     case "tool.tab_create":
@@ -721,6 +783,8 @@ function sessionIdForBrowserControlMethod(req: RequestFrame): string | null {
     case "tool.fill":
     case "tool.press":
     case "tool.select":
+    case "tool.upload":
+    case "tool.download":
     case "tool.evaluate":
     case "tool.observe":
     case "tool.request_help":

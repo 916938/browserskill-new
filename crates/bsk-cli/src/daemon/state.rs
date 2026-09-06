@@ -7,6 +7,7 @@ use tokio::task::JoinHandle;
 
 use super::abort::AbortRegistry;
 use super::browsers::BrowserRegistry;
+use super::file_transfer::TransferRegistry;
 use super::inflight::ToolInflightRegistry;
 use super::ipc::IpcHandle;
 use super::paths::templates_dir;
@@ -18,7 +19,7 @@ use super::templates::TemplateRegistry;
 use super::ws::WsHandle;
 
 pub const DAEMON_VERSION: &str = env!("CARGO_PKG_VERSION");
-pub const PROTOCOL_VERSION: &str = "1.0";
+pub const PROTOCOL_VERSION: &str = "1.1";
 /// Lowest **protocol** version peers must speak (e.g. `"1.0"`).
 pub const MIN_COMPATIBLE_PROTOCOL: &str = "1.0";
 /// Legacy app-semver floor used only when `HandshakeResult.min_compatible_peer`
@@ -36,8 +37,8 @@ pub struct DaemonState {
     /// `stop_session` / browser disconnect.
     pub tool_queues: Arc<ToolQueueRegistry>,
     /// Per-rpc-id cancellation tokens for daemon-side long-runners
-    /// (M9.3 — currently only `tool.wait_ms`). The CLI's `cancel
-    /// { rpc_id }` consults this registry first.
+    /// (`tool.wait_ms` plus `session.*` lifecycle calls). The CLI's
+    /// `cancel { rpc_id }` consults this registry first.
     pub abort_registry: Arc<AbortRegistry>,
     /// Tracks `tool.*` RPCs that have been forwarded to an extension
     /// over WS but have not yet received a response. Indexed by the
@@ -55,6 +56,9 @@ pub struct DaemonState {
     pub session_interrupts: Arc<SessionInterruptRegistry>,
     /// Persistent template store (CRUD + JSON files under ~/.bsk/templates/).
     pub templates: Arc<TemplateRegistry>,
+    /// Operation-scoped local file staging. The extension only sees paths
+    /// minted here; agent-facing RPCs use opaque transfer ids.
+    pub transfers: Arc<TransferRegistry>,
 }
 
 impl DaemonState {
@@ -71,6 +75,7 @@ impl DaemonState {
         let templates_dir = templates_dir().expect("resolve templates directory");
         let templates =
             Arc::new(TemplateRegistry::new(templates_dir).expect("load template registry"));
+        let transfers = Arc::new(TransferRegistry::new().expect("initialise transfer staging"));
         Self {
             config,
             browsers,
@@ -80,6 +85,7 @@ impl DaemonState {
             tool_inflight,
             session_interrupts,
             templates,
+            transfers,
         }
     }
 }
