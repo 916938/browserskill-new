@@ -12,9 +12,11 @@ const pkg = join(here, "..");
 const source = readFileSync(join(pkg, "skill", "SKILL.md"), "utf8");
 
 function stripFrontmatter(markdown) {
-  if (!markdown.startsWith("---\n")) return markdown;
-  const end = markdown.indexOf("\n---\n", 4);
-  return end === -1 ? markdown : markdown.slice(end + 5).replace(/^\s*\n/, "");
+  // Normalise CRLF so the frontmatter check works on Windows checkouts too.
+  const text = markdown.replace(/\r\n/g, "\n");
+  if (!text.startsWith("---\n")) return markdown;
+  const end = text.indexOf("\n---\n", 4);
+  return end === -1 ? markdown : text.slice(end + 5).replace(/^\s*\n/, "");
 }
 
 const SUPPORTED_BROWSER_TOOLS = [
