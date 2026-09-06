@@ -5,8 +5,10 @@ import { OVERLAY_HOST_MARKER_ATTR, OVERLAY_HOST_NAME } from "@/lib/overlay-bridg
 import { SessionManager } from "@/session-manager/manager";
 import type { CdpRunner } from "@/tools/shared";
 import {
+  buildFrameVomScene,
   buildVomScene,
   type CdpAxNode,
+  captureVomObservation,
   handleGetHtml,
   handleObserve,
   handleScreenshot,
@@ -26,7 +28,7 @@ function fakeAgentWindow(ids: number[]) {
       return id;
     }),
     remove: vi.fn(async () => {}),
-    ensureActiveTab: vi.fn(async () => {}),
+    ensureActiveTab: vi.fn(async () => 1),
   };
 }
 
@@ -62,6 +64,9 @@ function makeFakeCdp(handlers: Record<string, (params?: object) => unknown>) {
   const send = vi.fn(async (_tabId: number, method: string, params?: object) => {
     sent.push({ method, params });
     const handler = handlers[method];
+    if (!handler && method === "Page.getLayoutMetrics") {
+      return { cssLayoutViewport: { clientWidth: 1280, clientHeight: 720 } };
+    }
     if (!handler) throw new Error(`unexpected CDP call ${method}`);
     return handler(params);
   });
@@ -508,6 +513,292 @@ describe("handleScreenshot overlay suppression", () => {
 // ---------------------------------------------------------------------------
 
 describe("buildVomScene", () => {
+  it("merges multiple sibling and nested frames without mixing their targets", () => {
+    const node = (
+      backendNodeId: number,
+      parentBackendNodeId: number | null,
+      frameId: string,
+      tag: string,
+      attrs: Record<string, string> = {},
+    ): CapturedNode => ({
+      backendNodeId,
+      parentBackendNodeId,
+      frameId,
+      tag,
+      attrs,
+      rect: { x: 0, y: 0, w: 100, h: 30 },
+      localRect: { x: 0, y: 0, w: 100, h: 30 },
+      paintOrder: 1,
+      position: "static",
+      pointerEvents: "auto",
+    });
+    const mainNodes = [
+      node(1, null, "main", "body"),
+      node(10, 1, "main", "iframe", { title: "First" }),
+      node(20, 1, "main", "iframe", { title: "Second" }),
+    ];
+    const firstNodes = [
+      node(100, null, "first", "body"),
+      node(101, 100, "first", "button", { "aria-label": "First action" }),
+    ];
+    const secondNodes = [
+      node(200, null, "second", "body"),
+      node(201, 200, "second", "h2"),
+      node(210, 200, "second", "iframe", { title: "Nested" }),
+    ];
+    const nestedNodes = [
+      node(300, null, "nested", "body"),
+      node(301, 300, "nested", "input", { placeholder: "Nested field" }),
+    ];
+    const captured: CapturedViewModel = {
+      viewport: { width: 1200, height: 800 },
+      nodes: mainNodes,
+      iframeNodes: new Map([
+        [10, firstNodes],
+        [20, secondNodes],
+        [210, nestedNodes],
+      ]),
+      frameNodes: new Map([
+        ["main", mainNodes],
+        ["first", firstNodes],
+        ["second", secondNodes],
+        ["nested", nestedNodes],
+      ]),
+      frameOwnerBackendNodeIds: new Map([
+        ["first", 10],
+        ["second", 20],
+        ["nested", 210],
+      ]),
+      rootFrameId: "main",
+      excludedBackendNodeIds: new Set(),
+    };
+    const axNode = (
+      nodeId: string,
+      backendDOMNodeId: number,
+      role: string,
+      parentId?: string,
+      name?: string,
+    ): CdpAxNode => ({
+      nodeId,
+      backendDOMNodeId,
+      role: { type: "role", value: role },
+      ...(parentId ? { parentId } : {}),
+      ...(name ? { name: { type: "computedString", value: name } } : {}),
+    });
+    const result = buildFrameVomScene(
+      [
+        {
+          frameId: "main",
+          contextScopeId: "main",
+          target: { tabId: 7 },
+          domNodes: mainNodes,
+          axNodes: [
+            axNode("root", 1, "RootWebArea"),
+            axNode("frame-1", 10, "Iframe", "root", "First"),
+            axNode("frame-2", 20, "Iframe", "root", "Second"),
+          ],
+        },
+        {
+          frameId: "first",
+          contextScopeId: "first",
+          parentFrameId: "main",
+          ownerBackendNodeId: 10,
+          target: { tabId: 7, sessionId: "session-first" },
+          domNodes: firstNodes,
+          axNodes: [
+            axNode("root", 100, "RootWebArea"),
+            axNode("button", 101, "button", "root", "First action"),
+          ],
+        },
+        {
+          frameId: "second",
+          contextScopeId: "second",
+          parentFrameId: "main",
+          ownerBackendNodeId: 20,
+          target: { tabId: 7, sessionId: "session-second" },
+          domNodes: secondNodes,
+          axNodes: [
+            axNode("root", 200, "RootWebArea"),
+            axNode("heading", 201, "heading", "root", "Second heading"),
+            axNode("nested-frame", 210, "Iframe", "root", "Nested"),
+          ],
+        },
+        {
+          frameId: "nested",
+          contextScopeId: "nested",
+          parentFrameId: "second",
+          ownerBackendNodeId: 210,
+          target: { tabId: 7, sessionId: "session-nested" },
+          domNodes: nestedNodes,
+          axNodes: [
+            axNode("root", 300, "RootWebArea"),
+            axNode("input", 301, "textbox", "root", "Nested field"),
+          ],
+        },
+      ],
+      captured,
+    );
+
+    const rendered = renderVom(result);
+    expect(rendered.text).toContain('Iframe "First"');
+    expect(rendered.text).toContain('@e1 button "First action"');
+    expect(rendered.text).toContain('heading "Second heading"');
+    expect(rendered.text).toContain('Iframe "Nested"');
+    expect(rendered.text).toContain('textbox "Nested field"');
+    expect(rendered.refs.find((ref) => ref.backendNodeId === 101)?.frameId).toBe("first");
+    expect(rendered.refs.find((ref) => ref.backendNodeId === 301)?.frameId).toBe("nested");
+
+    const firstAction = result.nodes.find((item) => item.backendNodeId === 101);
+    const nestedInput = result.nodes.find((item) => item.backendNodeId === 301);
+    expect(firstAction).toMatchObject({ frameId: "first", contextScopeId: "first" });
+    expect(nestedInput).toMatchObject({ frameId: "nested", contextScopeId: "nested" });
+    expect(nestedInput?.parentId).toBe(result.nodes.find((item) => item.backendNodeId === 210)?.id);
+  });
+
+  it("does not place a child document at the page root when its frame boundary is unresolved", () => {
+    const childNode: CapturedNode = {
+      backendNodeId: 101,
+      parentBackendNodeId: null,
+      frameId: "child",
+      tag: "button",
+      attrs: {},
+      rect: { x: 0, y: 0, w: 100, h: 30 },
+      paintOrder: 1,
+      position: "static",
+      pointerEvents: "auto",
+    };
+    const captured: CapturedViewModel = {
+      viewport: { width: 800, height: 600 },
+      nodes: [],
+      iframeNodes: new Map(),
+      frameNodes: new Map([["child", [childNode]]]),
+      rootFrameId: "main",
+      excludedBackendNodeIds: new Set(),
+    };
+
+    const result = buildFrameVomScene(
+      [
+        {
+          frameId: "main",
+          contextScopeId: "main",
+          target: { tabId: 7 },
+          domNodes: [],
+          axNodes: [],
+        },
+        {
+          frameId: "child",
+          contextScopeId: "child",
+          parentFrameId: "main",
+          target: { tabId: 7 },
+          domNodes: [childNode],
+          axNodes: [
+            {
+              nodeId: "button",
+              frameId: "child",
+              backendDOMNodeId: 101,
+              role: { type: "role", value: "button" },
+              name: { type: "computedString", value: "Child action" },
+            },
+          ],
+        },
+      ],
+      captured,
+    );
+
+    expect(result.nodes).toEqual([]);
+  });
+
+  it("keeps AX-only frame content attached to its iframe boundary", () => {
+    const mainNodes: CapturedNode[] = [
+      {
+        backendNodeId: 1,
+        parentBackendNodeId: null,
+        frameId: "main",
+        tag: "body",
+        attrs: {},
+        rect: { x: 0, y: 0, w: 800, h: 600 },
+        paintOrder: 0,
+        position: "static",
+        pointerEvents: "auto",
+      },
+      {
+        backendNodeId: 10,
+        parentBackendNodeId: 1,
+        frameId: "main",
+        tag: "iframe",
+        attrs: { title: "Remote" },
+        rect: { x: 100, y: 100, w: 400, h: 300 },
+        paintOrder: 1,
+        position: "static",
+        pointerEvents: "auto",
+      },
+    ];
+    const captured: CapturedViewModel = {
+      viewport: { width: 800, height: 600 },
+      nodes: mainNodes,
+      iframeNodes: new Map(),
+      frameNodes: new Map([
+        ["main", mainNodes],
+        ["child", []],
+      ]),
+      rootFrameId: "main",
+      excludedBackendNodeIds: new Set(),
+    };
+
+    const result = buildFrameVomScene(
+      [
+        {
+          frameId: "main",
+          contextScopeId: "main",
+          target: { tabId: 7 },
+          domNodes: mainNodes,
+          axNodes: [
+            {
+              nodeId: "main-root",
+              backendDOMNodeId: 1,
+              role: { type: "role", value: "RootWebArea" },
+            },
+            {
+              nodeId: "frame-owner",
+              parentId: "main-root",
+              backendDOMNodeId: 10,
+              role: { type: "role", value: "Iframe" },
+              name: { type: "computedString", value: "Remote" },
+            },
+          ],
+        },
+        {
+          frameId: "child",
+          contextScopeId: "child",
+          parentFrameId: "main",
+          ownerBackendNodeId: 10,
+          target: { tabId: 7, sessionId: "child-session" },
+          domNodes: [],
+          axNodes: [
+            {
+              nodeId: "child-root",
+              backendDOMNodeId: 100,
+              role: { type: "role", value: "RootWebArea" },
+            },
+            {
+              nodeId: "child-button",
+              parentId: "child-root",
+              backendDOMNodeId: 101,
+              role: { type: "role", value: "button" },
+              name: { type: "computedString", value: "AX fallback action" },
+            },
+          ],
+        },
+      ],
+      captured,
+    );
+
+    const childButton = result.nodes.find((node) => node.backendNodeId === 101);
+    expect(childButton).toMatchObject({ frameId: "child", contextScopeId: "child" });
+    expect(childButton?.parentId).toBe(result.nodes.find((node) => node.backendNodeId === 10)?.id);
+    expect(renderVom(result).text).toContain('@e1 button "AX fallback action"');
+  });
+
   it("joins AX semantics with captured geometry by backendDOMNodeId", () => {
     const axNodes: CdpAxNode[] = [
       {
@@ -816,6 +1107,7 @@ describe("buildVomScene", () => {
         parentId: "2",
         role: { type: "role", value: "textbox" },
         name: { type: "x", value: "输入密码" },
+        value: { value: "iframe-secret" },
         backendDOMNodeId: 202,
         properties: [{ name: "inputType", value: { value: "password" } }],
       },
@@ -870,6 +1162,10 @@ describe("buildVomScene", () => {
 
     expect(passwordNodes).toHaveLength(1);
     expect(passwordNodes[0]).toEqual(expect.objectContaining({ id: 202, sensitive: true }));
+    expect(passwordNodes[0].value).toBeUndefined();
+    const rendered = renderVom(buildVomScene(axNodes, captured)).text;
+    expect(rendered).toContain('textbox "输入密码" [filled] ="•••"');
+    expect(rendered).not.toContain("iframe-secret");
   });
 
   it("keeps unnamed iframe controls but skips unnamed iframe links", () => {
@@ -1034,7 +1330,7 @@ describe("buildVomScene", () => {
     expect(rendered).toContain('      @e2 textbox "验证码"');
   });
 
-  it("does not mark non-password inputs sensitive from password-like labels", () => {
+  it("marks current-password autocomplete as sensitive even for text inputs", () => {
     const axNodes: CdpAxNode[] = [
       {
         nodeId: "1",
@@ -1069,7 +1365,7 @@ describe("buildVomScene", () => {
     expect(buildVomScene(axNodes, captured).nodes[0]).toEqual(
       expect.objectContaining({
         id: 10,
-        sensitive: false,
+        sensitive: true,
       }),
     );
   });
@@ -1360,11 +1656,13 @@ describe("buildVomScene", () => {
 
     const scene = buildVomScene(axNodes, captured);
     expect(scene.nodes.find((n) => n.id === 20)).toEqual(
-      expect.objectContaining({ id: 20, role: "generic", cursor: "pointer" }),
+      expect.objectContaining({ id: 20, role: "button", name: "close", cursor: "pointer" }),
     );
     const rendered = renderVom(scene);
     expect(rendered.text).toContain('@e1 button "close"');
-    expect(rendered.refs).toEqual([{ ref: "e1", backendNodeId: 20 }]);
+    expect(rendered.refs.map(({ ref, backendNodeId }) => ({ ref, backendNodeId }))).toEqual([
+      { ref: "e1", backendNodeId: 20 },
+    ]);
   });
 
   it("does not promote a clickable container that wraps a real interactive control", () => {
@@ -1434,7 +1732,7 @@ describe("buildVomScene", () => {
     };
 
     const scene = buildVomScene(axNodes, captured);
-    expect(scene.nodes.find((n) => n.id === 20)?.role).toBe("generic");
+    expect(scene.nodes.find((n) => n.id === 20)).toBeUndefined();
     expect(scene.nodes.find((n) => n.id === 30)?.role).toBe("link");
   });
 
@@ -1503,12 +1801,14 @@ describe("buildVomScene", () => {
 
     const scene = buildVomScene(axNodes, captured);
     expect(scene.nodes.find((n) => n.id === 20)).toEqual(
-      expect.objectContaining({ id: 20, role: "generic", attrs: { "aria-label": "收藏" } }),
+      expect.objectContaining({ id: 20, role: "button", attrs: { "aria-label": "收藏" } }),
     );
-    expect(scene.nodes.find((n) => n.id === 30)?.role).toBe("generic");
+    expect(scene.nodes.find((n) => n.id === 30)).toBeUndefined();
     const rendered = renderVom(scene);
     expect(rendered.text).toContain('@e1 button "收藏"');
-    expect(rendered.refs).toEqual([{ ref: "e1", backendNodeId: 20 }]);
+    expect(rendered.refs.map(({ ref, backendNodeId }) => ({ ref, backendNodeId }))).toEqual([
+      { ref: "e1", backendNodeId: 20 },
+    ]);
   });
 
   it("builds active scope blocks from active aria-controls relationships", () => {
@@ -1604,36 +1904,41 @@ describe("buildVomScene", () => {
         backendDOMNodeId: 20,
       },
     ];
-    const scene = buildVomScene(axNodes, {
-      viewport: { width: 1000, height: 800 },
-      iframeNodes: new Map(),
-      excludedBackendNodeIds: new Set(),
-      surfaceProbes: [
-        { triggerBackendNodeId: 20, triggerAction: "hover", subItems: ["Shoes", "Bags"] },
-      ],
-      nodes: [
-        {
-          backendNodeId: 10,
-          parentBackendNodeId: null,
-          tag: "body",
-          attrs: {},
-          rect: { x: 0, y: 0, w: 1000, h: 800 },
-          paintOrder: 0,
-          position: "static",
-          pointerEvents: "auto",
-        },
-        {
-          backendNodeId: 20,
-          parentBackendNodeId: 10,
-          tag: "button",
-          attrs: {},
-          rect: { x: 20, y: 20, w: 120, h: 40 },
-          paintOrder: 1,
-          position: "static",
-          pointerEvents: "auto",
-        },
-      ],
-    });
+    const scene = buildVomScene(
+      axNodes,
+      {
+        viewport: { width: 1000, height: 800 },
+        iframeNodes: new Map(),
+        excludedBackendNodeIds: new Set(),
+        nodes: [
+          {
+            backendNodeId: 10,
+            parentBackendNodeId: null,
+            tag: "body",
+            attrs: {},
+            rect: { x: 0, y: 0, w: 1000, h: 800 },
+            paintOrder: 0,
+            position: "static",
+            pointerEvents: "auto",
+          },
+          {
+            backendNodeId: 20,
+            parentBackendNodeId: 10,
+            tag: "button",
+            attrs: {},
+            rect: { x: 20, y: 20, w: 120, h: 40 },
+            paintOrder: 1,
+            position: "static",
+            pointerEvents: "auto",
+          },
+        ],
+      },
+      {
+        surfaceProbes: [
+          { triggerBackendNodeId: 20, triggerAction: "hover", subItems: ["Shoes", "Bags"] },
+        ],
+      },
+    );
 
     expect(scene.surfaces).toEqual([
       { triggerId: 20, triggerAction: "hover", subItems: ["Shoes", "Bags"] },
@@ -1657,46 +1962,51 @@ describe("buildVomScene", () => {
         backendDOMNodeId: 21,
       },
     ];
-    const scene = buildVomScene(axNodes, {
-      viewport: { width: 1000, height: 800 },
-      iframeNodes: new Map(),
-      excludedBackendNodeIds: new Set(),
-      surfaceProbes: [
-        { triggerBackendNodeId: 20, triggerAction: "hover", subItems: ["My profile"] },
-      ],
-      nodes: [
-        {
-          backendNodeId: 10,
-          parentBackendNodeId: null,
-          tag: "body",
-          attrs: {},
-          rect: { x: 0, y: 0, w: 1000, h: 800 },
-          paintOrder: 0,
-          position: "static",
-          pointerEvents: "auto",
-        },
-        {
-          backendNodeId: 20,
-          parentBackendNodeId: 10,
-          tag: "div",
-          attrs: { class: "tg-avatar" },
-          rect: { x: 900, y: 10, w: 30, h: 30 },
-          paintOrder: 1,
-          position: "static",
-          pointerEvents: "auto",
-        },
-        {
-          backendNodeId: 21,
-          parentBackendNodeId: 20,
-          tag: "div",
-          attrs: { class: "tg-avatar__inner" },
-          rect: { x: 902, y: 12, w: 26, h: 26 },
-          paintOrder: 2,
-          position: "static",
-          pointerEvents: "auto",
-        },
-      ],
-    });
+    const scene = buildVomScene(
+      axNodes,
+      {
+        viewport: { width: 1000, height: 800 },
+        iframeNodes: new Map(),
+        excludedBackendNodeIds: new Set(),
+        nodes: [
+          {
+            backendNodeId: 10,
+            parentBackendNodeId: null,
+            tag: "body",
+            attrs: {},
+            rect: { x: 0, y: 0, w: 1000, h: 800 },
+            paintOrder: 0,
+            position: "static",
+            pointerEvents: "auto",
+          },
+          {
+            backendNodeId: 20,
+            parentBackendNodeId: 10,
+            tag: "div",
+            attrs: { class: "tg-avatar" },
+            rect: { x: 900, y: 10, w: 30, h: 30 },
+            paintOrder: 1,
+            position: "static",
+            pointerEvents: "auto",
+          },
+          {
+            backendNodeId: 21,
+            parentBackendNodeId: 20,
+            tag: "div",
+            attrs: { class: "tg-avatar__inner" },
+            rect: { x: 902, y: 12, w: 26, h: 26 },
+            paintOrder: 2,
+            position: "static",
+            pointerEvents: "auto",
+          },
+        ],
+      },
+      {
+        surfaceProbes: [
+          { triggerBackendNodeId: 20, triggerAction: "hover", subItems: ["My profile"] },
+        ],
+      },
+    );
 
     expect(renderVom(scene).text).toContain('@e1 button "image" [hover first: My profile]');
   });
@@ -1717,48 +2027,53 @@ describe("buildVomScene", () => {
         backendDOMNodeId: 21,
       },
     ];
-    const scene = buildVomScene(axNodes, {
-      viewport: { width: 1000, height: 800 },
-      iframeNodes: new Map(),
-      excludedBackendNodeIds: new Set(),
-      surfaceProbes: [
-        { triggerBackendNodeId: 20, triggerAction: "hover", subItems: ["My profile"] },
-        { triggerBackendNodeId: 20, triggerAction: "hover", subItems: ["Sign out"] },
-        { triggerBackendNodeId: 21, triggerAction: "hover", subItems: ["Settings"] },
-      ],
-      nodes: [
-        {
-          backendNodeId: 10,
-          parentBackendNodeId: null,
-          tag: "body",
-          attrs: {},
-          rect: { x: 0, y: 0, w: 1000, h: 800 },
-          paintOrder: 0,
-          position: "static",
-          pointerEvents: "auto",
-        },
-        {
-          backendNodeId: 20,
-          parentBackendNodeId: 10,
-          tag: "div",
-          attrs: { class: "tg-avatar" },
-          rect: { x: 900, y: 10, w: 30, h: 30 },
-          paintOrder: 1,
-          position: "static",
-          pointerEvents: "auto",
-        },
-        {
-          backendNodeId: 21,
-          parentBackendNodeId: 20,
-          tag: "div",
-          attrs: { class: "tg-avatar__inner" },
-          rect: { x: 902, y: 12, w: 26, h: 26 },
-          paintOrder: 2,
-          position: "static",
-          pointerEvents: "auto",
-        },
-      ],
-    });
+    const scene = buildVomScene(
+      axNodes,
+      {
+        viewport: { width: 1000, height: 800 },
+        iframeNodes: new Map(),
+        excludedBackendNodeIds: new Set(),
+        nodes: [
+          {
+            backendNodeId: 10,
+            parentBackendNodeId: null,
+            tag: "body",
+            attrs: {},
+            rect: { x: 0, y: 0, w: 1000, h: 800 },
+            paintOrder: 0,
+            position: "static",
+            pointerEvents: "auto",
+          },
+          {
+            backendNodeId: 20,
+            parentBackendNodeId: 10,
+            tag: "div",
+            attrs: { class: "tg-avatar" },
+            rect: { x: 900, y: 10, w: 30, h: 30 },
+            paintOrder: 1,
+            position: "static",
+            pointerEvents: "auto",
+          },
+          {
+            backendNodeId: 21,
+            parentBackendNodeId: 20,
+            tag: "div",
+            attrs: { class: "tg-avatar__inner" },
+            rect: { x: 902, y: 12, w: 26, h: 26 },
+            paintOrder: 2,
+            position: "static",
+            pointerEvents: "auto",
+          },
+        ],
+      },
+      {
+        surfaceProbes: [
+          { triggerBackendNodeId: 20, triggerAction: "hover", subItems: ["My profile"] },
+          { triggerBackendNodeId: 20, triggerAction: "hover", subItems: ["Sign out"] },
+          { triggerBackendNodeId: 21, triggerAction: "hover", subItems: ["Settings"] },
+        ],
+      },
+    );
 
     expect(scene.surfaces).toEqual([
       { triggerId: 21, triggerAction: "hover", subItems: ["My profile"] },
@@ -1781,57 +2096,62 @@ describe("buildVomScene", () => {
         backendDOMNodeId: 21,
       },
     ];
-    const scene = buildVomScene(axNodes, {
-      viewport: { width: 1000, height: 800 },
-      iframeNodes: new Map(),
-      excludedBackendNodeIds: new Set(),
-      surfaceProbes: [
-        {
-          triggerBackendNodeId: 20,
-          triggerPoint: { x: 915, y: 25 },
-          triggerAction: "hover",
-          subItems: ["My profile", "Sign out"],
-        },
-      ],
-      nodes: [
-        {
-          backendNodeId: 10,
-          parentBackendNodeId: null,
-          tag: "body",
-          attrs: {},
-          rect: { x: 0, y: 0, w: 1000, h: 800 },
-          paintOrder: 0,
-          position: "static",
-          pointerEvents: "auto",
-          cursor: "auto",
-        },
-        {
-          backendNodeId: 20,
-          parentBackendNodeId: 10,
-          tag: "div",
-          attrs: { class: "tg-avatar" },
-          rect: { x: 900, y: 10, w: 30, h: 30 },
-          paintOrder: 1,
-          position: "static",
-          pointerEvents: "auto",
-          cursor: "pointer",
-        },
-        {
-          backendNodeId: 21,
-          parentBackendNodeId: 20,
-          tag: "div",
-          attrs: { class: "tg-avatar__inner" },
-          rect: { x: 902, y: 12, w: 26, h: 26 },
-          paintOrder: 2,
-          position: "static",
-          pointerEvents: "auto",
-          cursor: "pointer",
-        },
-      ],
-    });
+    const scene = buildVomScene(
+      axNodes,
+      {
+        viewport: { width: 1000, height: 800 },
+        iframeNodes: new Map(),
+        excludedBackendNodeIds: new Set(),
+        nodes: [
+          {
+            backendNodeId: 10,
+            parentBackendNodeId: null,
+            tag: "body",
+            attrs: {},
+            rect: { x: 0, y: 0, w: 1000, h: 800 },
+            paintOrder: 0,
+            position: "static",
+            pointerEvents: "auto",
+            cursor: "auto",
+          },
+          {
+            backendNodeId: 20,
+            parentBackendNodeId: 10,
+            tag: "div",
+            attrs: { class: "tg-avatar" },
+            rect: { x: 900, y: 10, w: 30, h: 30 },
+            paintOrder: 1,
+            position: "static",
+            pointerEvents: "auto",
+            cursor: "pointer",
+          },
+          {
+            backendNodeId: 21,
+            parentBackendNodeId: 20,
+            tag: "div",
+            attrs: { class: "tg-avatar__inner" },
+            rect: { x: 902, y: 12, w: 26, h: 26 },
+            paintOrder: 2,
+            position: "static",
+            pointerEvents: "auto",
+            cursor: "pointer",
+          },
+        ],
+      },
+      {
+        surfaceProbes: [
+          {
+            triggerBackendNodeId: 20,
+            triggerPoint: { x: 915, y: 25 },
+            triggerAction: "hover",
+            subItems: ["My profile", "Sign out"],
+          },
+        ],
+      },
+    );
 
     expect(scene.surfaces).toEqual([
-      { triggerId: 21, triggerAction: "hover", subItems: ["My profile", "Sign out"] },
+      { triggerId: 20, triggerAction: "hover", subItems: ["My profile", "Sign out"] },
     ]);
     expect(renderVom(scene).text).toContain(
       '@e1 button "image" [hover first: My profile | Sign out]',
@@ -1854,41 +2174,46 @@ describe("buildVomScene", () => {
         backendDOMNodeId: 42,
       },
     ];
-    const scene = buildVomScene(axNodes, {
-      viewport: { width: 1000, height: 800 },
-      iframeNodes: new Map(),
-      excludedBackendNodeIds: new Set(),
-      surfaceProbes: [
-        {
-          triggerBackendNodeId: 999,
-          triggerPoint: { x: 900, y: 20 },
-          triggerAction: "hover",
-          subItems: ["My profile"],
-        },
-      ],
-      nodes: [
-        {
-          backendNodeId: 10,
-          parentBackendNodeId: null,
-          tag: "body",
-          attrs: {},
-          rect: { x: 0, y: 0, w: 1000, h: 800 },
-          paintOrder: 0,
-          position: "static",
-          pointerEvents: "auto",
-        },
-        {
-          backendNodeId: 42,
-          parentBackendNodeId: 10,
-          tag: "a",
-          attrs: {},
-          rect: { x: 860, y: 120, w: 40, h: 30 },
-          paintOrder: 1,
-          position: "static",
-          pointerEvents: "auto",
-        },
-      ],
-    });
+    const scene = buildVomScene(
+      axNodes,
+      {
+        viewport: { width: 1000, height: 800 },
+        iframeNodes: new Map(),
+        excludedBackendNodeIds: new Set(),
+        nodes: [
+          {
+            backendNodeId: 10,
+            parentBackendNodeId: null,
+            tag: "body",
+            attrs: {},
+            rect: { x: 0, y: 0, w: 1000, h: 800 },
+            paintOrder: 0,
+            position: "static",
+            pointerEvents: "auto",
+          },
+          {
+            backendNodeId: 42,
+            parentBackendNodeId: 10,
+            tag: "a",
+            attrs: {},
+            rect: { x: 860, y: 120, w: 40, h: 30 },
+            paintOrder: 1,
+            position: "static",
+            pointerEvents: "auto",
+          },
+        ],
+      },
+      {
+        surfaceProbes: [
+          {
+            triggerBackendNodeId: 999,
+            triggerPoint: { x: 900, y: 20 },
+            triggerAction: "hover",
+            subItems: ["My profile"],
+          },
+        ],
+      },
+    );
 
     expect(scene.surfaces).toBeUndefined();
     expect(renderVom(scene).text).not.toContain("[hover first:");
@@ -2306,7 +2631,106 @@ describe("handleSnapshot", () => {
     );
   });
 
-  it("enables conditional surface probing for semantic observe", async () => {
+  it("hovers the page only after the accessibility tree has been captured", async () => {
+    // Hovering can open menus and reflow the page. Probing between the DOM and
+    // AX captures would leave the two halves of one observation describing the
+    // page on either side of that change.
+    const sm = new SessionManager({ agentWindow: fakeAgentWindow([100]) });
+    await sm.start("aa11");
+    const root: CdpAxNode = {
+      nodeId: "1",
+      role: { type: "role", value: "RootWebArea" },
+      name: { type: "computedString", value: "Example" },
+      backendDOMNodeId: 100,
+      childIds: ["2"],
+    };
+    const button: CdpAxNode = {
+      nodeId: "2",
+      parentId: "1",
+      role: { type: "role", value: "button" },
+      name: { type: "computedString", value: "Products" },
+      backendDOMNodeId: 200,
+    };
+    const strings = ["body", "button", "position", "static", "pointer-events", "auto", "cursor"];
+    const i = (s: string) => strings.indexOf(s);
+    const methodOrder: string[] = [];
+    const send = vi.fn(async (_tabId: number, method: string, params?: object) => {
+      methodOrder.push(method);
+      if (method === "Accessibility.enable") return {};
+      if (method === "Accessibility.getFullAXTree") return { nodes: [root, button] };
+      if (method === "Page.getLayoutMetrics") {
+        return { cssLayoutViewport: { clientWidth: 1000, clientHeight: 800, pageX: 0, pageY: 0 } };
+      }
+      if (method === "DOMSnapshot.enable") return {};
+      if (method === "DOMSnapshot.captureSnapshot") {
+        return {
+          strings,
+          documents: [
+            {
+              nodes: {
+                parentIndex: [-1, 0],
+                nodeName: [i("body"), i("button")],
+                backendNodeId: [100, 200],
+                attributes: [[], []],
+              },
+              layout: {
+                nodeIndex: [0, 1],
+                styles: [
+                  [i("static"), i("auto"), i("auto")],
+                  [i("static"), i("auto"), i("auto")],
+                ],
+                bounds: [
+                  [0, 0, 1000, 800],
+                  [20, 20, 120, 40],
+                ],
+                paintOrders: [0, 1],
+              },
+            },
+          ],
+        };
+      }
+      if (method === "Input.dispatchMouseEvent") return {};
+      if (method === "Runtime.evaluate") {
+        const expression = (params as { expression?: string } | undefined)?.expression ?? "";
+        // Report the button as a `:hover` rule target so a real hover fires.
+        if (expression.includes("document.styleSheets")) {
+          return { result: { value: [{ x: 80, y: 40 }] } };
+        }
+        return { result: { value: [] } };
+      }
+      throw new Error(`unexpected CDP method ${method}`);
+    });
+
+    const res = await handleObserve(
+      sm,
+      { session_id: "aa11", probe_hover: true },
+      {
+        cdp: {
+          send: send as unknown as <T = unknown>(
+            tabId: number,
+            method: string,
+            params?: object,
+          ) => Promise<T>,
+          trackSessionTab: vi.fn(),
+        },
+        tabsApi: {
+          get: vi.fn(
+            async (tabId: number) =>
+              ({ id: tabId, windowId: 100, active: true }) as chrome.tabs.Tab,
+          ),
+          query: vi.fn(async () => [{ id: 4, windowId: 100, active: true } as chrome.tabs.Tab]),
+        },
+      },
+    );
+
+    if ("code" in res) throw new Error(`unexpected error: ${JSON.stringify(res)}`);
+    const firstHover = methodOrder.indexOf("Input.dispatchMouseEvent");
+    expect(firstHover).toBeGreaterThan(-1);
+    expect(methodOrder.lastIndexOf("DOMSnapshot.captureSnapshot")).toBeLessThan(firstHover);
+    expect(methodOrder.lastIndexOf("Accessibility.getFullAXTree")).toBeLessThan(firstHover);
+  });
+
+  it("runs conditional surface probing only when observe opts in", async () => {
     const sm = new SessionManager({ agentWindow: fakeAgentWindow([100]) });
     await sm.start("aa11");
     const root: CdpAxNode = {
@@ -2362,30 +2786,46 @@ describe("handleSnapshot", () => {
       if (method === "Runtime.evaluate") return { result: { value: [] } };
       throw new Error(`unexpected CDP method ${method}`);
     });
-    const res = await handleObserve(
+    const deps = {
+      cdp: {
+        send: send as unknown as <T = unknown>(
+          tabId: number,
+          method: string,
+          params?: object,
+        ) => Promise<T>,
+        trackSessionTab: vi.fn(),
+      },
+      tabsApi: {
+        get: vi.fn(
+          async (tabId: number) => ({ id: tabId, windowId: 100, active: true }) as chrome.tabs.Tab,
+        ),
+        query: vi.fn(async () => [{ id: 4, windowId: 100, active: true } as chrome.tabs.Tab]),
+      },
+    };
+
+    const withoutProbe = await handleObserve(
       sm,
       { session_id: "aa11", debug_surfaces: true },
-      {
-        cdp: {
-          send: send as unknown as <T = unknown>(
-            tabId: number,
-            method: string,
-            params?: object,
-          ) => Promise<T>,
-          trackSessionTab: vi.fn(),
-        },
-        tabsApi: {
-          get: vi.fn(
-            async (tabId: number) =>
-              ({ id: tabId, windowId: 100, active: true }) as chrome.tabs.Tab,
-          ),
-          query: vi.fn(async () => [{ id: 4, windowId: 100, active: true } as chrome.tabs.Tab]),
-        },
-      },
+      deps,
+    );
+    if ("code" in withoutProbe) {
+      throw new Error(`unexpected error: ${JSON.stringify(withoutProbe)}`);
+    }
+    expect(withoutProbe.hover_probe).toBeUndefined();
+    expect(send).not.toHaveBeenCalledWith(
+      4,
+      "Runtime.evaluate",
+      expect.objectContaining({ returnByValue: true }),
     );
 
-    if ("code" in res) throw new Error(`unexpected error: ${JSON.stringify(res)}`);
-    expect(res.debug).toEqual({ surface_probes: [] });
+    const withProbe = await handleObserve(
+      sm,
+      { session_id: "aa11", debug_surfaces: true, probe_hover: true },
+      deps,
+    );
+    if ("code" in withProbe) throw new Error(`unexpected error: ${JSON.stringify(withProbe)}`);
+    expect(withProbe.debug).toEqual({ surface_probes: [] });
+    expect(withProbe.hover_probe).toEqual({ performed: true, revealed_content: false });
     expect(send).toHaveBeenCalledWith(
       4,
       "Runtime.evaluate",
@@ -2609,9 +3049,451 @@ describe("handleSnapshot", () => {
       ],
     };
   }
+
+  function secretsSnapshotReply(secrets: {
+    email: string;
+    password: string;
+    otp: string;
+    card: string;
+  }) {
+    const S = [
+      "html",
+      "body",
+      "input",
+      "position",
+      "static",
+      "pointer-events",
+      "auto",
+      "type",
+      "text",
+      "password",
+      "autocomplete",
+      "one-time-code",
+      "cc-number",
+      "value",
+      secrets.email,
+      secrets.password,
+      secrets.otp,
+      secrets.card,
+    ];
+    const i = (s: string) => S.indexOf(s);
+    const style = [i("static"), i("auto"), i("auto")];
+    return {
+      strings: S,
+      documents: [
+        {
+          nodes: {
+            parentIndex: [-1, 0, 1, 1, 1, 1],
+            nodeName: [i("html"), i("body"), i("input"), i("input"), i("input"), i("input")],
+            backendNodeId: [10, 11, 12, 13, 14, 15],
+            attributes: [
+              [],
+              [],
+              [i("type"), i("text"), i("value"), i(secrets.email)],
+              [i("type"), i("password"), i("value"), i(secrets.password)],
+              [
+                i("type"),
+                i("text"),
+                i("autocomplete"),
+                i("one-time-code"),
+                i("value"),
+                i(secrets.otp),
+              ],
+              [
+                i("type"),
+                i("text"),
+                i("autocomplete"),
+                i("cc-number"),
+                i("value"),
+                i(secrets.card),
+              ],
+            ],
+            inputValue: {
+              index: [2, 3, 4, 5],
+              value: [i(secrets.email), i(secrets.password), i(secrets.otp), i(secrets.card)],
+            },
+          },
+          layout: {
+            nodeIndex: [1, 2, 3, 4, 5],
+            styles: [style, style, style, style, style],
+            bounds: [
+              [0, 0, 1000, 800],
+              [10, 10, 200, 32],
+              [10, 50, 200, 32],
+              [10, 90, 200, 32],
+              [10, 130, 200, 32],
+            ],
+            paintOrders: [0, 1, 2, 3, 4],
+          },
+        },
+      ],
+    };
+  }
+
   const VP_METRICS = {
     cssLayoutViewport: { clientWidth: 1000, clientHeight: 800, pageX: 0, pageY: 0 },
   };
+
+  function makeFrameAwareDeps() {
+    const strings = ["html", "body", "iframe", "button", "title", "Remote", "static", "auto"];
+    const i = (value: string) => strings.indexOf(value);
+    const styles = [i("static"), i("auto"), i("auto")];
+    const snapshot = {
+      strings,
+      documents: [
+        {
+          frameId: "main",
+          nodes: {
+            parentIndex: [-1, 0, 1],
+            nodeName: [i("html"), i("body"), i("iframe")],
+            backendNodeId: [10, 11, 12],
+            attributes: [[], [], [i("title"), i("Remote")]],
+            contentDocumentIndex: { index: [2], value: [1] },
+          },
+          layout: {
+            nodeIndex: [0, 1, 2],
+            styles: [styles, styles, styles],
+            bounds: [
+              [0, 0, 1000, 800],
+              [0, 0, 1000, 800],
+              [100, 100, 400, 300],
+            ],
+            paintOrders: [0, 0, 1],
+          },
+        },
+        {
+          frameId: "child",
+          nodes: {
+            parentIndex: [-1, 0, 1],
+            nodeName: [i("html"), i("body"), i("button")],
+            backendNodeId: [20, 21, 22],
+            attributes: [[], [], []],
+          },
+          layout: {
+            nodeIndex: [0, 1, 2],
+            styles: [styles, styles, styles],
+            bounds: [
+              [0, 0, 400, 300],
+              [0, 0, 400, 300],
+              [20, 30, 120, 40],
+            ],
+            paintOrders: [0, 0, 1],
+          },
+        },
+      ],
+    };
+    const mainAx: CdpAxNode[] = [
+      {
+        nodeId: "main-root",
+        role: { type: "role", value: "RootWebArea" },
+        backendDOMNodeId: 11,
+        childIds: ["frame-owner"],
+      },
+      {
+        nodeId: "frame-owner",
+        parentId: "main-root",
+        role: { type: "role", value: "Iframe" },
+        name: { type: "computedString", value: "Remote" },
+        backendDOMNodeId: 12,
+      },
+    ];
+    const childAx: CdpAxNode[] = [
+      {
+        nodeId: "child-root",
+        role: { type: "role", value: "RootWebArea" },
+        backendDOMNodeId: 21,
+        childIds: ["child-button"],
+      },
+      {
+        nodeId: "child-button",
+        parentId: "child-root",
+        role: { type: "role", value: "button" },
+        name: { type: "computedString", value: "Frame action" },
+        backendDOMNodeId: 22,
+      },
+    ];
+    const send = vi.fn(async (_tabId: number, method: string) => {
+      if (method === "Page.getLayoutMetrics") return VP_METRICS;
+      if (method === "DOMSnapshot.enable" || method === "Accessibility.enable") return {};
+      if (method === "DOMSnapshot.captureSnapshot") return snapshot;
+      if (method === "Accessibility.getFullAXTree") return { nodes: mainAx };
+      throw new Error(`unexpected root CDP method ${method}`);
+    });
+    const sendToTarget = vi.fn(async (_target, method: string) => {
+      if (method === "Accessibility.enable") return {};
+      if (method === "Accessibility.getFullAXTree") return { nodes: childAx };
+      throw new Error(`unexpected child CDP method ${method}`);
+    });
+    const cdp = {
+      send: send as unknown as CdpRunner["send"],
+      sendToTarget: sendToTarget as unknown as NonNullable<CdpRunner["sendToTarget"]>,
+      getFrameGraph: vi.fn(async () => ({
+        rootFrameId: "main",
+        frames: [
+          { frameId: "main", target: { tabId: 4 } },
+          {
+            frameId: "child",
+            parentFrameId: "main",
+            ownerBackendNodeId: 12,
+            target: { tabId: 4, sessionId: "child-session" },
+          },
+        ],
+      })),
+      trackSessionTab: vi.fn(),
+    } satisfies CdpRunner;
+    return {
+      cdp,
+      tabsApi: {
+        get: vi.fn(
+          async (tabId: number) => ({ id: tabId, windowId: 100, active: true }) as chrome.tabs.Tab,
+        ),
+        query: vi.fn(async () => [{ id: 4, windowId: 100, active: true } as chrome.tabs.Tab]),
+      },
+    };
+  }
+
+  it("exposes the frame-aware observation result for recording", async () => {
+    const ax: CdpAxNode[] = [
+      {
+        nodeId: "root",
+        role: { type: "role", value: "RootWebArea" },
+        backendDOMNodeId: 11,
+        childIds: ["password"],
+      },
+      {
+        nodeId: "password",
+        parentId: "root",
+        role: { type: "role", value: "textbox" },
+        name: { type: "computedString", value: "Password" },
+        value: { value: "hunter2" },
+        backendDOMNodeId: 13,
+      },
+    ];
+    const deps = makeOverlayDeps(ax, loginSnapshotReply(), VP_METRICS);
+
+    const result = await captureVomObservation(deps.cdp, 4, "https://example.com", {
+      redactValues: true,
+    });
+
+    expect(result.text).not.toContain("hunter2");
+    expect(result.text).toContain("•••");
+    expect(result.refs[0]).toMatchObject({
+      backendNodeId: 13,
+      role: "textbox",
+      name: "Password",
+      line: expect.any(Number),
+    });
+    expect(result.rootFrameId).toBe("root");
+    expect(result).not.toHaveProperty("frameDocuments");
+    expect(result.frames).toEqual([{ frameId: "root", target: { tabId: 4 } }]);
+    expect(result.matchNodes.find((node) => node.backendNodeId === 13)).toMatchObject({
+      frameId: "root",
+      backendNodeId: 13,
+      tag: "input",
+      rect: { x: 400, y: 300, w: 200, h: 40 },
+      localRect: { x: 400, y: 300, w: 200, h: 40 },
+    });
+  });
+
+  it("decorates live observations with active controlled content", async () => {
+    const strings = [
+      "html",
+      "body",
+      "button",
+      "div",
+      "#text",
+      "role",
+      "tab",
+      "aria-selected",
+      "true",
+      "aria-controls",
+      "reviews-panel",
+      "id",
+      "static",
+      "auto",
+      "visible",
+      "1",
+      "A detailed review",
+    ];
+    const index = (value: string) => strings.indexOf(value);
+    const style = [index("static"), index("auto"), index("auto"), index("visible"), index("1")];
+    const snapshot = {
+      strings,
+      documents: [
+        {
+          nodes: {
+            parentIndex: [-1, 0, 1, 1, 3],
+            nodeName: [index("html"), index("body"), index("button"), index("div"), index("#text")],
+            backendNodeId: [10, 11, 12, 13, 14],
+            attributes: [
+              [],
+              [],
+              [
+                index("role"),
+                index("tab"),
+                index("aria-selected"),
+                index("true"),
+                index("aria-controls"),
+                index("reviews-panel"),
+              ],
+              [index("id"), index("reviews-panel")],
+              [],
+            ],
+            nodeValue: [-1, -1, -1, -1, index("A detailed review")],
+          },
+          layout: {
+            nodeIndex: [0, 1, 2, 3, 4],
+            styles: [style, style, style, style, style],
+            bounds: [
+              [0, 0, 1000, 800],
+              [0, 0, 1000, 800],
+              [20, 20, 120, 40],
+              [20, 80, 500, 200],
+              [20, 80, 200, 20],
+            ],
+            paintOrders: [0, 0, 1, 1, 1],
+          },
+        },
+      ],
+    };
+    const ax: CdpAxNode[] = [
+      {
+        nodeId: "root",
+        backendDOMNodeId: 11,
+        role: { type: "role", value: "RootWebArea" },
+        childIds: ["reviews"],
+      },
+      {
+        nodeId: "reviews",
+        parentId: "root",
+        backendDOMNodeId: 12,
+        role: { type: "role", value: "tab" },
+        name: { type: "computedString", value: "Reviews" },
+        properties: [
+          { name: "selected", value: { value: true } },
+          { name: "controls", value: { value: "reviews-panel" } },
+        ],
+      },
+    ];
+
+    const result = await captureVomObservation(
+      makeOverlayDeps(ax, snapshot, VP_METRICS).cdp,
+      4,
+      "https://example.com",
+    );
+
+    expect(result.text).toContain('@e1 tab "Reviews"');
+    expect(result.text).toContain("[§ active: Reviews]");
+    expect(result.text).toContain("A detailed review");
+  });
+
+  it("does not leak form secrets through the record-safe observation payload", async () => {
+    const secrets = {
+      email: "user@example.com",
+      password: "hunter2",
+      otp: "847291",
+      card: "4111111111111111",
+    };
+    const ax: CdpAxNode[] = [
+      {
+        nodeId: "root",
+        role: { type: "role", value: "RootWebArea" },
+        backendDOMNodeId: 11,
+        childIds: ["email", "password", "otp", "card"],
+      },
+      {
+        nodeId: "email",
+        parentId: "root",
+        role: { type: "role", value: "textbox" },
+        name: { type: "computedString", value: "Email" },
+        value: { value: secrets.email },
+        backendDOMNodeId: 12,
+      },
+      {
+        nodeId: "password",
+        parentId: "root",
+        role: { type: "role", value: "textbox" },
+        name: { type: "computedString", value: "Password" },
+        value: { value: secrets.password },
+        backendDOMNodeId: 13,
+      },
+      {
+        nodeId: "otp",
+        parentId: "root",
+        role: { type: "role", value: "textbox" },
+        name: { type: "computedString", value: "Code" },
+        value: { value: secrets.otp },
+        backendDOMNodeId: 14,
+      },
+      {
+        nodeId: "card",
+        parentId: "root",
+        role: { type: "role", value: "textbox" },
+        name: { type: "computedString", value: "Card" },
+        value: { value: secrets.card },
+        backendDOMNodeId: 15,
+      },
+    ];
+    const deps = makeOverlayDeps(ax, secretsSnapshotReply(secrets), VP_METRICS);
+
+    const result = await captureVomObservation(deps.cdp, 4, "https://example.com", {
+      redactValues: true,
+    });
+    const dumped = JSON.stringify(result);
+
+    expect(result).not.toHaveProperty("frameDocuments");
+    expect(dumped).not.toContain(secrets.email);
+    expect(dumped).not.toContain(secrets.password);
+    expect(dumped).not.toContain(secrets.otp);
+    expect(dumped).not.toContain(secrets.card);
+    expect(dumped).not.toContain("formValue");
+    expect(dumped).not.toContain("formDefaultValue");
+    expect(dumped).not.toContain("axNodes");
+    expect(dumped).not.toContain("domNodes");
+    expect(dumped).not.toContain("attrs");
+    expect(result.text).toContain("•••");
+  });
+
+  it("keeps frames and rendered refs on the same frame identity", async () => {
+    const deps = makeFrameAwareDeps();
+
+    const result = await captureVomObservation(deps.cdp, 4, "https://example.com");
+
+    expect(result.rootFrameId).toBe("main");
+    expect(result.frames).toHaveLength(2);
+    expect(result.frames.find((frame) => frame.frameId === "child")).toEqual({
+      frameId: "child",
+      parentFrameId: "main",
+      ownerBackendNodeId: 12,
+      target: { tabId: 4, sessionId: "child-session" },
+    });
+    expect(result.matchNodes.find((node) => node.backendNodeId === 22)).toMatchObject({
+      frameId: "child",
+      tag: "button",
+      localRect: { x: 20, y: 30, w: 120, h: 40 },
+    });
+    expect(result.refs.find((ref) => ref.backendNodeId === 22)).toMatchObject({
+      frameId: "child",
+      name: "Frame action",
+    });
+  });
+
+  it("stores iframe refs with their owning CDP session", async () => {
+    const sm = new SessionManager({ agentWindow: fakeAgentWindow([100]) });
+    const ctx = await sm.start("aa11");
+    const deps = makeFrameAwareDeps();
+
+    const result = await handleSnapshot(sm, { session_id: "aa11" }, deps);
+
+    if ("code" in result) throw new Error(`unexpected error: ${JSON.stringify(result)}`);
+    expect(result.text).toContain('@e1 button "Frame action"');
+    const frameRef = [...ctx.refStore.entries()].find(([, entry]) => entry.backendNodeId === 22);
+    expect(frameRef?.[1]).toMatchObject({
+      tabId: 4,
+      frameId: "child",
+      cdpSessionId: "child-session",
+    });
+  });
 
   it("renders a blocking login overlay as the focused top layer", async () => {
     const sm = new SessionManager({ agentWindow: fakeAgentWindow([100]) });
@@ -3121,6 +4003,32 @@ describe("handleGetHtml", () => {
     expect(res.html).toBe("<button>x</button>");
     // Never called DOM.getDocument when ref is provided.
     expect(deps.send).toHaveBeenCalledTimes(1);
+  });
+
+  it("reads a frame ref through its child CDP session", async () => {
+    const sm = new SessionManager({ agentWindow: fakeAgentWindow([100]) });
+    const ctx = await sm.start("aa11");
+    ctx.refStore.set("e7", 4242, {
+      tabId: 4,
+      frameId: "child-frame",
+      cdpSessionId: "child-session",
+    });
+    const deps = makeDeps({});
+    const sendToTarget = vi.fn(async (target, method, params) => {
+      expect(target).toEqual({ tabId: 4, sessionId: "child-session" });
+      expect(method).toBe("DOM.getOuterHTML");
+      expect(params).toEqual({ backendNodeId: 4242 });
+      return { outerHTML: "<button>frame</button>" };
+    });
+    (deps.cdp as CdpRunner).sendToTarget = sendToTarget as unknown as NonNullable<
+      CdpRunner["sendToTarget"]
+    >;
+
+    const res = await handleGetHtml(sm, { session_id: "aa11", ref: "@e7" }, deps);
+
+    if ("code" in res) throw new Error(`unexpected error: ${JSON.stringify(res)}`);
+    expect(res.html).toBe("<button>frame</button>");
+    expect(deps.send).not.toHaveBeenCalled();
   });
 
   it("returns not_found when a ref belongs to another tab", async () => {

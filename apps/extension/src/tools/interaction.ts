@@ -3,14 +3,15 @@
 //
 // All interaction tools:
 // 1. Resolve target tab (sandbox: must be inside Agent Window).
-// 2. Resolve target element by `ref` (RefStore.resolve with tabId
-//    binding) or `selector` (DOM.querySelector + describeNode).
-// 3. Scroll the node into view, then dispatch the appropriate
-//    `Input.*` CDP events.
+// 2. Resolve target element by `ref` (compound frame/session identity)
+//    or `selector` (DOM.querySelector + describeNode).
+// 3. Scroll the node and its frame owners into view, project its live
+//    content quad into the top viewport, then dispatch `Input.*` events.
 // 4. Honour `AbortSignal` so canceled calls don't issue follow-up CDP
 //    commands.
 
 import { ChromiumCdp } from "@/browser-driver/chromium-cdp";
+import type { CdpTarget } from "@/browser-driver/frame-graph";
 import type { SessionContext, SessionManager } from "@/session-manager/manager";
 import type {
   ClickParams,
@@ -28,21 +29,18 @@ import type {
   SelectResult,
 } from "@/transport/types";
 import { attachDialogs, markDialogCursor } from "./dialogs";
-import {
-  backendNodeToObject,
-  boxCentre,
-  nodeCentre,
-  quadCentre,
-  scrollNodeIntoView,
-} from "./element-geometry";
+import { backendNodeToObject } from "./element-geometry";
 import { rpcError } from "./errors";
+import { resolveNodeGeometry, scrollElementAndFramesIntoView } from "./frame-geometry";
 import {
   type CdpRunner,
   type ChromeTabsApi,
+  cdpRunnerForTarget,
   chromeTabsApi,
   enforceAgentWindow,
   isRpcError,
   lookupSession,
+  type ResolvedTargetTab,
   resolveTargetTab,
 } from "./shared";
 import { resolveSnapshotRef } from "./snapshot-ref";
@@ -57,6 +55,15 @@ export interface InteractionDeps {
   bypassOverlay?: (tabId: number, enabled: boolean) => Promise<void>;
   /** Keep hover hit-testing active for the caller's next observation/action. */
   keepOverlayBypassAfterHover?: boolean;
+}
+
+export interface ResolvedActionTarget {
+  tab: ResolvedTargetTab;
+  backendNodeId: number;
+  cdpTarget: CdpTarget;
+  frameId?: string;
+  usedRef?: string;
+  usedSelector?: string;
 }
 
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -131,13 +138,22 @@ async function wait(ms: number, signal?: AbortSignal): Promise<void> {
  * `RpcError` if the caller supplied neither (or both), or if neither
  * lookup matched.
  */
-async function resolveBackendNode(
+export async function resolveBackendNode(
   cdp: CdpRunner,
   ctx: SessionContext,
   target: { tabId: number },
   params: { ref?: string; selector?: string },
   toolName: string,
-): Promise<{ backendNodeId: number; usedRef?: string; usedSelector?: string } | RpcError> {
+): Promise<
+  | {
+      backendNodeId: number;
+      cdpTarget: CdpTarget;
+      frameId?: string;
+      usedRef?: string;
+      usedSelector?: string;
+    }
+  | RpcError
+> {
   const hasRef = typeof params.ref === "string" && params.ref.length > 0;
   const hasSelector = typeof params.selector === "string" && params.selector.length > 0;
   if (hasRef && hasSelector) {
@@ -155,7 +171,15 @@ async function resolveBackendNode(
   if (hasRef) {
     const resolved = resolveSnapshotRef(ctx, params.ref as string, target.tabId);
     if (isRpcError(resolved)) return resolved;
-    return { backendNodeId: resolved.backendNodeId, usedRef: resolved.refKey };
+    return {
+      backendNodeId: resolved.backendNodeId,
+      cdpTarget: {
+        tabId: target.tabId,
+        ...(resolved.cdpSessionId ? { sessionId: resolved.cdpSessionId } : {}),
+      },
+      ...(resolved.frameId ? { frameId: resolved.frameId } : {}),
+      usedRef: resolved.refKey,
+    };
   }
   // selector path
   try {
@@ -192,13 +216,24 @@ async function resolveBackendNode(
         message: "DOM.describeNode returned no backendNodeId",
       };
     }
-    return { backendNodeId, usedSelector: params.selector };
+    return { backendNodeId, cdpTarget: { tabId: target.tabId }, usedSelector: params.selector };
   } catch (err) {
     return {
       code: "cdp_failed",
       message: err instanceof Error ? err.message : String(err),
     };
   }
+}
+
+export async function resolveActionTarget(
+  cdp: CdpRunner,
+  ctx: SessionContext,
+  target: ResolvedTargetTab,
+  params: { ref?: string; selector?: string },
+  toolName: string,
+): Promise<ResolvedActionTarget | RpcError> {
+  const node = await resolveBackendNode(cdp, ctx, target, params, toolName);
+  return isRpcError(node) ? node : { tab: target, ...node };
 }
 
 // ---------------------------------------------------------------------------
@@ -219,28 +254,37 @@ export async function handleClick(
   if (isRpcError(target)) return target;
   const denied = enforceAgentWindow(ctx, target, "click");
   if (denied) return denied;
-  const dialogCursor = markDialogCursor(deps.cdp, target.tabId);
+  const resolved = await resolveActionTarget(deps.cdp, ctx, target, params, "click");
+  if (isRpcError(resolved)) return resolved;
+  return clickResolvedTarget(ctx, resolved, params, deps);
+}
 
-  const node = await resolveBackendNode(deps.cdp, ctx, target, params, "click");
-  if (isRpcError(node)) return node;
+export async function clickResolvedTarget(
+  ctx: SessionContext,
+  resolved: ResolvedActionTarget,
+  params: Pick<ClickParams, "button" | "click_count" | "modifiers">,
+  deps: InteractionDeps,
+): Promise<ClickResult | RpcError> {
+  const { tab: target } = resolved;
+  const dialogCursor = markDialogCursor(deps.cdp, target.tabId);
 
   if (throwIfAborted(deps.signal)) {
     return { code: "cancelled", message: "click aborted" };
   }
 
-  try {
-    deps.cdp.trackSessionTab?.(ctx.sessionId, target.tabId);
-    const scrollErr = await scrollNodeIntoView(deps.cdp, target.tabId, node.backendNodeId);
-    if (scrollErr) return scrollErr;
-  } catch (err) {
-    return {
-      code: "cdp_failed",
-      message: err instanceof Error ? err.message : String(err),
-    };
-  }
-
-  const centre = await nodeCentre(deps.cdp, target.tabId, node.backendNodeId);
-  if (isRpcError(centre)) return centre;
+  deps.cdp.trackSessionTab?.(ctx.sessionId, target.tabId);
+  const geometry = await resolveNodeGeometry(
+    deps.cdp,
+    target.tabId,
+    {
+      target: resolved.cdpTarget,
+      backendNodeId: resolved.backendNodeId,
+      ...(resolved.frameId ? { frameId: resolved.frameId } : {}),
+    },
+    { scrollIntoView: true },
+  );
+  if (isRpcError(geometry)) return geometry;
+  const centre = geometry.actionPoint;
 
   if (throwIfAborted(deps.signal)) {
     return { code: "cancelled", message: "click aborted" };
@@ -323,8 +367,8 @@ export async function handleClick(
 
   return attachDialogs(deps.cdp, target.tabId, dialogCursor, {
     tab_id: target.tabId,
-    used_ref: node.usedRef,
-    used_selector: node.usedSelector,
+    used_ref: resolved.usedRef,
+    used_selector: resolved.usedSelector,
     x: centre.x,
     y: centre.y,
   });
@@ -353,19 +397,19 @@ export async function handleHover(
   const node = await resolveBackendNode(deps.cdp, ctx, target, params, "hover");
   if (isRpcError(node)) return node;
 
-  try {
-    deps.cdp.trackSessionTab?.(ctx.sessionId, target.tabId);
-    const scrollErr = await scrollNodeIntoView(deps.cdp, target.tabId, node.backendNodeId);
-    if (scrollErr) return scrollErr;
-  } catch (err) {
-    return {
-      code: "cdp_failed",
-      message: err instanceof Error ? err.message : String(err),
-    };
-  }
-
-  const centre = await nodeCentre(deps.cdp, target.tabId, node.backendNodeId);
-  if (isRpcError(centre)) return centre;
+  deps.cdp.trackSessionTab?.(ctx.sessionId, target.tabId);
+  const geometry = await resolveNodeGeometry(
+    deps.cdp,
+    target.tabId,
+    {
+      target: node.cdpTarget,
+      backendNodeId: node.backendNodeId,
+      ...(node.frameId ? { frameId: node.frameId } : {}),
+    },
+    { scrollIntoView: true },
+  );
+  if (isRpcError(geometry)) return geometry;
+  const centre = geometry.actionPoint;
 
   if (throwIfAborted(deps.signal)) {
     return { code: "cancelled", message: "hover aborted" };
@@ -585,10 +629,11 @@ export async function handleFill(
 
   const node = await resolveBackendNode(deps.cdp, ctx, target, params, "fill");
   if (isRpcError(node)) return node;
+  const nodeCdp = cdpRunnerForTarget(deps.cdp, node.cdpTarget);
 
   try {
     deps.cdp.trackSessionTab?.(ctx.sessionId, target.tabId);
-    const described = await deps.cdp.send<{ node?: DescribedNode }>(
+    const described = await nodeCdp.send<{ node?: DescribedNode }>(
       target.tabId,
       "DOM.describeNode",
       {
@@ -602,12 +647,18 @@ export async function handleFill(
         `element ${described.node?.nodeName ?? "?"} not fillable (need input/textarea/contenteditable)`,
       );
     }
-    const scrollErr = await scrollNodeIntoView(deps.cdp, target.tabId, node.backendNodeId);
+    const scrollErr = await scrollElementAndFramesIntoView(
+      deps.cdp,
+      target.tabId,
+      node.cdpTarget,
+      node.backendNodeId,
+      node.frameId,
+    );
     if (scrollErr) return scrollErr;
     if (throwIfAborted(deps.signal)) {
       return { code: "cancelled", message: "fill aborted" };
     }
-    await deps.cdp.send(target.tabId, "DOM.focus", { backendNodeId: node.backendNodeId });
+    await nodeCdp.send(target.tabId, "DOM.focus", { backendNodeId: node.backendNodeId });
   } catch (err) {
     return {
       code: "cdp_failed",
@@ -619,7 +670,7 @@ export async function handleFill(
     return { code: "cancelled", message: "fill aborted" };
   }
 
-  const objectIdOrErr = await backendNodeToObject(deps.cdp, target.tabId, node.backendNodeId);
+  const objectIdOrErr = await backendNodeToObject(nodeCdp, target.tabId, node.backendNodeId);
   if (isRpcError(objectIdOrErr)) return objectIdOrErr;
   const objectId = objectIdOrErr;
   const clearBefore = params.clear_before ?? true;
@@ -628,7 +679,7 @@ export async function handleFill(
     if (clearBefore) {
       // Clear input/textarea value or wipe contenteditable innerText,
       // then fire `input` so frameworks observe the empty state.
-      await deps.cdp.send(target.tabId, "Runtime.callFunctionOn", {
+      await nodeCdp.send(target.tabId, "Runtime.callFunctionOn", {
         objectId,
         functionDeclaration: `function() {
           if (this.isContentEditable) { this.textContent = ''; }
@@ -655,7 +706,7 @@ export async function handleFill(
       return { code: "cancelled", message: "fill aborted" };
     }
     // Fire `input` + `change` so React / Vue controlled inputs commit.
-    await deps.cdp.send(target.tabId, "Runtime.callFunctionOn", {
+    await nodeCdp.send(target.tabId, "Runtime.callFunctionOn", {
       objectId,
       functionDeclaration: `function() {
         this.dispatchEvent(new Event('input', { bubbles: true }));
@@ -853,14 +904,21 @@ export async function handlePress(
   if (params.ref || params.selector) {
     const node = await resolveBackendNode(deps.cdp, ctx, target, params, "press");
     if (isRpcError(node)) return node;
+    const nodeCdp = cdpRunnerForTarget(deps.cdp, node.cdpTarget);
     try {
       deps.cdp.trackSessionTab?.(ctx.sessionId, target.tabId);
-      const scrollErr = await scrollNodeIntoView(deps.cdp, target.tabId, node.backendNodeId);
+      const scrollErr = await scrollElementAndFramesIntoView(
+        deps.cdp,
+        target.tabId,
+        node.cdpTarget,
+        node.backendNodeId,
+        node.frameId,
+      );
       if (scrollErr) return scrollErr;
       if (throwIfAborted(deps.signal)) {
         return { code: "cancelled", message: "press aborted" };
       }
-      await deps.cdp.send(target.tabId, "DOM.focus", { backendNodeId: node.backendNodeId });
+      await nodeCdp.send(target.tabId, "DOM.focus", { backendNodeId: node.backendNodeId });
     } catch (err) {
       return {
         code: "cdp_failed",
@@ -965,10 +1023,11 @@ export async function handleSelect(
 
   const node = await resolveBackendNode(deps.cdp, ctx, target, params, "select");
   if (isRpcError(node)) return node;
+  const nodeCdp = cdpRunnerForTarget(deps.cdp, node.cdpTarget);
 
   try {
     deps.cdp.trackSessionTab?.(ctx.sessionId, target.tabId);
-    const described = await deps.cdp.send<{ node?: DescribedNode }>(
+    const described = await nodeCdp.send<{ node?: DescribedNode }>(
       target.tabId,
       "DOM.describeNode",
       { backendNodeId: node.backendNodeId },
@@ -991,12 +1050,18 @@ export async function handleSelect(
         "single-select <select> requires exactly one value",
       );
     }
-    const scrollErr = await scrollNodeIntoView(deps.cdp, target.tabId, node.backendNodeId);
+    const scrollErr = await scrollElementAndFramesIntoView(
+      deps.cdp,
+      target.tabId,
+      node.cdpTarget,
+      node.backendNodeId,
+      node.frameId,
+    );
     if (scrollErr) return scrollErr;
     if (throwIfAborted(deps.signal)) {
       return { code: "cancelled", message: "select aborted" };
     }
-    await deps.cdp.send(target.tabId, "DOM.focus", { backendNodeId: node.backendNodeId });
+    await nodeCdp.send(target.tabId, "DOM.focus", { backendNodeId: node.backendNodeId });
   } catch (err) {
     return {
       code: "cdp_failed",
@@ -1008,12 +1073,12 @@ export async function handleSelect(
     return { code: "cancelled", message: "select aborted" };
   }
 
-  const objectIdOrErr = await backendNodeToObject(deps.cdp, target.tabId, node.backendNodeId);
+  const objectIdOrErr = await backendNodeToObject(nodeCdp, target.tabId, node.backendNodeId);
   if (isRpcError(objectIdOrErr)) return objectIdOrErr;
   const objectId = objectIdOrErr;
 
   try {
-    const evaluated = await deps.cdp.send<{
+    const evaluated = await nodeCdp.send<{
       result?: { value?: SelectMutationResult | null };
     }>(target.tabId, "Runtime.callFunctionOn", {
       objectId,
@@ -1072,9 +1137,6 @@ export async function handleSelect(
 
 export const __testing__ = {
   DEFAULT_TIMEOUT_MS,
-  quadCentre,
-  boxCentre,
   resolveBackendNode,
-  nodeCentre,
   isFillable,
 };

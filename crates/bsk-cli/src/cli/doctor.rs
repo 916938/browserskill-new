@@ -18,6 +18,12 @@ use crate::daemon::state::PROTOCOL_VERSION;
 const EXTENSION_STORE_URL: &str =
     "https://chromewebstore.google.com/detail/hhcmgoofomhgciiibhipgmgkgnoenaoi";
 
+/// Edge Add-ons listing for the browser-skill extension.
+const EXTENSION_STORE_URL_EDGE: &str = "https://microsoftedge.microsoft.com/addons/detail/browserskill/emacgiaaaiojkkpkddmmdfhmokgmnikg";
+
+/// Store listings highlighted in repair hints, in the order they appear.
+const EXTENSION_STORE_URLS: [&str; 2] = [EXTENSION_STORE_URL, EXTENSION_STORE_URL_EDGE];
+
 /// Status of a single doctor check. `Ok` / `Fail` are the legacy two
 /// states; `NotApplicable` (review M2) is reported as "N/A" in human
 /// output and as `"status": "na"` in `--json` output, so a check that
@@ -345,10 +351,10 @@ fn check_version_compatible(status: Option<&StatusResult>) -> CheckResult {
     }
 }
 
-/// `bsk doctor` check: every connected browser should use the same
-/// protocol version as the daemon. Minor protocol drift is accepted by
-/// the daemon but flagged here so the user can see who needs updating
-/// (M10.4).
+/// `bsk doctor` check: connected browsers should speak a protocol the
+/// daemon accepts. A different protocol string is still a live
+/// connection — report Ok so agents keep working. The detail is an
+/// upgrade reminder, not a blocker.
 ///
 /// Review M2 (round-1 minor): when no browsers are connected, the
 /// check has nothing to compare against, so it now reports
@@ -390,13 +396,12 @@ fn check_browsers_protocol_compatible(status: Option<&StatusResult>) -> CheckRes
         })
         .collect::<Vec<_>>()
         .join(", ");
-    CheckResult::fail(
+    CheckResult::ok(
         name,
         format!(
-            "{} browser(s) have protocol minor drift from the daemon: {stale}",
+            "{} browser(s) report a different protocol version (still usable — continue, and upgrade soon): {stale}",
             status.version_skew_browsers.len()
         ),
-        "upgrade the browser-skill extension or bsk CLI so both sides use the same protocol version",
     )
 }
 
@@ -420,7 +425,10 @@ fn check_extension_connected(status: Option<&StatusResult>) -> CheckResult {
         CheckResult::fail(
             name,
             "0 browsers connected",
-            format!("install the extension from {EXTENSION_STORE_URL} and load it in Chromium"),
+            format!(
+                "install the extension from {EXTENSION_STORE_URL} (Chrome) \
+                 or {EXTENSION_STORE_URL_EDGE} (Edge) and load it in the browser"
+            ),
         )
     }
 }
@@ -428,17 +436,14 @@ fn check_extension_connected(status: Option<&StatusResult>) -> CheckResult {
 /// Highlight known URLs in repair hints for terminal output. Plain
 /// text is preserved in `--json` and in stored [`CheckResult::hint`].
 fn style_hint(hint: &str) -> String {
-    if !hint.contains(EXTENSION_STORE_URL) {
-        return hint.to_string();
+    let mut styled = hint.to_string();
+    for url in EXTENSION_STORE_URLS {
+        if !styled.contains(url) {
+            continue;
+        }
+        styled = styled.replace(url, &style(url).cyan().bold().underlined().to_string());
     }
-    hint.replace(
-        EXTENSION_STORE_URL,
-        &style(EXTENSION_STORE_URL)
-            .cyan()
-            .bold()
-            .underlined()
-            .to_string(),
-    )
+    styled
 }
 
 fn render_human(checks: &[CheckResult]) {
@@ -504,6 +509,26 @@ mod m2_tests {
             hint.contains(EXTENSION_STORE_URL),
             "hint should include Chrome Web Store URL: {hint}"
         );
+        assert!(
+            hint.contains(EXTENSION_STORE_URL_EDGE),
+            "hint should include Edge Add-ons URL: {hint}"
+        );
+    }
+
+    #[test]
+    fn style_hint_preserves_every_store_url() {
+        let hint = check_extension_connected(Some(&fake_status(Vec::new(), Vec::new())))
+            .hint
+            .expect("extension disconnected should include a hint");
+        let styled = style_hint(&hint);
+        // Whether or not the terminal accepts colors, styling must never drop or
+        // mangle a URL the user has to click.
+        for url in EXTENSION_STORE_URLS {
+            assert!(
+                styled.contains(url),
+                "styled hint should still contain {url}: {styled}"
+            );
+        }
     }
 
     #[test]
@@ -555,7 +580,7 @@ mod m2_tests {
     }
 
     #[test]
-    fn browsers_check_reports_fail_when_skew_present() {
+    fn browsers_check_reports_ok_when_skew_present() {
         let status = fake_status(
             vec![BrowserStatusEntry {
                 instance_id: "alpha".into(),
@@ -579,9 +604,17 @@ mod m2_tests {
             }],
         );
         let check = check_browsers_protocol_compatible(Some(&status));
-        assert_eq!(check.status, CheckStatus::Fail);
+        assert_eq!(check.status, CheckStatus::Ok);
         assert!(check.detail.contains("alpha"));
-        assert!(check.hint.is_some());
+        assert!(
+            check
+                .detail
+                .contains("still usable — continue, and upgrade soon")
+        );
+        assert!(
+            check.hint.is_none(),
+            "a protocol-version note must not hint to stop"
+        );
     }
 
     #[test]
@@ -609,7 +642,7 @@ mod m2_tests {
             }],
         );
         let check = check_browsers_protocol_compatible(Some(&status));
-        assert_eq!(check.status, CheckStatus::Fail);
+        assert_eq!(check.status, CheckStatus::Ok);
         assert!(
             check
                 .detail

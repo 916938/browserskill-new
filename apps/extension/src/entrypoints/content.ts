@@ -7,14 +7,10 @@ import { BorrowConfirmationOverlay } from "@/content/BorrowConfirmationOverlay";
 import { ControlOverlay } from "@/content/ControlOverlay";
 import { createCaptureSuppressController } from "@/content/capture-suppress";
 import { HelpRequestOverlay } from "@/content/HelpRequestOverlay";
+import { createHelpRequestData } from "@/content/help-request";
 import overlayCss from "@/content/overlay.css?inline";
 import { OverlayController, shouldShowAgentControlOverlay } from "@/content/overlay-controller";
 import { RecordOverlay } from "@/content/RecordOverlay";
-import {
-  handleRecordContentMessage,
-  isRecordContentMessage,
-  type RecordCaptureController,
-} from "@/content/record-capture";
 import {
   type CaptureSuppressAck,
   type CaptureSuppressMessage,
@@ -44,11 +40,17 @@ import {
 } from "@/lib/overlay-bridge";
 import { sendInterrupt } from "@/lib/overlay-interrupt-client";
 import {
+  isRecordCancelMessage,
+  isRecordStartMessage,
+  isRecordStopMessage,
   RECORD_FINISH,
   RECORD_QUERY,
+  type RecordCancelMessage,
   type RecordQueryResponse,
   type RecordStartAck,
+  type RecordStartMessage,
   type RecordStopAck,
+  type RecordStopMessage,
 } from "@/lib/record-bridge";
 import type {
   BorrowCancelMessage,
@@ -68,7 +70,6 @@ export default defineContentScript({
     if (window.top !== window) return;
 
     const overlays = new OverlayController();
-    let recordCapture: RecordCaptureController | null = null;
     let activeRecordRequestId: string | null = null;
     let reactRoot: ReactDOM.Root | null = null;
     let overlayHost: HTMLElement | null = null;
@@ -227,8 +228,6 @@ export default defineContentScript({
       if (previousHelp) {
         void sendHelpFinish(previousHelp.id, "cancelled");
       }
-      recordCapture?.dispose();
-      recordCapture = null;
       activeRecordRequestId = null;
       renderAll();
     }
@@ -258,6 +257,9 @@ export default defineContentScript({
         | HelpRequestMessage
         | HelpCancelMessage
         | CaptureSuppressMessage
+        | RecordStartMessage
+        | RecordStopMessage
+        | RecordCancelMessage
         | OverlayAgentOverlayResetMessage
         | OverlayAgentStateMessage
         | OverlayAutomationBypassMessage,
@@ -268,41 +270,32 @@ export default defineContentScript({
         return captureSuppress.handleMessage(message, sendResponse);
       }
 
-      if (isRecordContentMessage(message)) {
-        const needsAsync = handleRecordContentMessage(
-          message,
-          {
-            activeRequestId: activeRecordRequestId,
-            capture: recordCapture,
-            setActiveRequestId: (id) => {
-              activeRecordRequestId = id;
-            },
-            setCapture: (capture) => {
-              recordCapture = capture;
-            },
-            onStart: (requestId, startedAtMs) => {
-              overlays.setAgentRecordRequest({
-                id: requestId,
-                ...(typeof startedAtMs === "number" ? { startedAtMs } : {}),
-                onFinish: () => {
-                  void chrome.runtime.sendMessage({
-                    type: RECORD_FINISH,
-                    requestId,
-                  });
-                },
-              });
-              renderAll();
-            },
-            onStop: () => {
-              overlays.clearAgentRecordRequest(activeRecordRequestId ?? undefined);
-              renderAll();
-            },
+      if (isRecordStartMessage(message)) {
+        activeRecordRequestId = message.requestId;
+        overlays.setAgentRecordRequest({
+          id: message.requestId,
+          ...(typeof message.startedAtMs === "number" ? { startedAtMs: message.startedAtMs } : {}),
+          onFinish: () => {
+            void chrome.runtime.sendMessage({
+              type: RECORD_FINISH,
+              requestId: message.requestId,
+            });
           },
-          sendResponse as unknown as
-            | ((response: RecordStartAck | RecordStopAck) => void)
-            | undefined,
-        );
-        return needsAsync;
+        });
+        renderAll();
+        (sendResponse as unknown as (response: RecordStartAck) => void)({ ok: true });
+        return false;
+      }
+
+      if (isRecordStopMessage(message) || isRecordCancelMessage(message)) {
+        if (activeRecordRequestId !== message.requestId) return false;
+        overlays.clearAgentRecordRequest(message.requestId);
+        activeRecordRequestId = null;
+        renderAll();
+        if (isRecordStopMessage(message)) {
+          (sendResponse as unknown as (response: RecordStopAck) => void)({ ok: true });
+        }
+        return false;
       }
 
       if (
@@ -344,16 +337,7 @@ export default defineContentScript({
 
       if (isHelpRequestMessage(message)) {
         const helpMsg = message as HelpRequestMessage;
-        const previousHelp = overlays.setAgentHelpRequest({
-          id: helpMsg.requestId,
-          prompt: helpMsg.prompt,
-          ...(helpMsg.title ? { title: helpMsg.title } : {}),
-          ...(helpMsg.displayMode ? { displayMode: helpMsg.displayMode } : {}),
-          selectors: helpMsg.selectors,
-          onContinue: (note: string) =>
-            void sendHelpFinish(helpMsg.requestId, "continued", note.trim() ? note : undefined),
-          onCancel: () => void sendHelpFinish(helpMsg.requestId, "cancelled"),
-        });
+        const previousHelp = mountHelpRequest(helpMsg);
         if (previousHelp && previousHelp.id !== helpMsg.requestId) {
           void sendHelpFinish(previousHelp.id, "cancelled");
         }
@@ -406,17 +390,18 @@ export default defineContentScript({
       });
     }
 
-    function mountHelpRequest(helpMsg: Omit<HelpRequestMessage, "type">): void {
-      overlays.setAgentHelpRequest({
-        id: helpMsg.requestId,
-        prompt: helpMsg.prompt,
-        ...(helpMsg.title ? { title: helpMsg.title } : {}),
-        ...(helpMsg.displayMode ? { displayMode: helpMsg.displayMode } : {}),
-        selectors: helpMsg.selectors,
-        onContinue: (note: string) =>
-          void sendHelpFinish(helpMsg.requestId, "continued", note.trim() ? note : undefined),
-        onCancel: () => void sendHelpFinish(helpMsg.requestId, "cancelled"),
-      });
+    function mountHelpRequest(helpMsg: Omit<HelpRequestMessage, "type">) {
+      return overlays.setAgentHelpRequest(
+        createHelpRequestData(helpMsg, {
+          finish: (requestId, outcome, note) => {
+            void sendHelpFinish(requestId, outcome, note);
+          },
+          query: () =>
+            chrome.runtime.sendMessage({ type: HELP_QUERY }) as Promise<
+              HelpQueryResponse | undefined
+            >,
+        }),
+      );
     }
 
     async function queryActiveHelpWithRetry(): Promise<void> {
@@ -533,9 +518,6 @@ export default defineContentScript({
       chrome.runtime.onMessage.removeListener(onMessage);
       chrome.storage.onChanged.removeListener(onStorageChange);
       window.removeEventListener("pageshow", onPageShow);
-      // Restore history hooks / remove capture listeners before the CS unloads.
-      recordCapture?.dispose();
-      recordCapture = null;
       activeRecordRequestId = null;
     });
   },

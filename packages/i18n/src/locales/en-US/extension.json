@@ -6,27 +6,27 @@
       "disconnected": "Disconnected",
       "connecting": "Connecting…",
       "connected": "Connected",
-      "version_skew": "Protocol mismatch",
+      "version_skew": "Connected",
       "disabled": "Connection off"
     },
     "stateDetail": {
       "disconnected": "Open BrowserSkill to connect.",
       "connecting": "Connecting to BrowserSkill…",
       "connected": "Ready for automation tasks.",
-      "version_skew": "Some features may be unavailable."
+      "version_skew": "Protocol versions differ. Please upgrade."
     },
     "stateBadge": {
       "disconnected": "Standby",
       "connecting": "Igniting",
       "connected": "Ready",
-      "version_skew": "Action needed",
+      "version_skew": "Upgradable",
       "disabled": "Off"
     },
     "connectionToggleTitle": "BrowserSkill connection",
     "controlHintsToggleTitle": "Control hints",
     "controlHintsToggleHint": "Show the status pill and orange glow while the Agent controls a page.",
     "controlHintsInfoLabel": "About control hints",
-    "versionSkewWarning": "Extension protocol v{{extensionProtocol}}, daemon v{{daemonProtocol}}.",
+    "versionSkewWarning": "Extension protocol v{{extensionProtocol}}, CLI protocol v{{cliProtocol}}. Protocol versions differ — please upgrade.",
     "upgradeAvailable": "Upgradable",
     "launcher": {
       "title": "Quick actions"
@@ -57,7 +57,7 @@
     "record": {
       "sectionTitle": "Action recording",
       "cardDesc": "Record your actions for Agent reference",
-      "sectionHint": "Generates a recording instruction — send it to your Agent to start recording your actions; the Agent can then use the recording to automate similar tasks.",
+      "sectionHint": "Generates a recording instruction — send it to your Agent to start recording your actions; the Agent can then use the resulting trace bundle to automate similar tasks.",
       "topicLabel": "Topic (optional)",
       "topicPlaceholder": "e.g. Publish an article",
       "startUrlLabel": "Starting URL (optional)",
@@ -65,7 +65,7 @@
       "copyButton": "Copy recording instructions",
       "copied": "Copied",
       "hintDisconnected": "Available when connected",
-      "promptTemplate": "Use BrowserSkill's `bsk` CLI to record the browser actions I'm about to demonstrate.\n\nSteps:\n1. Run: {{command}}\n2. Once you confirm it's started, I'll operate in the opened window myself.\n3. After I click Finish, read the returned trace.json and summarize the actions (pages + steps); don't re-run or \"verify\"."
+      "promptTemplate": "Use BrowserSkill's `bsk` CLI to record the browser actions I'm about to demonstrate.\n\nSteps:\n1. Run: {{command}}\n2. Once you confirm it's started, I'll operate in the opened window myself.\n3. After I click Finish, read the written `./trace` bundle (`trace.json` + `states/`) and summarize what I did."
     },
     "templates": {
       "sectionTitle": "Profile Templates",

@@ -24,7 +24,90 @@ function scene(nodes: VomNode[]): VomScene {
   };
 }
 
+function coreRefs(refs: ReturnType<typeof renderVom>["refs"]) {
+  return refs.map(({ ref, backendNodeId }) => ({ ref, backendNodeId }));
+}
+
 describe("renderVom single-layer page", () => {
+  it("does not derive handle context across frame scopes", () => {
+    const out = renderVom(
+      scene([
+        node({
+          id: 1,
+          role: "RootWebArea",
+          frameId: "main",
+          contextScopeId: "main",
+        }),
+        node({
+          id: 2,
+          parentId: 1,
+          role: "StaticText",
+          name: "创建于",
+          frameId: "main",
+          contextScopeId: "main",
+        }),
+        node({
+          id: 3,
+          parentId: 1,
+          role: "Iframe",
+          frameId: "main",
+          contextScopeId: "main",
+        }),
+        node({
+          id: 4,
+          parentId: 3,
+          role: "button",
+          name: "表格视图",
+          frameId: "child",
+          contextScopeId: "child",
+        }),
+        node({
+          id: 5,
+          parentId: 1,
+          role: "button",
+          name: "表格视图",
+          frameId: "main",
+          contextScopeId: "main",
+        }),
+      ]),
+    );
+
+    expect(out.text).toContain('@e1 button "表格视图"');
+    expect(out.text).not.toContain('@e1 button "表格视图" [ctx: 创建于]');
+  });
+
+  it("preserves handle context within a frame scope", () => {
+    const out = renderVom(
+      scene([
+        node({ id: 1, role: "RootWebArea", contextScopeId: "main" }),
+        node({ id: 2, parentId: 1, role: "Iframe", contextScopeId: "main" }),
+        node({
+          id: 3,
+          parentId: 2,
+          role: "StaticText",
+          name: "工具栏",
+          contextScopeId: "child",
+        }),
+        node({
+          id: 4,
+          parentId: 2,
+          role: "button",
+          name: "更多",
+          contextScopeId: "child",
+        }),
+        node({
+          id: 5,
+          parentId: 1,
+          role: "button",
+          name: "更多",
+          contextScopeId: "main",
+        }),
+      ]),
+    );
+
+    expect(out.text).toContain('@e1 button "更多" [ctx: 工具栏]');
+  });
+
   it("always emits a complete @vom single-layer document when there is no blocker", () => {
     const out = renderVom(
       scene([
@@ -51,7 +134,7 @@ describe("renderVom single-layer page", () => {
         '      @e2 button "加入购物车"',
       ].join("\n"),
     );
-    expect(out.refs).toEqual([
+    expect(coreRefs(out.refs)).toEqual([
       { ref: "e1", backendNodeId: 3 },
       { ref: "e2", backendNodeId: 6 },
     ]);
@@ -72,7 +155,7 @@ describe("renderVom single-layer page", () => {
     expect(out.text).toContain('    heading "Title"');
     expect(out.text).toContain('    img "Logo"');
     expect(out.text).toContain('    @e1 button "Continue"');
-    expect(out.refs).toEqual([{ ref: "e1", backendNodeId: 4 }]);
+    expect(coreRefs(out.refs)).toEqual([{ ref: "e1", backendNodeId: 4 }]);
   });
 
   it("assigns refs to listbox controls", () => {
@@ -84,7 +167,7 @@ describe("renderVom single-layer page", () => {
     );
 
     expect(out.text).toContain('    @e1 listbox "Choices"');
-    expect(out.refs).toEqual([{ ref: "e1", backendNodeId: 2 }]);
+    expect(coreRefs(out.refs)).toEqual([{ ref: "e1", backendNodeId: 2 }]);
   });
 
   it("annotates external links regardless of role casing", () => {
@@ -121,7 +204,7 @@ describe("renderVom single-layer page", () => {
     expect(out.text).toContain("    alertdialog");
     expect(out.text).toContain("      section");
     expect(out.text).toContain('        @e1 button "Close"');
-    expect(out.refs).toEqual([{ ref: "e1", backendNodeId: 5 }]);
+    expect(coreRefs(out.refs)).toEqual([{ ref: "e1", backendNodeId: 5 }]);
   });
 
   it("skips generic nodes without adding an extra indentation level", () => {
@@ -157,7 +240,7 @@ describe("renderVom single-layer page", () => {
     expect(out.text).not.toContain("hunter2");
   });
 
-  it("does not imply a sensitive textbox has a value when the value is missing", () => {
+  it("renders a sensitive filled state without retaining its clear text value", () => {
     const out = renderVom(
       scene([
         node({ id: 1, role: "RootWebArea", name: "Login" }),
@@ -168,6 +251,26 @@ describe("renderVom single-layer page", () => {
           name: "密码",
           tag: "input",
           sensitive: true,
+          inputState: "filled",
+        }),
+      ]),
+    );
+
+    expect(out.text).toContain('@e1 textbox "密码" [filled] ="•••"');
+  });
+
+  it("does not imply an empty sensitive textbox has a value", () => {
+    const out = renderVom(
+      scene([
+        node({ id: 1, role: "RootWebArea", name: "Login" }),
+        node({
+          id: 2,
+          parentId: 1,
+          role: "textbox",
+          name: "密码",
+          tag: "input",
+          sensitive: true,
+          inputState: "empty",
         }),
       ]),
     );
@@ -192,7 +295,35 @@ describe("renderVom single-layer page", () => {
     expect(out.text).toContain("    section");
     expect(out.text).not.toContain("Too deep");
     expect(out.text).toContain('    @e1 button "Later"');
-    expect(out.refs).toEqual([{ ref: "e1", backendNodeId: 4 }]);
+    expect(coreRefs(out.refs)).toEqual([{ ref: "e1", backendNodeId: 4 }]);
+  });
+
+  it("renders through deeply nested transparent wrappers without exhausting the call stack", () => {
+    const wrapperCount = 10_000;
+    const nodes = [node({ id: 1, role: "RootWebArea", name: "Doc" })];
+    for (let index = 0; index < wrapperCount; index += 1) {
+      nodes.push(
+        node({
+          id: index + 2,
+          parentId: index + 1,
+          role: "generic",
+        }),
+      );
+    }
+    nodes.push(
+      node({
+        id: wrapperCount + 2,
+        parentId: wrapperCount + 1,
+        role: "button",
+        name: "Deep action",
+        tag: "button",
+      }),
+    );
+
+    const out = renderVom(scene(nodes));
+
+    expect(out.text).toContain('@e1 button "Deep action"');
+    expect(coreRefs(out.refs)).toEqual([{ ref: "e1", backendNodeId: wrapperCount + 2 }]);
   });
 
   it("truncates when maxTokens is exceeded while keeping refs in sync with rendered text", () => {
@@ -227,7 +358,85 @@ describe("renderVom single-layer page", () => {
     );
 
     expect(out.text).toContain('@e1 button "Open settings"');
-    expect(out.refs).toEqual([{ ref: "e1", backendNodeId: 2 }]);
+    expect(coreRefs(out.refs)).toEqual([{ ref: "e1", backendNodeId: 2 }]);
+  });
+
+  it("does not treat implementation CSS classes as control names", () => {
+    const out = renderVom(
+      scene([
+        node({ id: 1, role: "RootWebArea", name: "Doc" }),
+        node({
+          id: 2,
+          parentId: 1,
+          role: "generic",
+          cursor: "pointer",
+          attrs: { onclick: "handleClick()" },
+          rect: { x: 20, y: 20, w: 40, h: 40 },
+        }),
+        node({
+          id: 3,
+          parentId: 2,
+          role: "img",
+          tag: "svg",
+          attrs: { class: "kocomz" },
+        }),
+      ]),
+    );
+
+    expect(out.text).not.toContain("kocomz");
+    expect(out.refs).toEqual([]);
+  });
+
+  it("recovers icon controls only from explicit semantic icon evidence", () => {
+    const out = renderVom(
+      scene([
+        node({ id: 1, role: "RootWebArea", name: "Doc" }),
+        node({
+          id: 2,
+          parentId: 1,
+          role: "generic",
+          cursor: "pointer",
+          attrs: { onclick: "handleFilter()" },
+          rect: { x: 20, y: 20, w: 40, h: 40 },
+        }),
+        node({
+          id: 3,
+          parentId: 2,
+          role: "img",
+          tag: "svg",
+          attrs: { "aria-label": "Filter rows", class: "kocomz" },
+        }),
+      ]),
+    );
+
+    expect(out.text).toContain('@e1 button "Filter rows"');
+    expect(coreRefs(out.refs)).toEqual([{ ref: "e1", backendNodeId: 2 }]);
+  });
+
+  it("keeps a semantic image as evidence for its clickable wrapper", () => {
+    const out = renderVom(
+      scene([
+        node({ id: 1, role: "RootWebArea", name: "Doc" }),
+        node({
+          id: 2,
+          parentId: 1,
+          role: "generic",
+          cursor: "pointer",
+          rect: { x: 20, y: 20, w: 40, h: 40 },
+        }),
+        node({
+          id: 3,
+          parentId: 2,
+          role: "img",
+          name: "Account",
+          cursor: "pointer",
+          tag: "div",
+        }),
+      ]),
+    );
+
+    expect(out.text).toContain('@e1 button "Account"');
+    expect(coreRefs(out.refs)).toEqual([{ ref: "e1", backendNodeId: 2 }]);
   });
 
   it("keeps the deepest custom control when wrapper and child both look clickable", () => {
@@ -257,7 +466,7 @@ describe("renderVom single-layer page", () => {
 
     expect(out.text).not.toContain('@e1 button "Card"');
     expect(out.text).toContain('@e1 button "Details"');
-    expect(out.refs).toEqual([{ ref: "e1", backendNodeId: 3 }]);
+    expect(coreRefs(out.refs)).toEqual([{ ref: "e1", backendNodeId: 3 }]);
   });
 
   it("does not recover clickable wrappers around native controls", () => {
@@ -280,7 +489,7 @@ describe("renderVom single-layer page", () => {
 
     expect(out.text).not.toContain('@e1 button "Checkout"');
     expect(out.text).toContain('@e1 button "Pay"');
-    expect(out.refs).toEqual([{ ref: "e1", backendNodeId: 3 }]);
+    expect(coreRefs(out.refs)).toEqual([{ ref: "e1", backendNodeId: 3 }]);
   });
 
   it("adds context to duplicate weak action labels", () => {
@@ -343,7 +552,7 @@ describe("renderVom single-layer page", () => {
 
     expect(out.text).toContain("@layers 1 focus=L1");
     expect(out.text).toContain('@e1 button "Background"');
-    expect(out.refs).toEqual([{ ref: "e1", backendNodeId: 2 }]);
+    expect(coreRefs(out.refs)).toEqual([{ ref: "e1", backendNodeId: 2 }]);
   });
 
   it("can filter refs blocked by active positioned regions without changing layer output", () => {
@@ -386,7 +595,103 @@ describe("renderVom single-layer page", () => {
     expect(out.text).not.toContain("active-region");
     expect(out.text).not.toContain("Background");
     expect(out.text).toContain('@e1 button "Foreground"');
-    expect(out.refs).toEqual([{ ref: "e1", backendNodeId: 4 }]);
+    expect(coreRefs(out.refs)).toEqual([{ ref: "e1", backendNodeId: 4 }]);
+  });
+
+  it("keeps paint-order comparisons inside their frame document", () => {
+    const out = renderVom(
+      {
+        ...scene([
+          node({ id: 1, role: "RootWebArea", frameId: "main" }),
+          node({
+            id: 2,
+            parentId: 1,
+            role: "button",
+            name: "Top-level action",
+            tag: "button",
+            rect: { x: 120, y: 120, w: 120, h: 40 },
+            paintOrder: 2,
+            frameId: "main",
+          }),
+          node({
+            id: 3,
+            parentId: 1,
+            role: "Iframe",
+            tag: "iframe",
+            rect: { x: 0, y: 0, w: 1000, h: 700 },
+            paintOrder: 1,
+            frameId: "main",
+          }),
+          node({
+            id: 4,
+            parentId: 3,
+            role: "generic",
+            rect: { x: 0, y: 0, w: 1000, h: 700 },
+            paintOrder: 100,
+            position: "fixed",
+            frameId: "child",
+          }),
+          node({
+            id: 5,
+            parentId: 4,
+            role: "button",
+            name: "Child action",
+            tag: "button",
+            rect: { x: 120, y: 120, w: 120, h: 40 },
+            paintOrder: 101,
+            frameId: "child",
+          }),
+        ]),
+        rootFrameId: "main",
+      },
+      { activeRegionPolicy: true },
+    );
+
+    expect(out.text).toContain("@layers 1 focus=L1");
+    expect(out.text).toContain('button "Top-level action"');
+    expect(out.text).toContain('button "Child action"');
+  });
+
+  it("uses the iframe owner when a parent-frame region covers child content", () => {
+    const out = renderVom(
+      {
+        ...scene([
+          node({ id: 1, role: "RootWebArea", frameId: "main" }),
+          node({
+            id: 2,
+            parentId: 1,
+            role: "Iframe",
+            tag: "iframe",
+            rect: { x: 100, y: 100, w: 400, h: 300 },
+            paintOrder: 1,
+            frameId: "main",
+          }),
+          node({
+            id: 3,
+            parentId: 2,
+            role: "button",
+            name: "Covered child action",
+            tag: "button",
+            rect: { x: 150, y: 150, w: 120, h: 40 },
+            paintOrder: 100,
+            frameId: "child",
+          }),
+          node({
+            id: 4,
+            parentId: 1,
+            role: "generic",
+            rect: { x: 120, y: 120, w: 200, h: 120 },
+            paintOrder: 2,
+            position: "fixed",
+            frameId: "main",
+          }),
+        ]),
+        rootFrameId: "main",
+      },
+      { activeRegionPolicy: true },
+    );
+
+    expect(out.text).not.toContain("Covered child action");
   });
 
   it("renders conditional surface items inline on the trigger", () => {
@@ -405,7 +710,7 @@ describe("renderVom single-layer page", () => {
     });
 
     expect(out.text).toContain('@e1 button "Products" [hover first: Shoes | Bags | Accessories]');
-    expect(out.refs).toEqual([{ ref: "e1", backendNodeId: 2 }]);
+    expect(coreRefs(out.refs)).toEqual([{ ref: "e1", backendNodeId: 2 }]);
   });
 
   it("injects active scope blocks immediately after their trigger without refs", () => {
@@ -431,7 +736,7 @@ describe("renderVom single-layer page", () => {
         "        Bob - great sound",
       ].join("\n"),
     );
-    expect(out.refs).toEqual([{ ref: "e1", backendNodeId: 2 }]);
+    expect(coreRefs(out.refs)).toEqual([{ ref: "e1", backendNodeId: 2 }]);
   });
 
   it("does not render redundant children inside named ref controls", () => {
@@ -445,7 +750,7 @@ describe("renderVom single-layer page", () => {
 
     expect(out.text).toContain('@e1 button "Save"');
     expect(out.text).not.toContain("disk icon");
-    expect(out.refs).toEqual([{ ref: "e1", backendNodeId: 2 }]);
+    expect(coreRefs(out.refs)).toEqual([{ ref: "e1", backendNodeId: 2 }]);
   });
 
   it("does not render redundant children inside native text inputs", () => {
@@ -508,6 +813,55 @@ describe("renderVom single-layer page", () => {
     expect(out.text).not.toContain("北京市小客车指标调控管理信息系统]");
   });
 
+  it("derives duplicate-label context from indexed DOM ancestry without semantic proximity", () => {
+    const out = renderVom(
+      scene([
+        node({ id: 1, role: "RootWebArea", name: "Doc", contextScopeId: "root" }),
+        node({
+          id: 3,
+          parentId: 1,
+          role: "button",
+          name: "View",
+          tag: "button",
+          domParentId: 2,
+          domAncestorIds: [2, 1],
+          contextScopeId: "root",
+        }),
+        node({
+          id: 5,
+          parentId: 1,
+          role: "button",
+          name: "View",
+          tag: "button",
+          domParentId: 4,
+          domAncestorIds: [4, 1],
+          contextScopeId: "root",
+        }),
+        node({
+          id: 2,
+          parentId: 1,
+          role: "group",
+          name: "Project Alpha",
+          domParentId: 1,
+          domAncestorIds: [1],
+          contextScopeId: "root",
+        }),
+        node({
+          id: 4,
+          parentId: 1,
+          role: "group",
+          name: "Project Beta",
+          domParentId: 1,
+          domAncestorIds: [1],
+          contextScopeId: "root",
+        }),
+      ]),
+    );
+
+    expect(out.text).toContain('@e1 button "View" [ctx: Project Alpha]');
+    expect(out.text).toContain('@e2 button "View" [ctx: Project Beta]');
+  });
+
   it("does not add low-value root context to duplicated brand links", () => {
     const out = renderVom(
       scene([
@@ -556,6 +910,34 @@ describe("renderVom single-layer page", () => {
 });
 
 describe("renderVom double-layer page", () => {
+  it("collects blocking-layer descendants even when children precede parents in source order", () => {
+    const out = renderVom(
+      scene([
+        node({ id: 1, role: "RootWebArea", name: "Doc" }),
+        node({
+          id: 3,
+          parentId: 2,
+          role: "button",
+          name: "Close",
+          tag: "button",
+          paintOrder: 0,
+        }),
+        node({
+          id: 2,
+          parentId: 1,
+          role: "dialog",
+          name: "Modal",
+          rect: { x: 0, y: 0, w: 1280, h: 720 },
+          paintOrder: 10,
+          position: "fixed",
+        }),
+      ]),
+    );
+
+    expect(out.text).toContain('@e1 button "Close"');
+    expect(coreRefs(out.refs)).toEqual([{ ref: "e1", backendNodeId: 3 }]);
+  });
+
   it("renders a blocking modal first and folds the base page into an occluded summary", () => {
     const out = renderVom(
       scene([
@@ -612,7 +994,7 @@ describe("renderVom double-layer page", () => {
       ].join("\n"),
     );
     expect(out.text).not.toContain("底层按钮");
-    expect(out.refs).toEqual([
+    expect(coreRefs(out.refs)).toEqual([
       { ref: "e1", backendNodeId: 4 },
       { ref: "e2", backendNodeId: 5 },
     ]);
@@ -663,5 +1045,37 @@ describe("renderVom double-layer page", () => {
     expect(out.text).toContain('    @e1 textbox "请输入手机号" [empty]');
     expect(out.text).toContain('    @e2 textbox "密码" [filled] ="•••"');
     expect(out.refs.map((r) => r.backendNodeId)).toEqual([101, 102]);
+  });
+
+  it("redacts form values and returns semantic metadata for rendered refs", () => {
+    const out = renderVom(
+      scene([
+        node({ id: 1, role: "RootWebArea", name: "Form" }),
+        node({
+          id: 2,
+          backendNodeId: 42,
+          frameId: "child-frame",
+          parentId: 1,
+          role: "textbox",
+          name: "Email",
+          value: "user@example.com",
+          inputState: "filled",
+          tag: "input",
+        }),
+      ]),
+      { redactValues: true },
+    );
+
+    expect(out.text).toContain('[filled] ="•••"');
+    expect(out.text).not.toContain("user@example.com");
+    expect(out.refs[0]).toMatchObject({
+      ref: "e1",
+      backendNodeId: 42,
+      frameId: "child-frame",
+      role: "textbox",
+      name: "Email",
+      line: expect.any(Number),
+    });
+    expect(out.text.split("\n")[out.refs[0]?.line ?? -1]).toContain('@e1 textbox "Email"');
   });
 });
