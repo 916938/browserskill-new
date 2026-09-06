@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-09-XX
+
+从 2026-09-06 起，CLI / Extension / DSH Plugin 共用同一 semver（沿用上游 0.2.0 起的版本方案）。
+
+### Changed
+
+- 合并上游 `Tencent/main`（`47ac947`）的 182 个提交：文件上传下载、VOM 语义图与 hover 感知、DSH Harness 插件、`evals/browser` 测试台、统一发布脚本等。
+- 三组件版本号统一为 `0.2.2`（此前 CLI `0.2.1`、Extension / DSH Plugin `0.2.0`）。
+- 冲突取舍保留 fork 特性：fork 安装 URL、`skill/SKILL.md` 的多浏览器与智能标签指引、`bsk invoke` 的 `clap_complete` 补全、Profile 模板（`TemplateRegistry`）；上游新增能力与其并存。
+
+### Fixed
+
+- `daemon/file_transfer.rs`：`set_private_dir` / `set_private_file` 在非 Unix 平台参数未使用，导致 `clippy -D warnings` 编译失败（上游同样存在）。
+
+## [上游合并前的 Unreleased 记录]
+
 ### Added
 
 - Added the `@browser-skill/vom` workspace package and semantic VOM capture/rendering pipeline.
