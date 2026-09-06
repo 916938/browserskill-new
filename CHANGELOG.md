@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.2.2] - 2026-09-XX
+## [0.2.2] - 2026-09-06
 
 从 2026-09-06 起，CLI / Extension / DSH Plugin 共用同一 semver（沿用上游 0.2.0 起的版本方案）。
 
