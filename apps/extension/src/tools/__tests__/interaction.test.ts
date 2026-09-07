@@ -540,6 +540,18 @@ describe("handleHover", () => {
   });
 });
 
+function successfulFillScript(params: unknown) {
+  const args = (params as { arguments?: Array<{ value: unknown }> }).arguments ?? [];
+  return {
+    result: {
+      value:
+        args.length === 2
+          ? { before: "", expected: args[0].value, valueLength: String(args[0].value).length }
+          : true,
+    },
+  };
+}
+
 describe("handleFill", () => {
   it("returns not_found for unknown ref", async () => {
     const sm = new SessionManager({ agentWindow: fakeAgentWindow([100]) });
@@ -586,7 +598,8 @@ describe("handleFill", () => {
       "DOM.scrollIntoViewIfNeeded": () => ({}),
       "DOM.focus": () => ({}),
       "DOM.resolveNode": () => ({ object: { objectId: "obj-1" } }),
-      "Runtime.callFunctionOn": () => ({ result: { type: "undefined" } }),
+      "Runtime.callFunctionOn": successfulFillScript,
+      "Runtime.releaseObject": () => ({}),
       "Input.insertText": () => ({}),
     });
     const res = await handleFill(
@@ -600,13 +613,12 @@ describe("handleFill", () => {
     expect(res.used_ref).toBe("e1");
     const insert = fake.sent.find((c) => c.method === "Input.insertText");
     expect(insert?.params).toEqual({ text: "hello" });
-    // clear_before defaults to true → callFunctionOn invoked once to
-    // clear, once to fire input/change after typing.
+    // Preparation, readiness, notifications, and final verification.
     const callFns = fake.sent.filter((c) => c.method === "Runtime.callFunctionOn");
-    expect(callFns.length).toBeGreaterThanOrEqual(2);
+    expect(callFns).toHaveLength(4);
   });
 
-  it("clear_before=false skips the wipe call", async () => {
+  it("passes clear_before=false to preparation and verifies the result", async () => {
     const sm = new SessionManager({ agentWindow: fakeAgentWindow([100]) });
     const ctx = await sm.start("aa11");
     ctx.refStore.set("e1", 1, { tabId: 4 });
@@ -618,12 +630,11 @@ describe("handleFill", () => {
       "DOM.focus": () => ({}),
       "DOM.resolveNode": () => ({ object: { objectId: "obj-2" } }),
       "Runtime.callFunctionOn": (p) => {
-        const fn = (p as { functionDeclaration?: string }).functionDeclaration ?? "";
-        // No "this.value = ''" clearing on a no-clear path; only the
-        // post-input dispatchEvent.
-        expect(fn).not.toMatch(/this\.value\s*=\s*''/);
-        return { result: { type: "undefined" } };
+        const args = (p as { arguments?: Array<{ value: unknown }> }).arguments ?? [];
+        if (args.length === 2) expect(args[1].value).toBe(false);
+        return successfulFillScript(p);
       },
+      "Runtime.releaseObject": () => ({}),
       "Input.insertText": () => ({}),
     });
     const res = await handleFill(
@@ -650,7 +661,8 @@ describe("handleFill", () => {
       "DOM.scrollIntoViewIfNeeded": () => ({}),
       "DOM.focus": () => ({}),
       "DOM.resolveNode": () => ({ object: { objectId: "obj-3" } }),
-      "Runtime.callFunctionOn": () => ({ result: { type: "undefined" } }),
+      "Runtime.callFunctionOn": successfulFillScript,
+      "Runtime.releaseObject": () => ({}),
       "Input.insertText": () => ({}),
     });
     const res = await handleFill(

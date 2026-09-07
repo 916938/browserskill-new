@@ -609,6 +609,36 @@ type SelectMutationResult =
 // tool.fill
 // ---------------------------------------------------------------------------
 
+interface FillPreparation {
+  before?: string;
+  expected?: string;
+  valueLength?: number;
+  error?: string;
+}
+
+interface FillScriptReply<T> {
+  result?: { value?: T };
+  exceptionDetails?: unknown;
+}
+
+const FILL_EDITABLE_FUNCTION = `function() {
+  const tag = this.tagName.toLowerCase();
+  const supported = tag === 'input'
+    ? ['text', 'search', 'tel', 'url', 'email', 'password', 'number'].includes(this.type)
+    : tag === 'textarea' || this.isContentEditable;
+  return this.isConnected && supported && !this.readOnly && !this.matches(':disabled');
+}`;
+
+// Chrome renders a trailing editable newline with an empty <div><br></div>.
+// innerText includes the padding break; it is not an extra typed character.
+const FILL_VALUE_FUNCTION = `function() {
+  if (!this.isContentEditable) return this.value;
+  const value = this.innerText;
+  const tail = this.lastChild;
+  const padding = tail && tail.nodeName === 'DIV' && tail.childNodes.length === 1 && tail.firstChild.nodeName === 'BR';
+  return padding && value.endsWith('\\n\\n') ? value.slice(0, -1) : value;
+}`;
+
 export async function handleFill(
   manager: SessionManager,
   params: FillParams,
@@ -678,57 +708,172 @@ export async function handleFill(
   const clearBefore = params.clear_before ?? true;
 
   try {
-    if (clearBefore) {
-      // Clear input/textarea value or wipe contenteditable innerText,
-      // then fire `input` so frameworks observe the empty state.
-      await nodeCdp.send(target.tabId, "Runtime.callFunctionOn", {
-        objectId,
-        functionDeclaration: `function() {
-          if (this.isContentEditable) { this.textContent = ''; }
-          else {
-            const proto = this instanceof HTMLTextAreaElement
-              ? HTMLTextAreaElement.prototype
-              : HTMLInputElement.prototype;
-            const descriptor = Object.getOwnPropertyDescriptor(proto, 'value');
-            if (descriptor && descriptor.set) descriptor.set.call(this, '');
-            else this.value = '';
-          }
-          this.dispatchEvent(new Event('input', { bubbles: true }));
-        }`,
-        returnByValue: true,
-      });
-    }
     if (throwIfAborted(deps.signal)) {
       return { code: "cancelled", message: "fill aborted" };
+    }
+    // Check editability before clearing. Keep the expected result tied to
+    // this object, including the existing value on the append path.
+    const prepared = await nodeCdp.send<FillScriptReply<FillPreparation>>(
+      target.tabId,
+      "Runtime.callFunctionOn",
+      {
+        objectId,
+        functionDeclaration: `function(value, clearBefore) {
+          const tag = this.tagName.toLowerCase();
+          const native = tag === 'input' || tag === 'textarea';
+          if (!(${FILL_EDITABLE_FUNCTION}).call(this)) return { error: 'fill target is not editable or its input type is unsupported' };
+          const focused = () => this.getRootNode().activeElement === this && this.ownerDocument.hasFocus();
+          if (!focused()) return { error: 'fill target does not have focus' };
+          const before = clearBefore ? '' : (${FILL_VALUE_FUNCTION}).call(this);
+          if (!clearBefore && value !== '' && native && typeof this.selectionStart === 'number' &&
+              (this.selectionStart !== before.length || this.selectionEnd !== before.length)) {
+            return { error: 'fill append requires the caret at the end of the field' };
+          }
+          let expected = before + value;
+          if (native) {
+            // Use the browser's own value sanitization (e.g. textarea
+            // line endings) without changing the live control.
+            const normalizer = this.ownerDocument.createElement(tag);
+            if (tag === 'input') {
+              normalizer.type = this.type;
+              normalizer.multiple = this.multiple;
+            }
+            // insertText treats line breaks in a single-line input as spaces.
+            if (tag === 'input') expected = expected.replace(/\\r\\n|\\r|\\n/g, ' ');
+            normalizer.value = expected;
+            if (expected !== '' && normalizer.value === '' && this.type === 'number') {
+              return { error: 'fill value is not valid for a number input' };
+            }
+            expected = normalizer.value;
+            if (this.type !== 'number' && this.maxLength >= 0 && expected.length > this.maxLength) {
+              return { error: 'fill value exceeds the target maxlength' };
+            }
+          } else {
+            expected = expected.replace(/\\r\\n?/g, '\\n');
+          }
+          if (clearBefore) {
+            if (native) {
+              const proto = tag === 'textarea' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+              Object.getOwnPropertyDescriptor(proto, 'value').set.call(this, '');
+            } else {
+              this.textContent = '';
+            }
+            this.dispatchEvent(new Event('input', { bubbles: true }));
+          }
+          return { before, expected, valueLength: Math.max(0, expected.length - before.length) };
+        }`,
+        arguments: [{ value: params.value }, { value: clearBefore }],
+        returnByValue: true,
+      },
+    );
+    if (throwIfAborted(deps.signal)) {
+      return { code: "cancelled", message: "fill aborted" };
+    }
+    if (prepared.exceptionDetails) {
+      return { code: "cdp_failed", message: "fill preparation script failed" };
+    }
+    const preparation = prepared.result?.value;
+    if (
+      preparation?.error ||
+      typeof preparation?.before !== "string" ||
+      typeof preparation?.expected !== "string" ||
+      typeof preparation.valueLength !== "number"
+    ) {
+      return {
+        code: "cdp_failed",
+        message: preparation?.error ?? "fill preparation returned an unexpected result",
+      };
+    }
+    // A separate call runs after the clearing event's microtasks drain.
+    // Confirm the target before sending input to the focused element.
+    const ready = await nodeCdp.send<FillScriptReply<boolean>>(
+      target.tabId,
+      "Runtime.callFunctionOn",
+      {
+        objectId,
+        functionDeclaration: `function(before) {
+          return (${FILL_EDITABLE_FUNCTION}).call(this) &&
+            this.getRootNode().activeElement === this && this.ownerDocument.hasFocus() &&
+            (${FILL_VALUE_FUNCTION}).call(this) === before;
+        }`,
+        arguments: [{ value: preparation.before }],
+        returnByValue: true,
+      },
+    );
+    if (throwIfAborted(deps.signal)) {
+      return { code: "cancelled", message: "fill aborted" };
+    }
+    if (ready.exceptionDetails || ready.result?.value !== true) {
+      return {
+        code: "cdp_failed",
+        message: "fill target changed, lost focus, or could not be checked before typing",
+      };
     }
     // CDP `Input.insertText` handles IME / multi-byte input out of the
     // box, much more reliably than per-key `dispatchKeyEvent`.
-    await deps.cdp.send(target.tabId, "Input.insertText", { text: params.value });
+    if (params.value !== "") {
+      await deps.cdp.send(target.tabId, "Input.insertText", { text: params.value });
+    }
     if (throwIfAborted(deps.signal)) {
       return { code: "cancelled", message: "fill aborted" };
     }
-    // Fire `input` + `change` so React / Vue controlled inputs commit.
-    await nodeCdp.send(target.tabId, "Runtime.callFunctionOn", {
-      objectId,
-      functionDeclaration: `function() {
-        this.dispatchEvent(new Event('input', { bubbles: true }));
-        this.dispatchEvent(new Event('change', { bubbles: true }));
-      }`,
-      returnByValue: true,
+    // Keep the existing notifications, then read in a separate call so
+    // nested microtasks queued by the page cannot race the verification.
+    const notified = await nodeCdp.send<FillScriptReply<unknown>>(
+      target.tabId,
+      "Runtime.callFunctionOn",
+      {
+        objectId,
+        functionDeclaration: `function() {
+          this.dispatchEvent(new Event('input', { bubbles: true }));
+          this.dispatchEvent(new Event('change', { bubbles: true }));
+        }`,
+        returnByValue: true,
+      },
+    );
+    if (throwIfAborted(deps.signal)) {
+      return { code: "cancelled", message: "fill aborted" };
+    }
+    if (notified.exceptionDetails) {
+      return { code: "cdp_failed", message: "fill notification script failed" };
+    }
+    const verified = await nodeCdp.send<FillScriptReply<boolean>>(
+      target.tabId,
+      "Runtime.callFunctionOn",
+      {
+        objectId,
+        functionDeclaration: `function(expected) {
+          return this.isConnected && (${FILL_VALUE_FUNCTION}).call(this) === expected;
+        }`,
+        arguments: [{ value: preparation.expected }],
+        returnByValue: true,
+      },
+    );
+    if (throwIfAborted(deps.signal)) {
+      return { code: "cancelled", message: "fill aborted" };
+    }
+    if (verified.exceptionDetails || verified.result?.value !== true) {
+      return {
+        code: "cdp_failed",
+        message: verified.exceptionDetails
+          ? "fill verification script failed"
+          : "fill could not verify the expected value; observe the page before retrying",
+      };
+    }
+    return attachDialogs(deps.cdp, target.tabId, dialogCursor, {
+      tab_id: target.tabId,
+      used_ref: node.usedRef,
+      used_selector: node.usedSelector,
+      value_length: preparation.valueLength,
     });
   } catch (err) {
     return {
       code: "cdp_failed",
       message: err instanceof Error ? err.message : String(err),
     };
+  } finally {
+    await nodeCdp.send(target.tabId, "Runtime.releaseObject", { objectId }).catch(() => undefined);
   }
-
-  return attachDialogs(deps.cdp, target.tabId, dialogCursor, {
-    tab_id: target.tabId,
-    used_ref: node.usedRef,
-    used_selector: node.usedSelector,
-    value_length: params.value.length,
-  });
 }
 
 // ---------------------------------------------------------------------------
