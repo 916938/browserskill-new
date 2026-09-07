@@ -183,6 +183,8 @@ export async function resolveBackendNode(
   }
   // selector path
   try {
+    // Selector lookup itself attaches CDP, even when no element is found.
+    cdp.trackSessionTab?.(ctx.sessionId, target.tabId);
     const doc = await cdp.send<{ root?: { nodeId?: number } }>(target.tabId, "DOM.getDocument", {
       depth: 0,
     });

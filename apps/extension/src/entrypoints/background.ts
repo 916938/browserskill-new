@@ -51,7 +51,12 @@ export default defineBackground(() => {
   const controller = new ConnectionController();
   const transport = new WSTransport({ url: __BSK_DAEMON_WS_URL__ });
   const sessions = new SessionManager();
-  const cdp = new ChromiumCdp();
+  const cdp = new ChromiumCdp(undefined, {
+    shouldAutoAcceptDialog: async (tabId) => {
+      const tab = await chrome.tabs.get(tabId);
+      return sessions.findByWindowId(tab.windowId) !== null;
+    },
+  });
   const sessionsLive = attachSessionsLiveFlag({ manager: sessions });
   let overlayGeneration = 0;
   const controlModes = new Map<string, OverlayMode>();
