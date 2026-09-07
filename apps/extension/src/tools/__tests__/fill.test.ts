@@ -35,13 +35,24 @@ async function setup(markup = '<input value="old">') {
       return { exceptionDetails: { text: "test page script failed" } };
     }
   });
+  // Number/email controls have a browser caret even though their selection
+  // getters return null. Model that caret instead of assuming it is at the end.
+  const hiddenCaret = { start: 0, end: 0 };
+  const moveToEnd = vi.fn(async () => {
+    if (typeof element.selectionStart === "number") {
+      element.setSelectionRange(element.value.length, element.value.length);
+    } else {
+      hiddenCaret.start = hiddenCaret.end = element.value.length;
+    }
+  });
   const insert = vi.fn(async (text: string) => {
     const focused = document.activeElement as HTMLInputElement;
     if (focused.readOnly || focused.disabled) return;
-    const start = focused.selectionStart ?? focused.value.length;
-    const end = focused.selectionEnd ?? start;
+    const start = focused.selectionStart ?? hiddenCaret.start;
+    const end = focused.selectionEnd ?? hiddenCaret.end;
     const value = focused.value.slice(0, start) + text + focused.value.slice(end);
     focused.value = focused.maxLength >= 0 ? value.slice(0, focused.maxLength) : value;
+    hiddenCaret.start = hiddenCaret.end = Math.min(start + text.length, focused.value.length);
     focused.dispatchEvent(new Event("input", { bubbles: true }));
   });
   const release = vi.fn(async () => ({}));
@@ -68,9 +79,7 @@ async function setup(markup = '<input value="old">') {
         return {};
       case "Input.dispatchKeyEvent":
         if ((params as { commands?: string[] }).commands?.includes("moveToEndOfDocument")) {
-          if (typeof element.selectionStart === "number") {
-            element.setSelectionRange(element.value.length, element.value.length);
-          }
+          await moveToEnd();
         }
         return {};
       case "Runtime.releaseObject":
@@ -81,6 +90,8 @@ async function setup(markup = '<input value="old">') {
   });
   return {
     element,
+    hiddenCaret,
+    moveToEnd,
     script,
     insert,
     release,
@@ -410,11 +421,21 @@ describe("fill result verification", () => {
     expect(h.element.value).toBe("old🙂");
   });
 
-  it.each([
-    "number",
-    "email",
-  ])("appends to %s without setting an unsupported selection API", async (type) => {
+  it.each(
+    ["number", "email"].flatMap((type) =>
+      [
+        [0, 0],
+        [1, 1],
+        [0, 2],
+      ].map(([start, end]) => ({ type, start, end })),
+    ),
+  )("appends to $type from selection $start:$end without using its unsupported API", async ({
+    type,
+    start,
+    end,
+  }) => {
     const h = await setup(`<input type="${type}" value="12">`);
+    Object.assign(h.hiddenCaret, { start, end });
     vi.spyOn(h.element, "selectionStart", "get").mockReturnValue(null);
     vi.spyOn(h.element, "selectionEnd", "get").mockReturnValue(null);
     const selection = vi.spyOn(h.element, "setSelectionRange").mockImplementation(() => {
@@ -423,6 +444,22 @@ describe("fill result verification", () => {
     expect(await h.fill("3", false)).toMatchObject({ value_length: 3 });
     expect(h.element.value).toBe("123");
     expect(selection).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "number",
+    "email",
+  ])("does not report successful %s append when the caret command is ignored", async (type) => {
+    const h = await setup(`<input type="${type}" value="12">`);
+    vi.spyOn(h.element, "selectionStart", "get").mockReturnValue(null);
+    vi.spyOn(h.element, "selectionEnd", "get").mockReturnValue(null);
+    h.moveToEnd.mockResolvedValueOnce(undefined);
+    expect(await h.fill("3", false)).toMatchObject({
+      code: "cdp_failed",
+      data: { reason: "fill_value_mismatch" },
+    });
+    expect(h.element.value).toBe("312");
+    expect(h.insert).toHaveBeenCalledOnce();
   });
 
   it("rejects invalid number text before clearing", async () => {
