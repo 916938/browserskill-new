@@ -37,6 +37,21 @@ jobs:
       - name: Run Rust tests
         run: cargo test --workspace --locked
 
+  windows-daemon:
+    name: Windows daemon regression tests
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Run Windows named-pipe tests
+        run: cargo test -p bsk --lib --locked daemon::ipc::windows::tests
+
+      - name: Run Windows process liveness tests
+        run: cargo test -p bsk --lib --locked daemon::lockfile::tests
+
   frontend:
     name: Frontend lint, typecheck, tests, build
     runs-on: ubuntu-latest
