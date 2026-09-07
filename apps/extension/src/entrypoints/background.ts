@@ -169,8 +169,8 @@ export default defineBackground(() => {
     if (!sessions.findByWindowId(tab.windowId)) return;
     void pushOverlayStateForTab(tab.id, tab.windowId);
   });
-  chrome.tabs.onRemoved.addListener((tabId) => {
-    sessions.forgetAgentCreatedTab(tabId);
+  chrome.tabs.onRemoved.addListener((tabId, removeInfo) => {
+    sessions.forgetClosedTab(tabId, { isWindowClosing: removeInfo.isWindowClosing });
   });
   // Re-sync the storage.session flag on SW startup so a previous SW's
   // stale `true` does not keep waking us on every page load until the
