@@ -345,15 +345,11 @@ export class ToolDispatcher {
         return result;
       }
       case "tool.tab_return":
-        return this.withHoverReleaseForRequest(
-          req.params as TabReturnParams,
-          () =>
-            handleTabReturn(this.sessions, req.params as TabReturnParams, {
-              signal,
-              cdp: this.cdp,
-            }),
+        return handleTabReturn(this.sessions, req.params as TabReturnParams, {
           signal,
-        );
+          cdp: this.cdp,
+          beforeReturn: (sessionId, tabId) => this.releaseHoverLatch(sessionId, tabId),
+        });
       case "tool.window_resize":
         return handleWindowResize(
           this.sessions,

@@ -254,6 +254,69 @@ describe("ChromiumCdp", () => {
     expect(cdp.isAttached(7)).toBe(false);
   });
 
+  it.each([
+    false,
+    true,
+  ])("waits for detach before reconnecting a returned tab (detach rejects: %s)", async (rejectDetach) => {
+    const { api } = fakeApi();
+    const attached = new Set<number>();
+    let finishDetach!: () => void;
+    vi.mocked(api.attach).mockImplementation(async ({ tabId }) => {
+      if (attached.has(tabId!)) throw new Error("Another debugger is already attached");
+      attached.add(tabId!);
+    });
+    vi.mocked(api.detach).mockImplementation(async ({ tabId }) => {
+      attached.delete(tabId!);
+    });
+    vi.mocked(api.detach).mockImplementationOnce(
+      ({ tabId }) =>
+        new Promise<void>((resolve, reject) => {
+          finishDetach = () => {
+            attached.delete(tabId!);
+            if (rejectDetach) reject(new Error("tab already detached"));
+            else resolve();
+          };
+        }),
+    );
+    const cdp = new ChromiumCdp(api);
+    cdp.trackSessionTab("aa11", 7);
+    await cdp.ensureAttached(7);
+    const returning = cdp.releaseSessionTab("aa11", 7);
+    await vi.waitFor(() => expect(api.detach).toHaveBeenCalledOnce());
+    let duplicateDetachFinished = false;
+    const duplicateDetach = cdp.detach(7).then(() => {
+      duplicateDetachFinished = true;
+    });
+
+    cdp.trackSessionTab("bb22", 7);
+    // Register rejection handlers immediately; the pre-fix driver rejects
+    // both commands while the browser still has the previous attachment.
+    const pending = Promise.allSettled([
+      cdp.send(7, "Runtime.evaluate", { expression: "document.title" }),
+      cdp.send(7, "DOM.getDocument"),
+    ]);
+    await cdp.send(8, "DOM.getDocument");
+    const finishedEarly = duplicateDetachFinished;
+    finishDetach();
+    await Promise.all([returning, duplicateDetach]);
+
+    expect(await pending).toEqual([
+      { status: "fulfilled", value: { ok: true } },
+      { status: "fulfilled", value: { ok: true } },
+    ]);
+    expect(finishedEarly).toBe(false);
+    expect(vi.mocked(api.attach).mock.calls.filter(([target]) => target.tabId === 7)).toHaveLength(
+      2,
+    );
+    expect(cdp.isAttached(7)).toBe(true);
+    expect(cdp.isAttached(8)).toBe(true);
+    await cdp.detachSession("bb22");
+    expect(api.detach).toHaveBeenCalledTimes(2);
+    expect(cdp.isAttached(7)).toBe(false);
+    expect(attached.has(7)).toBe(false);
+    expect(cdp.isAttached(8)).toBe(true);
+  });
+
   it("detachAll() iterates every cached tab", async () => {
     const { api } = fakeApi();
     const cdp = new ChromiumCdp(api);

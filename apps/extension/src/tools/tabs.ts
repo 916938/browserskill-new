@@ -289,6 +289,8 @@ export interface TabManagementDeps {
   agentOverlayReset?: AgentOverlayResetApi;
   /** Releases this session's CDP claim after a borrowed tab is returned. */
   cdp?: Pick<CdpRunner, "releaseSessionTab">;
+  /** Runs after tab_return validation, before moving the borrowed tab. */
+  beforeReturn?: (sessionId: string, tabId: number) => Promise<void>;
   /**
    * Reports whether `windowId` is any live session's Agent Window.
    * `tab_return`'s fallback window picker uses this to avoid moving a
@@ -1124,6 +1126,7 @@ export async function handleTabReturn(
       message: `tab_return: tab ${params.tab_id} is not borrowed by this session`,
     };
   }
+  await deps.beforeReturn?.(ctx.sessionId, params.tab_id);
   const outcome = await returnBorrowedTab(ctx, params.tab_id, {
     ...deps,
     isAgentWindowId:

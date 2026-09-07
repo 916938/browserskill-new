@@ -747,6 +747,63 @@ describe("ToolDispatcher", () => {
     );
   });
 
+  it.each([
+    { tab_id: 7, code: "not_found" },
+    { tab_id: undefined, code: "invalid_params" },
+  ])("keeps hover when tab_return is rejected with $code", async ({ tab_id, code }) => {
+    const sendMessage = vi.fn(async () => undefined);
+    vi.stubGlobal("chrome", {
+      tabs: {
+        sendMessage,
+        get: vi.fn(async () => ({ id: 7, windowId: 100, active: true })),
+        query: vi.fn(async () => [{ id: 7, windowId: 100, active: true }]),
+      },
+    });
+    const { transport, sent, deliver } = fakeTransport();
+    const sessions = new SessionManager({
+      agentWindow: {
+        create: vi.fn(async () => 100),
+        remove: vi.fn(async () => {}),
+        ensureActiveTab: vi.fn(async () => 1),
+      },
+    });
+    await sessions.start("aa11");
+    const cdp = {
+      send: vi.fn(async <T>() => ({}) as T),
+      detachSession: vi.fn(async () => {}),
+      releaseSessionTab: vi.fn(async () => {}),
+    };
+    const dispatcher = new ToolDispatcher({
+      transport,
+      sessions,
+      cdp: cdp as unknown as TestDispatcherCdp,
+    });
+    const helpers = dispatcher as unknown as {
+      rememberHover: (sessionId: string, result: unknown) => unknown;
+      setHoverBypass: (sessionId: string, tabId: number, enabled: boolean) => Promise<void>;
+      withHoverReassert: <T>(
+        params: { session_id: string; tab_id?: number },
+        work: () => Promise<T>,
+      ) => Promise<T>;
+    };
+    helpers.rememberHover("aa11", { tab_id: 7, x: 10, y: 20 });
+    await helpers.setHoverBypass("aa11", 7, true);
+    dispatcher.start();
+    deliver(makeRequest("tool.tab_return", { session_id: "aa11", tab_id }));
+    await vi.waitFor(() => expect(sent).toHaveLength(1));
+
+    expect(sent[0]).toMatchObject({ error: { code } });
+    expect(cdp.releaseSessionTab).not.toHaveBeenCalled();
+    expect(sendMessage).not.toHaveBeenCalledWith(7, expect.objectContaining({ enabled: false }));
+    await helpers.withHoverReassert({ session_id: "aa11", tab_id: 7 }, async () => ({}));
+    expect(cdp.send).toHaveBeenCalledExactlyOnceWith(7, "Input.dispatchMouseEvent", {
+      type: "mouseMoved",
+      x: 10,
+      y: 20,
+    });
+    dispatcher.stop();
+  });
+
   it("releases the returned tab's hover before moving it and leaves other tabs alone", async () => {
     const sendMessage = vi.fn(async () => undefined);
     const move = vi.fn(async () => {

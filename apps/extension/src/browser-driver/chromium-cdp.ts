@@ -165,6 +165,7 @@ export class ChromiumCdp {
   private readonly api: CdpDebuggerApi;
   private readonly attachedTabs = new Set<number>();
   private readonly attachInFlight = new Map<number, Promise<void>>();
+  private readonly detachInFlight = new Map<number, Promise<void>>();
   private readonly tabOwners = new Map<number, Set<string>>();
   private readonly dialogBuffers = new Map<number, JavaScriptDialogInfo[]>();
   private readonly dialogSequences = new Map<number, number>();
@@ -199,6 +200,10 @@ export class ChromiumCdp {
 
   /** Attach to `tabId` if we haven't already in this driver. */
   async ensureAttached(tabId: number): Promise<void> {
+    // Returning a tab clears the cache before Chrome finishes detaching.
+    // New observers must wait before opening the next connection to that tab.
+    const detaching = this.detachInFlight.get(tabId);
+    if (detaching) await detaching;
     if (this.attachedTabs.has(tabId)) return;
     const existing = this.attachInFlight.get(tabId);
     if (existing) {
@@ -431,6 +436,11 @@ export class ChromiumCdp {
 
   /** Detach if attached; never throws. */
   async detach(tabId: number): Promise<void> {
+    const existing = this.detachInFlight.get(tabId);
+    if (existing) {
+      await existing;
+      return;
+    }
     this.attachInFlight.delete(tabId);
     if (!this.attachedTabs.has(tabId)) return;
     this.attachedTabs.delete(tabId);
@@ -438,13 +448,19 @@ export class ChromiumCdp {
     this.clearConsoleState(tabId);
     this.clearNetworkState(tabId);
     this.clearFrameState(tabId);
-    try {
-      await this.api.detach({ tabId });
-    } catch (err) {
-      // Tab may already be gone — Chrome auto-detaches on close. Log
-      // at debug so production builds aren't noisy.
-      console.debug("[bsk cdp] detach failed (likely tab already closed)", err);
-    }
+    const detach = (async () => {
+      try {
+        await this.api.detach({ tabId });
+      } catch (err) {
+        // Tab may already be gone — Chrome auto-detaches on close. Log
+        // at debug so production builds aren't noisy.
+        console.debug("[bsk cdp] detach failed (likely tab already closed)", err);
+      }
+    })().finally(() => {
+      this.detachInFlight.delete(tabId);
+    });
+    this.detachInFlight.set(tabId, detach);
+    await detach;
   }
 
   /** True iff `ensureAttached(tabId)` has succeeded since the last detach. */
