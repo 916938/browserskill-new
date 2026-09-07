@@ -38,7 +38,7 @@ jobs:
         run: cargo test --workspace --locked
 
   windows-daemon:
-    name: Windows daemon regression tests
+    name: Windows daemon and update regression tests
     runs-on: windows-latest
 
     steps:
@@ -51,6 +51,12 @@ jobs:
 
       - name: Run Windows process liveness tests
         run: cargo test -p bsk --lib --locked daemon::lockfile::tests
+
+      - name: Run Windows update tests
+        run: cargo test -p bsk --lib --locked cli::update::tests
+
+      - name: Run Windows update process tests
+        run: cargo test -p bsk --test windows_update --locked
 
   frontend:
     name: Frontend lint, typecheck, tests, build
