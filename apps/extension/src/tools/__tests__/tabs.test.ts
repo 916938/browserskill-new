@@ -547,6 +547,58 @@ describe("handleTabBorrow", () => {
 });
 
 describe("handleTabReturn", () => {
+  it.each([
+    "original",
+    "fallback",
+    "cleanup_failed",
+    "failed",
+    "cancelled",
+  ])("releases CDP only after a successful return (%s)", async (mode) => {
+    const sm = new SessionManager({ agentWindow: fakeAgentWindow([100]) });
+    const ctx = await sm.start("aa11");
+    ctx.borrowedTabs.set(7, { tabId: 7, originalWindowId: 200, originalIndex: 4 });
+    const state: FakeTabState = {
+      tabs: new Map([[7, { id: 7, windowId: 100 } as chrome.tabs.Tab]]),
+      nextTabId: 50,
+      windowsClosed: new Set(),
+    };
+    const { api, spies } = makeTabMutationApi(state);
+    const { api: windowsApi } = makeWindowsApi(state, { lastFocused: 500 });
+    const success = mode !== "failed" && mode !== "cancelled";
+    if (mode === "fallback") spies.move.mockRejectedValueOnce(new Error("original move failed"));
+    if (mode === "failed") spies.move.mockRejectedValue(new Error("move failed"));
+    let windowAtRelease: number | undefined;
+    const cdp = {
+      releaseSessionTab: vi.fn(async () => {
+        windowAtRelease = state.tabs.get(7)?.windowId;
+        if (mode === "cleanup_failed") throw new Error("debugger release failed");
+      }),
+    };
+    const controller = new AbortController();
+    if (mode === "cancelled") controller.abort();
+
+    const result = await handleTabReturn(
+      sm,
+      { session_id: "aa11", tab_id: 7 },
+      {
+        tabs: api,
+        windows: windowsApi,
+        cdp,
+        signal: controller.signal,
+        agentOverlayReset: { resetAgentOverlays: vi.fn(async () => {}) },
+      },
+    );
+
+    expect("code" in result).toBe(!success);
+    expect(ctx.borrowedTabs.has(7)).toBe(!success);
+    expect(cdp.releaseSessionTab).toHaveBeenCalledTimes(success ? 1 : 0);
+    if (success) {
+      expect(cdp.releaseSessionTab).toHaveBeenCalledWith("aa11", 7);
+      expect(windowAtRelease).toBe(mode === "fallback" ? 500 : 200);
+      expect(spies.move).toHaveBeenCalledTimes(mode === "fallback" ? 2 : 1);
+    }
+  });
+
   it("returns the tab to its original window/index and clears borrowedTabs", async () => {
     const sm = new SessionManager({ agentWindow: fakeAgentWindow([100]) });
     const ctx = await sm.start("aa11");

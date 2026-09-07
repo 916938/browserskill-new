@@ -651,6 +651,155 @@ describe("ChromiumCdp", () => {
     expect(cdp.networkEntriesSince(33, 0, 50, 1000).entries[0].url).toBeUndefined();
   });
 
+  it("releases only the returning session's claim on a tab", async () => {
+    const { api } = fakeApi();
+    const cdp = new ChromiumCdp(api);
+    await cdp.ensureAttached(1);
+    await cdp.ensureAttached(2);
+    cdp.trackSessionTab("aa11", 1);
+    cdp.trackSessionTab("bb22", 1);
+    cdp.trackSessionTab("aa11", 2);
+
+    await cdp.releaseSessionTab("unknown", 1);
+    await cdp.releaseSessionTab("aa11", 1);
+    expect(api.detach).not.toHaveBeenCalled();
+
+    await cdp.releaseSessionTab("bb22", 1);
+    await cdp.releaseSessionTab("bb22", 1);
+    expect(api.detach).toHaveBeenCalledExactlyOnceWith({ tabId: 1 });
+    expect(cdp.isAttached(2)).toBe(true);
+
+    await cdp.detachSession("aa11");
+    expect(api.detach).toHaveBeenCalledTimes(2);
+    expect(api.detach).toHaveBeenLastCalledWith({ tabId: 2 });
+  });
+
+  it.each([
+    false,
+    true,
+  ])("releases a tab with an attachment in flight (new owner: %s)", async (newOwner) => {
+    const { api } = fakeApi();
+    let finishAttach!: () => void;
+    vi.mocked(api.attach).mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finishAttach = resolve;
+        }),
+    );
+    const cdp = new ChromiumCdp(api);
+    cdp.trackSessionTab("aa11", 1);
+    const attaching = cdp.ensureAttached(1);
+    const releasing = cdp.releaseSessionTab("aa11", 1);
+    if (newOwner) cdp.trackSessionTab("bb22", 1);
+    finishAttach();
+    await Promise.all([attaching, releasing]);
+
+    expect(cdp.isAttached(1)).toBe(newOwner);
+    expect(api.detach).toHaveBeenCalledTimes(newOwner ? 0 : 1);
+  });
+
+  it("stops accepting dialogs on a returned tab even when another session keeps CDP attached", async () => {
+    const { api, onEvent } = fakeApi();
+    let controlled = true;
+    const cdp = new ChromiumCdp(api, { shouldAutoAcceptDialog: () => controlled });
+    cdp.trackSessionTab("aa11", 1);
+    cdp.trackSessionTab("bb22", 1);
+    await cdp.ensureAttached(1);
+    onEvent.fire({ tabId: 1 }, "Page.javascriptDialogOpening", {
+      type: "confirm",
+      message: "before return",
+    });
+    await vi.waitFor(() => expect(cdp.dialogsSince(1, 0)).toHaveLength(1));
+    vi.mocked(api.sendCommand).mockClear();
+
+    controlled = false;
+    await cdp.releaseSessionTab("aa11", 1);
+    expect(cdp.isAttached(1)).toBe(true);
+    onEvent.fire({ tabId: 1 }, "Page.javascriptDialogOpening", {
+      type: "confirm",
+      message: "after return",
+    });
+    await Promise.resolve();
+    expect(api.sendCommand).not.toHaveBeenCalled();
+    expect(cdp.dialogsSince(1, 0)).toHaveLength(1);
+
+    controlled = true;
+    onEvent.fire({ tabId: 1 }, "Page.javascriptDialogOpening", {
+      type: "alert",
+      message: "borrowed again",
+    });
+    await vi.waitFor(() => expect(cdp.dialogsSince(1, 0)).toHaveLength(2));
+    expect(api.sendCommand).toHaveBeenCalledExactlyOnceWith(
+      { tabId: 1 },
+      "Page.handleJavaScriptDialog",
+      { accept: true },
+    );
+  });
+
+  it("ignores dialog events after detach, including a pending eligibility check", async () => {
+    const { api, onEvent } = fakeApi();
+    let resolveEligibility!: (value: boolean) => void;
+    const shouldAutoAcceptDialog = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          resolveEligibility = resolve;
+        }),
+    );
+    const cdp = new ChromiumCdp(api, { shouldAutoAcceptDialog });
+    await cdp.ensureAttached(1);
+    onEvent.fire({ tabId: 1 }, "Page.javascriptDialogOpening", { type: "alert" });
+    await cdp.detach(1);
+    resolveEligibility(true);
+    await Promise.resolve();
+    onEvent.fire({ tabId: 1 }, "Page.javascriptDialogOpening", { type: "alert" });
+
+    expect(shouldAutoAcceptDialog).toHaveBeenCalledOnce();
+    expect(api.sendCommand).not.toHaveBeenCalledWith(
+      expect.anything(),
+      "Page.handleJavaScriptDialog",
+      expect.anything(),
+    );
+    expect(cdp.dialogsSince(1, 0)).toEqual([]);
+  });
+
+  it("does not accept dialogs when the tab's current scope cannot be determined", async () => {
+    const { api, onEvent } = fakeApi();
+    const shouldAutoAcceptDialog = vi.fn(async () => {
+      throw new Error("tab is gone");
+    });
+    const cdp = new ChromiumCdp(api, { shouldAutoAcceptDialog });
+    await cdp.ensureAttached(1);
+    vi.mocked(api.sendCommand).mockClear();
+
+    onEvent.fire({ tabId: 1 }, "Page.javascriptDialogOpening", { type: "confirm" });
+    await Promise.resolve();
+
+    expect(shouldAutoAcceptDialog).toHaveBeenCalledWith(1);
+    expect(api.sendCommand).not.toHaveBeenCalled();
+    expect(cdp.dialogsSince(1, 0)).toEqual([]);
+  });
+
+  it("does not restore dialog state when an acceptance completes after detach", async () => {
+    const { api, onEvent } = fakeApi();
+    const cdp = new ChromiumCdp(api);
+    await cdp.ensureAttached(1);
+    let finishAccept!: () => void;
+    vi.mocked(api.sendCommand).mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finishAccept = resolve;
+        }),
+    );
+
+    onEvent.fire({ tabId: 1 }, "Page.javascriptDialogOpening", { type: "alert" });
+    await cdp.detach(1);
+    finishAccept();
+    await Promise.resolve();
+
+    expect(cdp.dialogsSince(1, 0)).toEqual([]);
+    expect(cdp.dialogCursor(1)).toBe(0);
+  });
+
   it("detachSession only detaches tabs no other session owns", async () => {
     const { api } = fakeApi();
     const cdp = new ChromiumCdp(api);

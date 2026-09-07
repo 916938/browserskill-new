@@ -345,7 +345,15 @@ export class ToolDispatcher {
         return result;
       }
       case "tool.tab_return":
-        return handleTabReturn(this.sessions, req.params as TabReturnParams, { signal });
+        return this.withHoverReleaseForRequest(
+          req.params as TabReturnParams,
+          () =>
+            handleTabReturn(this.sessions, req.params as TabReturnParams, {
+              signal,
+              cdp: this.cdp,
+            }),
+          signal,
+        );
       case "tool.window_resize":
         return handleWindowResize(
           this.sessions,

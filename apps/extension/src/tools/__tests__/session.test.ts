@@ -257,11 +257,15 @@ describe("handleSessionStop with auto-return", () => {
       moves: [],
     };
     const { tabs, windows } = makeApis(state, { moveThrowsFor: new Set([1]) });
+    const cdp = {
+      detachSession: vi.fn(async () => {}),
+      releaseSessionTab: vi.fn(async () => {}),
+    };
 
     const res = await handleSessionStop(
       sm,
       { session_id: "aa11" },
-      { tabManagement: { tabs, windows } },
+      { cdp, tabManagement: { tabs, windows } },
     );
     if ("code" in res) throw new Error(`unexpected error: ${JSON.stringify(res)}`);
     expect(res.return_failures?.map((f) => f.tab_id)).toEqual([1]);
@@ -269,6 +273,8 @@ describe("handleSessionStop with auto-return", () => {
     expect(sm.has("aa11")).toBe(true);
     expect(ctx.borrowedTabs.has(1)).toBe(true);
     expect(ctx.borrowedTabs.has(2)).toBe(false);
+    expect(cdp.releaseSessionTab).toHaveBeenCalledExactlyOnceWith("aa11", 2);
+    expect(cdp.detachSession).not.toHaveBeenCalled();
     expect(aw.remove).not.toHaveBeenCalled();
   });
 

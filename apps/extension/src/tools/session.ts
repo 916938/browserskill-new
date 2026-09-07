@@ -2,7 +2,7 @@ import { type SessionManager, SessionStartCleanupError } from "@/session-manager
 import type { RpcError } from "@/transport/types";
 import { rpcError } from "./errors";
 import { clearRecordingForSession } from "./record";
-import type { ChromeTabsApi } from "./shared";
+import type { CdpRunner, ChromeTabsApi } from "./shared";
 import { isRpcError } from "./shared";
 import { returnBorrowedTab, type TabManagementDeps } from "./tabs";
 
@@ -84,7 +84,7 @@ export interface SessionStopResult {
 
 export interface SessionStopDeps {
   signal?: AbortSignal;
-  cdp?: {
+  cdp?: Pick<CdpRunner, "releaseSessionTab"> & {
     detachSession(sessionId: string): Promise<void>;
   };
   /**
@@ -209,6 +209,7 @@ export async function handleSessionStop(
     try {
       const tabManagement = {
         ...(deps.tabManagement ?? {}),
+        cdp: deps.cdp ?? deps.tabManagement?.cdp,
         signal: deps.signal,
         isAgentWindowId:
           deps.tabManagement?.isAgentWindowId ??
