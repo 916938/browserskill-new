@@ -3,7 +3,7 @@
 
 use std::fs;
 use std::io::{Cursor, Read, Write};
-use std::net::TcpListener;
+use std::net::{TcpListener, TcpStream};
 use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
@@ -61,6 +61,10 @@ impl ReleaseServer {
                     }
                     Err(err) => panic!("accept release request: {err}"),
                 };
+                // Windows accept() inherits the listener's nonblocking mode.
+                // Keep accept polling for shutdown, but read/write each request
+                // in blocking mode with the bounded timeouts below.
+                stream.set_nonblocking(false).unwrap();
                 stream
                     .set_read_timeout(Some(Duration::from_secs(5)))
                     .unwrap();
@@ -105,6 +109,36 @@ impl Drop for ReleaseServer {
         self.stop.store(true, Ordering::SeqCst);
         let _ = self.worker.take().unwrap().join();
     }
+}
+
+#[test]
+fn release_server_waits_for_delayed_and_fragmented_request_headers() {
+    let server = ReleaseServer::new(b"test binary");
+    let address = server
+        .url
+        .strip_prefix("http://")
+        .unwrap()
+        .strip_suffix("/version.json")
+        .unwrap();
+    let mut stream = TcpStream::connect(address).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    stream
+        .set_write_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    // Give accept() time to run before any bytes arrive, then split the
+    // headers across writes. Both reads must wait rather than return WouldBlock.
+    thread::sleep(Duration::from_millis(100));
+    stream.write_all(b"GET /version.json HTTP/1.1\r\n").unwrap();
+    thread::sleep(Duration::from_millis(100));
+    stream.write_all(b"Host: localhost\r\n\r\n").unwrap();
+    let mut response = String::new();
+    stream.read_to_string(&mut response).unwrap();
+    assert!(response.starts_with("HTTP/1.1 200 OK\r\n"), "{response}");
+    let (_, body) = response.split_once("\r\n\r\n").unwrap();
+    let manifest: serde_json::Value = serde_json::from_str(body).unwrap();
+    assert_eq!(manifest["version"], "999.0.0");
 }
 
 struct Fixture {
