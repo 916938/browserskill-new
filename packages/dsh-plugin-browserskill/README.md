@@ -112,7 +112,7 @@ shell's theme cannot bleed back in.
 - **Lifecycle**: hidden while the plugin owns no sessions; appears on the first
   `browser_session` start action; disappears when all sessions stop (or the plugin unloads).
 - **Focus view**: status row (green/idle/red dot + session + action + mm:ss), the latest page
-  frame (refreshes every ~1.5s while active, ~8s when idle; the last good frame stays on
+  frame (while viewed, refreshes every ~1.5s while active, ~8s when idle; the last good frame stays on
   stage while the next one loads, and is kept on errors so the card does not flash),
   and a compact icon toolbar (Interrupt + Pop out, hover for the label).
 - **Interrupt**: one click kills the in-flight bsk command of the focus session (same semantics
@@ -129,11 +129,32 @@ shell's theme cannot bleed back in.
 - **Pop out (PiP)**: upgrades the card into a native Document PiP window (requires a user
   gesture, per browser rules), sized from the current card; closing the PiP falls back to the
   in-page card with state intact. Browsers without Document PiP simply hide the button.
-- **Wire**: the host serves `GET /bsk-observation/state`, `GET /bsk-observation/events` (SSE),
-  `POST /bsk-observation/interrupt`, and `GET /bsk-observation/thumbnail/<attachmentId>` over
-  the dsh `webServer` route seam (dsh 0.1's Typert Remote pipeline is closed to out-of-tree
-  packages). All commands for one session — tool calls and frame captures alike — run through a
-  per-session FIFO, because the daemon accepts only one unfinished command per session.
+- **Screenshot demand**: the client requests periodic screenshots while an observation view is
+  visible, using the PiP document's visibility when popped out. Hidden or collapsed views can
+  keep subscribing to state without requesting screenshots. The first screenshot subscriber
+  starts capture scheduling; the last one's departure cancels timers and skips queued captures.
+  An already running capture may finish. Demand applies to the service's owned sessions, not just
+  the selected session.
+- **Wire**: `GET /bsk-observation/events` is the live synchronization channel (SSE). Every connection,
+  including reconnects, starts with `{ type: "snapshot", sessions, available }`, followed by
+  `upsert`, `remove`, `reset`, and `availability` events on the same stream. Replace local state
+  with each snapshot before applying subsequent events. Use `?thumbnails=0` for state-only
+  subscriptions or `?thumbnails=1` to request screenshots; omitting the parameter defaults to
+  requesting screenshots for compatibility. Closing the stream releases its screenshot demand.
+  `GET /bsk-observation/state` remains a one-time `{ sessions, available }` read and does not
+  request screenshots. It has no ordering guarantee relative to a separate SSE connection;
+  live clients should initialize and resynchronize from the stream's snapshot instead.
+  The host also serves `POST /bsk-observation/interrupt`, `POST /bsk-observation/stop`, and
+  `GET /bsk-observation/thumbnail/<attachmentId>` through the dsh `webServer` route seam
+  (dsh 0.1's Typert Remote pipeline is closed to out-of-tree packages). All commands for one
+  session — tool calls and frame captures alike — run through a per-session FIFO, because the
+  daemon accepts only one unfinished command per session.
+- **Programmatic subscription**: `ObservationService.subscribe(listener, { thumbnails: false })`
+  subscribes to state without requesting screenshots. On an active service, the listener receives
+  the initial `snapshot` synchronously, before `subscribe` returns, then receives subsequent
+  changes. `thumbnails` defaults to `true`, so callers should choose it explicitly. The returned
+  unsubscribe function is safe to call repeatedly and releases this subscription's screenshot
+  demand. Subscribing after service disposal is a no-op.
 - **Trust model**: these routes expose live screenshots (and an interrupt write), so they
   replicate the browser-trust fence dsh applies to its own `/api` routes: the request Host
   must be a loopback authority (`localhost`, `127.0.0.0/8`, `[::1]`), a present Origin must

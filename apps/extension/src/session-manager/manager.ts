@@ -125,6 +125,19 @@ export class SessionManager {
   }
 
   /**
+   * Forget a tab Chrome has removed, including any uncommitted borrow.
+   * Whole-window closures keep committed borrows until the window-removed
+   * handler reports which user tabs could not be returned.
+   */
+  forgetClosedTab(tabId: number, { isWindowClosing = false } = {}): void {
+    this.borrowReservations.delete(tabId);
+    for (const ctx of this.sessions.values()) {
+      ctx.agentCreatedTabs.delete(tabId);
+      if (!isWindowClosing) ctx.borrowedTabs.delete(tabId);
+    }
+  }
+
+  /**
    * Look up whether `tabId` is currently borrowed by some *other*
    * session than the one calling. Used by M8 `tab_borrow` to refuse
    * a second borrow on the same Chrome tab, and by `tab_close` to

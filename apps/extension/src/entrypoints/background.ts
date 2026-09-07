@@ -54,7 +54,12 @@ export default defineBackground(() => {
   const transport = new WSTransport({ url: __BSK_DAEMON_WS_URL__ });
   initTemplateClient(transport);
   const sessions = new SessionManager();
-  const cdp = new ChromiumCdp();
+  const cdp = new ChromiumCdp(undefined, {
+    shouldAutoAcceptDialog: async (tabId) => {
+      const tab = await chrome.tabs.get(tabId);
+      return sessions.findByWindowId(tab.windowId) !== null;
+    },
+  });
   const sessionsLive = attachSessionsLiveFlag({ manager: sessions });
   let overlayGeneration = 0;
   const controlModes = new Map<string, OverlayMode>();
@@ -172,8 +177,8 @@ export default defineBackground(() => {
     if (!sessions.findByWindowId(tab.windowId)) return;
     void pushOverlayStateForTab(tab.id, tab.windowId);
   });
-  chrome.tabs.onRemoved.addListener((tabId) => {
-    sessions.forgetAgentCreatedTab(tabId);
+  chrome.tabs.onRemoved.addListener((tabId, removeInfo) => {
+    sessions.forgetClosedTab(tabId, { isWindowClosing: removeInfo.isWindowClosing });
   });
   // Re-sync the storage.session flag on SW startup so a previous SW's
   // stale `true` does not keep waking us on every page load until the
