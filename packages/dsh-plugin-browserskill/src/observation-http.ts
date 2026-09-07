@@ -5,12 +5,18 @@
  * the event allowlist lives in dsh-api-remotes), so the plugin serves its
  * observation channel through the documented `webServer` route seam instead:
  *
- *   GET  /bsk-observation/state      → { sessions, available }
+ *   GET  /bsk-observation/state      → one-time { sessions, available } read
  *   GET  /bsk-observation/events     → SSE snapshot, then ObservationEvent increments
- *                                    (?thumbnails=0 for state-only subscribers)
+ *                                    (on every connection, including reconnects)
+ *                                    ?thumbnails=0: state only; =1: request screenshots
+ *                                    Omitted parameter defaults to screenshots.
  *   POST /bsk-observation/interrupt  → body {sessionId?} → {interrupted: boolean}
  *   POST /bsk-observation/stop       → body {sessionId} → {stopped: boolean}
  *   GET  /bsk-observation/thumbnail/<attachmentId> → image bytes
+ *
+ * Live clients initialize/resynchronize from the SSE snapshot; a separate
+ * /state read has no ordering guarantee relative to the stream and does not
+ * request screenshots. Closing an SSE connection releases its screenshot demand.
  *
  * Routes exist only when a webServer service is mounted (web composition);
  * headless deployments skip registration entirely.

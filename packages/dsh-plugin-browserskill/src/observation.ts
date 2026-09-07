@@ -127,7 +127,7 @@ export class ObservationService {
     return this.deps.scheduler ?? DEFAULT_SCHEDULER;
   }
 
-  /** All current entries (client initial/resync snapshot). */
+  /** One-time state read; use subscribe for an ordered snapshot and subsequent changes. */
   getState(): SessionObservation[] {
     return [...this.observations.values()].map((entry) => ({ ...entry }));
   }
@@ -143,7 +143,19 @@ export class ObservationService {
     this.emit({ type: "availability", available });
   }
 
-  /** A snapshot and subsequent changes share one ordered subscription. */
+  /**
+   * Subscribe to an ordered initial snapshot and subsequent changes. On an
+   * active service, listener receives the snapshot synchronously before this
+   * method returns. Subscribing after disposal is a no-op.
+   *
+   * `thumbnails` defaults to true for compatibility: this subscription counts
+   * as a screenshot viewer for the service's owned sessions. Pass false for
+   * state-only observation. The first viewer starts capture scheduling.
+   *
+   * @returns An idempotent unsubscribe function releasing this subscription's
+   * screenshot demand. When the last viewer leaves, scheduled/queued captures
+   * are cancelled/skipped; an already running capture may finish.
+   */
   subscribe(
     listener: (event: ObservationEvent) => void,
     { thumbnails = true }: { thumbnails?: boolean } = {},
