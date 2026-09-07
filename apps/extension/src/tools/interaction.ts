@@ -609,11 +609,28 @@ type SelectMutationResult =
 // tool.fill
 // ---------------------------------------------------------------------------
 
-interface FillPreparation {
-  before?: string;
-  expected?: string;
-  valueLength?: number;
-  error?: string;
+type FillFailureReason =
+  | "target_not_fillable"
+  | "fill_value_invalid"
+  | "fill_target_changed"
+  | "fill_focus_lost"
+  | "fill_value_mismatch"
+  | "fill_failed";
+
+type FillPreparation =
+  | { before: string; expected: string }
+  | { reason: FillFailureReason; error: string };
+
+type FillReadiness = "ready" | "background" | "fill_target_changed" | "fill_focus_lost";
+
+function fillError(reason: FillFailureReason, message: string): RpcError {
+  return rpcError(
+    reason === "target_not_fillable" || reason === "fill_value_invalid"
+      ? "invalid_params"
+      : "cdp_failed",
+    reason,
+    message,
+  );
 }
 
 interface FillScriptReply<T> {
@@ -690,12 +707,8 @@ export async function handleFill(
     if (throwIfAborted(deps.signal)) {
       return { code: "cancelled", message: "fill aborted" };
     }
-    await nodeCdp.send(target.tabId, "DOM.focus", { backendNodeId: node.backendNodeId });
   } catch (err) {
-    return {
-      code: "cdp_failed",
-      message: err instanceof Error ? err.message : String(err),
-    };
+    return fillError("fill_failed", err instanceof Error ? err.message : String(err));
   }
 
   if (throwIfAborted(deps.signal)) {
@@ -711,6 +724,31 @@ export async function handleFill(
     if (throwIfAborted(deps.signal)) {
       return { code: "cancelled", message: "fill aborted" };
     }
+    try {
+      await nodeCdp.send(target.tabId, "DOM.focus", { backendNodeId: node.backendNodeId });
+    } catch (error) {
+      // Chrome rejects DOM.focus for disabled controls, including inherited
+      // fieldset state. Classify the live target before treating this as a
+      // browser failure; the normal path needs no extra round trip.
+      const editable = await nodeCdp.send<FillScriptReply<boolean>>(
+        target.tabId,
+        "Runtime.callFunctionOn",
+        { objectId, functionDeclaration: FILL_EDITABLE_FUNCTION, returnByValue: true },
+      );
+      if (throwIfAborted(deps.signal)) {
+        return { code: "cancelled", message: "fill aborted" };
+      }
+      if (!editable.exceptionDetails && editable.result?.value === false) {
+        return fillError(
+          "target_not_fillable",
+          "fill target is not editable or its input type is unsupported",
+        );
+      }
+      throw error;
+    }
+    if (throwIfAborted(deps.signal)) {
+      return { code: "cancelled", message: "fill aborted" };
+    }
     // Check editability before clearing. Keep the expected result tied to
     // this object, including the existing value on the append path.
     const prepared = await nodeCdp.send<FillScriptReply<FillPreparation>>(
@@ -721,14 +759,9 @@ export async function handleFill(
         functionDeclaration: `function(value, clearBefore) {
           const tag = this.tagName.toLowerCase();
           const native = tag === 'input' || tag === 'textarea';
-          if (!(${FILL_EDITABLE_FUNCTION}).call(this)) return { error: 'fill target is not editable or its input type is unsupported' };
-          const focused = () => this.getRootNode().activeElement === this && this.ownerDocument.hasFocus();
-          if (!focused()) return { error: 'fill target does not have focus' };
+          if (!(${FILL_EDITABLE_FUNCTION}).call(this)) return { reason: 'target_not_fillable', error: 'fill target is not editable or its input type is unsupported' };
+          if (this.getRootNode().activeElement !== this) return { reason: 'fill_focus_lost', error: 'fill target does not have focus' };
           const before = clearBefore ? '' : (${FILL_VALUE_FUNCTION}).call(this);
-          if (!clearBefore && value !== '' && native && typeof this.selectionStart === 'number' &&
-              (this.selectionStart !== before.length || this.selectionEnd !== before.length)) {
-            return { error: 'fill append requires the caret at the end of the field' };
-          }
           let expected = before + value;
           if (native) {
             // Use the browser's own value sanitization (e.g. textarea
@@ -742,11 +775,11 @@ export async function handleFill(
             if (tag === 'input') expected = expected.replace(/\\r\\n|\\r|\\n/g, ' ');
             normalizer.value = expected;
             if (expected !== '' && normalizer.value === '' && this.type === 'number') {
-              return { error: 'fill value is not valid for a number input' };
+              return { reason: 'fill_value_invalid', error: 'fill value is not valid for a number input' };
             }
             expected = normalizer.value;
             if (this.type !== 'number' && this.maxLength >= 0 && expected.length > this.maxLength) {
-              return { error: 'fill value exceeds the target maxlength' };
+              return { reason: 'fill_value_invalid', error: 'fill value exceeds the target maxlength' };
             }
           } else {
             expected = expected.replace(/\\r\\n?/g, '\\n');
@@ -760,7 +793,7 @@ export async function handleFill(
             }
             this.dispatchEvent(new Event('input', { bubbles: true }));
           }
-          return { before, expected, valueLength: Math.max(0, expected.length - before.length) };
+          return { before, expected };
         }`,
         arguments: [{ value: params.value }, { value: clearBefore }],
         returnByValue: true,
@@ -770,44 +803,95 @@ export async function handleFill(
       return { code: "cancelled", message: "fill aborted" };
     }
     if (prepared.exceptionDetails) {
-      return { code: "cdp_failed", message: "fill preparation script failed" };
+      return fillError("fill_failed", "fill preparation script failed");
     }
     const preparation = prepared.result?.value;
-    if (
-      preparation?.error ||
-      typeof preparation?.before !== "string" ||
-      typeof preparation?.expected !== "string" ||
-      typeof preparation.valueLength !== "number"
-    ) {
-      return {
-        code: "cdp_failed",
-        message: preparation?.error ?? "fill preparation returned an unexpected result",
-      };
+    if (preparation && "error" in preparation) {
+      return fillError(preparation.reason, preparation.error);
+    }
+    if (typeof preparation?.before !== "string" || typeof preparation?.expected !== "string") {
+      return fillError("fill_failed", "fill preparation returned an unexpected result");
     }
     // A separate call runs after the clearing event's microtasks drain.
-    // Confirm the target before sending input to the focused element.
-    const ready = await nodeCdp.send<FillScriptReply<boolean>>(
-      target.tabId,
-      "Runtime.callFunctionOn",
-      {
-        objectId,
-        functionDeclaration: `function(before) {
-          return (${FILL_EDITABLE_FUNCTION}).call(this) &&
-            this.getRootNode().activeElement === this && this.ownerDocument.hasFocus() &&
-            (${FILL_VALUE_FUNCTION}).call(this) === before;
-        }`,
-        arguments: [{ value: preparation.before }],
-        returnByValue: true,
-      },
-    );
+    // DOM focus works in background tabs. Use document.hasFocus() only to
+    // detect deferred focus events, never to reject background input.
+    const checkReady = async (): Promise<FillReadiness | RpcError> => {
+      const reply = await nodeCdp.send<FillScriptReply<FillReadiness>>(
+        target.tabId,
+        "Runtime.callFunctionOn",
+        {
+          objectId,
+          functionDeclaration: `function(before) {
+            if (!(${FILL_EDITABLE_FUNCTION}).call(this) ||
+                (${FILL_VALUE_FUNCTION}).call(this) !== before) return 'fill_target_changed';
+            if (this.getRootNode().activeElement !== this) return 'fill_focus_lost';
+            return this.ownerDocument.hasFocus() ? 'ready' : 'background';
+          }`,
+          arguments: [{ value: preparation.before }],
+          returnByValue: true,
+        },
+      );
+      const state = reply.result?.value;
+      if (
+        reply.exceptionDetails ||
+        (state !== "ready" &&
+          state !== "background" &&
+          state !== "fill_target_changed" &&
+          state !== "fill_focus_lost")
+      ) {
+        return fillError(
+          "fill_failed",
+          "fill readiness script failed or returned an unexpected result",
+        );
+      }
+      return state;
+    };
+    let ready = await checkReady();
     if (throwIfAborted(deps.signal)) {
       return { code: "cancelled", message: "fill aborted" };
     }
-    if (ready.exceptionDetails || ready.result?.value !== true) {
-      return {
-        code: "cdp_failed",
-        message: "fill target changed, lost focus, or could not be checked before typing",
-      };
+    // Restore focus once only if clearing left this same target editable
+    // and unchanged. Recheck after focus handlers have run.
+    if (clearBefore && ready === "fill_focus_lost") {
+      await nodeCdp.send(target.tabId, "DOM.focus", { backendNodeId: node.backendNodeId });
+      if (throwIfAborted(deps.signal)) {
+        return { code: "cancelled", message: "fill aborted" };
+      }
+      ready = await checkReady();
+    }
+    if (throwIfAborted(deps.signal)) {
+      return { code: "cancelled", message: "fill aborted" };
+    }
+    if (typeof ready !== "string") return ready;
+    if (ready !== "ready" && ready !== "background") {
+      return fillError(ready, "fill target changed or lost focus before typing");
+    }
+    if (params.value !== "" && (!clearBefore || ready === "background")) {
+      // Native editing commands also support number/email inputs, whose
+      // selection APIs cannot set a caret, and multiline contenteditables.
+      // Also do this for background replacement: CDP input focuses the
+      // renderer, delivering deferred focus events before it inserts text.
+      // Use a command-only event so this does not invoke an End shortcut.
+      try {
+        await deps.cdp.send(target.tabId, "Input.dispatchKeyEvent", {
+          type: "rawKeyDown",
+          commands: ["moveToEndOfDocument"],
+        });
+      } finally {
+        await deps.cdp.send(target.tabId, "Input.dispatchKeyEvent", { type: "keyUp" });
+      }
+      if (throwIfAborted(deps.signal)) {
+        return { code: "cancelled", message: "fill aborted" };
+      }
+      // Focus and key handlers can change the target or move focus too.
+      ready = await checkReady();
+      if (throwIfAborted(deps.signal)) {
+        return { code: "cancelled", message: "fill aborted" };
+      }
+      if (typeof ready !== "string") return ready;
+      if (ready !== "ready" && ready !== "background") {
+        return fillError(ready, "fill target changed or lost focus while positioning the caret");
+      }
     }
     // CDP `Input.insertText` handles IME / multi-byte input out of the
     // box, much more reliably than per-key `dispatchKeyEvent`.
@@ -835,42 +919,51 @@ export async function handleFill(
       return { code: "cancelled", message: "fill aborted" };
     }
     if (notified.exceptionDetails) {
-      return { code: "cdp_failed", message: "fill notification script failed" };
+      return fillError("fill_failed", "fill notification script failed");
     }
-    const verified = await nodeCdp.send<FillScriptReply<boolean>>(
-      target.tabId,
-      "Runtime.callFunctionOn",
-      {
-        objectId,
-        functionDeclaration: `function(expected) {
-          return this.isConnected && (${FILL_VALUE_FUNCTION}).call(this) === expected;
+    const verified = await nodeCdp.send<
+      FillScriptReply<{ connected: boolean; matches: boolean; valueLength: number }>
+    >(target.tabId, "Runtime.callFunctionOn", {
+      objectId,
+      functionDeclaration: `function(expected) {
+          const value = (${FILL_VALUE_FUNCTION}).call(this);
+          return { connected: this.isConnected, matches: value === expected, valueLength: value.length };
         }`,
-        arguments: [{ value: preparation.expected }],
-        returnByValue: true,
-      },
-    );
+      arguments: [{ value: preparation.expected }],
+      returnByValue: true,
+    });
     if (throwIfAborted(deps.signal)) {
       return { code: "cancelled", message: "fill aborted" };
     }
-    if (verified.exceptionDetails || verified.result?.value !== true) {
-      return {
-        code: "cdp_failed",
-        message: verified.exceptionDetails
-          ? "fill verification script failed"
-          : "fill could not verify the expected value; observe the page before retrying",
-      };
+    const verification = verified.result?.value;
+    if (
+      verified.exceptionDetails ||
+      typeof verification?.connected !== "boolean" ||
+      typeof verification?.matches !== "boolean" ||
+      typeof verification?.valueLength !== "number"
+    ) {
+      return fillError(
+        "fill_failed",
+        "fill verification script failed or returned an unexpected result",
+      );
+    }
+    if (!verification.connected) {
+      return fillError("fill_target_changed", "fill target was removed or replaced during input");
+    }
+    if (!verification.matches) {
+      return fillError(
+        "fill_value_mismatch",
+        "fill could not verify the expected value; observe the page before deciding whether to retry",
+      );
     }
     return attachDialogs(deps.cdp, target.tabId, dialogCursor, {
       tab_id: target.tabId,
       used_ref: node.usedRef,
       used_selector: node.usedSelector,
-      value_length: preparation.valueLength,
+      value_length: verification.valueLength,
     });
   } catch (err) {
-    return {
-      code: "cdp_failed",
-      message: err instanceof Error ? err.message : String(err),
-    };
+    return fillError("fill_failed", err instanceof Error ? err.message : String(err));
   } finally {
     await nodeCdp.send(target.tabId, "Runtime.releaseObject", { objectId }).catch(() => undefined);
   }

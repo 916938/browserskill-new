@@ -124,6 +124,28 @@ describe("parseBskJson", () => {
     expect(() => parseBskJson({ ...base, code: 1, stderr: "boom" }, "x")).toThrow(/boom/);
   });
 
+  it("surfaces fill recovery guidance to the model without retrying", async () => {
+    const hint =
+      "observe the field before retrying; the page may have formatted the value. Continue if the visible result satisfies the user's intent";
+    const reply = {
+      ...base,
+      code: 3,
+      stdout: JSON.stringify({
+        code: "cdp_failed",
+        message: "fill could not verify the expected value",
+        data: { reason: "fill_value_mismatch" },
+        hint,
+      }),
+    };
+    let calls = 0;
+    const result = await runWithSessionBusyRetry(async () => {
+      calls++;
+      return reply;
+    });
+    expect(calls).toBe(1);
+    expect(() => parseBskJson(result, "fill")).toThrow(hint);
+  });
+
   it("reports killed-by-interrupt children (null exit code) as interrupted", () => {
     expect(() => parseBskJson({ ...base, code: null }, "navigate")).toThrow(/interrupted/);
   });

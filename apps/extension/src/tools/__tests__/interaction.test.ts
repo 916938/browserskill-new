@@ -541,13 +541,16 @@ describe("handleHover", () => {
 });
 
 function successfulFillScript(params: unknown) {
-  const args = (params as { arguments?: Array<{ value: unknown }> }).arguments ?? [];
+  const script = params as { arguments?: Array<{ value: unknown }>; functionDeclaration: string };
+  const args = script.arguments ?? [];
   return {
     result: {
       value:
         args.length === 2
-          ? { before: "", expected: args[0].value, valueLength: String(args[0].value).length }
-          : true,
+          ? { before: "", expected: args[0].value }
+          : script.functionDeclaration.startsWith("function(expected)")
+            ? { connected: true, matches: true, valueLength: String(args[0].value).length }
+            : "ready",
     },
   };
 }
@@ -613,7 +616,7 @@ describe("handleFill", () => {
     expect(res.used_ref).toBe("e1");
     const insert = fake.sent.find((c) => c.method === "Input.insertText");
     expect(insert?.params).toEqual({ text: "hello" });
-    // Preparation, readiness, notifications, and final verification.
+    // Foreground replacement needs no extra caret-positioning round trip.
     const callFns = fake.sent.filter((c) => c.method === "Runtime.callFunctionOn");
     expect(callFns).toHaveLength(4);
   });
@@ -634,6 +637,7 @@ describe("handleFill", () => {
         if (args.length === 2) expect(args[1].value).toBe(false);
         return successfulFillScript(p);
       },
+      "Input.dispatchKeyEvent": () => ({}),
       "Runtime.releaseObject": () => ({}),
       "Input.insertText": () => ({}),
     });
