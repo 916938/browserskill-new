@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-09-08
+
 ### Upstream sync — 2026-09-08（Tencent/BrowserSkill `47ac947` → `3c5f838`，205 commits）
 
 合并上游 PR #179、#186、#187、#188、#189、#190、#191、#192。
@@ -32,6 +34,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 保留 fork 特性：smart label 编辑、Profile Templates、`bsk invoke` 与 shell completion、Windows 非 Unix 适配。
 - `skill/SKILL.md`、README、CHANGELOG 保留 fork 增强版，未采纳上游对 SKILL.md 的精简重写。
 - i18n：保留 fork 的 Profile Template 文案，采纳上游文案更新。
+
+#### Fork 收尾
+
+- `skill/SKILL.md` 重构为上游 lean 骨架 + "Fork additions" 章节（430 → 225 行）；`crates/bsk-cli/skill/SKILL.md` 由 build.rs 自动复制，无需手工维护。
+- CI：fork 打 tag 时 store/npm 发布 job 在缺少凭据时自动跳过（`4b5ae2f`）；GitHub Release 的 CLI 二进制 + 扩展 zip 不受影响。
 
 #### Verification
 
