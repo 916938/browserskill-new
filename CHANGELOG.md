@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Upstream sync — 2026-09-08（Tencent/BrowserSkill `47ac947` → `3c5f838`，205 commits）
+
+合并上游 PR #179、#186、#187、#188、#189、#190、#191、#192。
+
+#### Added
+
+- Windows 自更新：detached helper 带重试上限、就绪确认与日志（`crates/bsk-cli/src/cli/update/windows.rs`）。
+- `fill` 成功前校验：新增 `fill_target_changed` / `fill_value_mismatch` / `target_not_fillable` 错误分类。
+- CDP 跨扩展帧访问拒绝（`cdp_extension_access_denied`）的识别与面向 Agent 的提示。
+- 会话停止时释放自动化状态（`releaseSessionTab`）与归还 tab 后的状态清理。
+
+#### Fixed
+
+- 已关闭的借用 tab 不再阻塞 `bsk session stop`（#186）。
+- 归还 tab 时正确释放 automation state（#187）。
+- 表单状态按元素匹配，避免跨元素误判（#188）。
+- DSH 插件 observation 同步与截图 capture 一致性（#190）。
+- Windows IPC 进程存活判定（#191）。
+
+#### Fork 取舍
+
+- `packages/dsh-plugin-browserskill/**`：整体采用上游，重放 fork 的 CRLF frontmatter 修复。
+- 保留 fork 特性：smart label 编辑、Profile Templates、`bsk invoke` 与 shell completion、Windows 非 Unix 适配。
+- `skill/SKILL.md`、README、CHANGELOG 保留 fork 增强版，未采纳上游对 SKILL.md 的精简重写。
+- i18n：保留 fork 的 Profile Template 文案，采纳上游文案更新。
+
+#### Verification
+
+- `cargo check --workspace --all-targets` 通过；`cargo test` 单测 325 通过。
+- 扩展 `tsc --noEmit` 通过；`vitest` 1128 通过。
+- 已知失败：`record_export_recovery::failed_bundle_export_can_be_recovered` 在非管理员 Windows 上创建命名管道 `\\.\pipe\daemon` 被拒（Access denied），属环境限制，与本次合并无关。
+
 ## [0.2.2] - 2026-09-06
 
 从 2026-09-06 起，CLI / Extension / DSH Plugin 共用同一 semver（沿用上游 0.2.0 起的版本方案）。
