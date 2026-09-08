@@ -98,8 +98,8 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
-            echo "::error::Environment secret NPM_TOKEN is not configured"
-            exit 1
+            echo "::notice::NPM_TOKEN is not configured — skipping npm publish (fork has no access to the upstream npm org)."
+            exit 0
           fi
           pnpm publish --access public --no-git-checks
           echo "Published ${PACKAGE_NAME}@${{ needs.resolve.outputs.version }}"

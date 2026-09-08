@@ -220,6 +220,8 @@ jobs:
 
   publish-cws:
     needs: [resolve, build-extension]
+    # Skip (instead of fail) when the fork has no Chrome Web Store credentials.
+    if: vars.CHROME_WEBSTORE_PUBLISHER_ID != '' && vars.CHROME_WEBSTORE_EXTENSION_ID != ''
     runs-on: ubuntu-latest
     environment: chrome-web-store
     permissions:
@@ -419,6 +421,8 @@ jobs:
 
   publish-edge-addons:
     needs: [resolve, build-extension]
+    # Skip (instead of fail) when the fork has no Edge Add-ons credentials.
+    if: vars.EDGE_ADDONS_PRODUCT_ID != '' && vars.EDGE_ADDONS_CLIENT_ID != ''
     runs-on: ubuntu-latest
     environment: edge-addons
     permissions:
