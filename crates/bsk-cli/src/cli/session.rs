@@ -50,6 +50,12 @@ pub enum SessionSub {
 
 #[derive(Debug, Clone, Args)]
 pub struct SessionStartArgs {
+    /// Deprecated compatibility flag. Automation settings in the extension take precedence.
+    #[arg(long)]
+    pub unattended: bool,
+    /// Optional task name displayed in local operation history.
+    #[arg(long)]
+    pub name: Option<String>,
     /// Target browser instance id (only required when multiple browsers
     /// are connected).
     #[arg(long)]
@@ -98,6 +104,8 @@ pub struct SessionStopArgs {
 #[derive(Debug, Serialize)]
 struct StartParams {
     #[serde(skip_serializing_if = "Option::is_none")]
+    task_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     browser_instance_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     width: Option<u32>,
@@ -109,6 +117,8 @@ struct StartParams {
 
 #[derive(Debug, Deserialize)]
 pub struct StartReply {
+    #[serde(default)]
+    pub interaction: Option<bsk_protocol::tools::InteractionPolicy>,
     pub session_id: String,
     pub browser_instance_id: String,
     #[serde(default)]
@@ -158,6 +168,9 @@ pub fn dispatch(cmd: SessionCmd, format: Format) -> Result<(), CliError> {
 }
 
 fn run_start(sock: PathBuf, args: SessionStartArgs, format: Format) -> Result<(), CliError> {
+    if args.unattended {
+        crate::cli::interaction_policy::warn_legacy_override("--unattended");
+    }
     if args.width.is_some() != args.height.is_some() {
         return Err(CliError::Local(anyhow::anyhow!(
             "--width and --height must be given together"
@@ -182,6 +195,7 @@ fn run_start(sock: PathBuf, args: SessionStartArgs, format: Format) -> Result<()
     let result = start_session(
         sock,
         SessionStartOptions {
+            name: args.name,
             browser: args.browser,
             width: args.width,
             height: args.height,
@@ -198,6 +212,7 @@ fn run_start(sock: PathBuf, args: SessionStartArgs, format: Format) -> Result<()
                         "session_id": reply.session_id,
                         "browser_instance_id": reply.browser_instance_id,
                         "agent_window_id": reply.agent_window_id,
+                        "interaction": reply.interaction,
                     }))
                     .map_err(|e| CliError::Local(anyhow::anyhow!(e)))?
                 );
@@ -216,6 +231,7 @@ fn run_start(sock: PathBuf, args: SessionStartArgs, format: Format) -> Result<()
 /// (focused window, browser-chosen size).
 #[derive(Debug, Default, Clone)]
 pub struct SessionStartOptions {
+    pub name: Option<String>,
     pub browser: Option<String>,
     pub width: Option<u32>,
     pub height: Option<u32>,
@@ -228,6 +244,7 @@ pub fn start_session(sock: PathBuf, opts: SessionStartOptions) -> Result<StartRe
         sock,
         Method::SessionStart,
         Some(StartParams {
+            task_name: opts.name,
             browser_instance_id: opts.browser,
             width: opts.width,
             height: opts.height,
@@ -542,9 +559,39 @@ fn run_skill_sync_for_session_start(format: Format) {
         for harness in &report.updated {
             eprintln!("≈ skill updated for {}", harness.cli_name());
         }
+        for (harness, reason) in &report.paused {
+            eprintln!(
+                "! skill auto-update paused for {}: {}; run `bsk doctor` for options",
+                harness.cli_name(),
+                reason.description()
+            );
+        }
     }
     for (harness, msg) in &report.errors {
         tracing::warn!(harness = harness.cli_name(), error = %msg, "skill sync failed");
+    }
+}
+
+#[cfg(test)]
+mod start_params_tests {
+    use super::*;
+
+    #[test]
+    fn start_params_send_task_name_without_policy_overrides() {
+        for task_name in [None, Some("Check settings".to_string())] {
+            let params = StartParams {
+                task_name: task_name.clone(),
+                browser_instance_id: None,
+                width: None,
+                height: None,
+                focused: None,
+            };
+            let expected = task_name.map_or_else(
+                || serde_json::json!({}),
+                |name| serde_json::json!({"task_name": name}),
+            );
+            assert_eq!(serde_json::to_value(params).unwrap(), expected);
+        }
     }
 }
 

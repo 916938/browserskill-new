@@ -170,7 +170,10 @@ describe("ToolDispatcher", () => {
     expect(sent).toHaveLength(1);
     expect(sent[0]).toEqual({
       id: "r-1",
-      result: { agent_window_id: 4242 },
+      result: {
+        agent_window_id: 4242,
+        interaction: { borrow_confirmation: "always", request_help: "enabled" },
+      },
     });
   });
 
@@ -597,6 +600,101 @@ describe("ToolDispatcher", () => {
     deliver({ ...makeRequest("tool.session_stop", { session_id: "aa11" }), id: "r-2" });
     await flushMicrotasks();
     expect(onSessionsChanged).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    "focus",
+    "blur",
+    "scroll_to",
+    "wheel",
+  ] as const)("routes %s with hover cleanup and cooperative cancellation", async (action) => {
+    const tab = { id: 7, windowId: 4242, active: true };
+    vi.stubGlobal("chrome", {
+      tabs: {
+        get: vi.fn(async () => tab),
+        query: vi.fn(async () => [tab]),
+        sendMessage: vi.fn(async () => undefined),
+      },
+    });
+    const sessions = new SessionManager({
+      agentWindow: {
+        create: async () => 4242,
+        remove: async () => {},
+        ensureActiveTab: async () => 7,
+      },
+    });
+    const ctx = await sessions.start("aa11");
+    ctx.refStore.set("e1", 12, { tabId: 7 });
+    const { transport, sent, deliver } = fakeTransport();
+    const onBrowserControlResumed = vi.fn();
+    let resolveNode: ((value: object) => void) | undefined;
+    const cdp = {
+      send: vi.fn(async (_tabId: number, method: string) => {
+        if (method === "DOM.resolveNode")
+          return new Promise((resolve) => {
+            resolveNode = resolve;
+          });
+        if (method === "DOM.getContentQuads") return { quads: [[0, 0, 100, 0, 100, 100, 0, 100]] };
+        if (method === "Page.getLayoutMetrics")
+          return { cssLayoutViewport: { clientWidth: 1000, clientHeight: 800 } };
+        if (method === "Runtime.callFunctionOn") return { result: { value: true } };
+        return {};
+      }),
+    } as unknown as TestDispatcherCdp;
+    const dispatcher = new ToolDispatcher({ transport, sessions, cdp, onBrowserControlResumed });
+    const hover = dispatcher as unknown as {
+      rememberHover: (sessionId: string, result: object) => void;
+      setHoverBypass: (sessionId: string, tabId: number, enabled: boolean) => Promise<void>;
+    };
+    hover.rememberHover("aa11", { tab_id: 7, x: 10, y: 20 });
+    await hover.setHoverBypass("aa11", 7, true);
+    dispatcher.start();
+    deliver(
+      makeRequest(`tool.${action}`, {
+        session_id: "aa11",
+        ref: "e1",
+        ...(action === "wheel" ? { delta_y: 120 } : {}),
+      }),
+    );
+    await vi.waitFor(() => expect(resolveNode).toBeDefined());
+    expect(onBrowserControlResumed).toHaveBeenCalledWith("aa11");
+    deliver({ id: "cancel-focus", method: "cancel", params: { rpc_id: "r-1" } });
+    resolveNode!({ object: { objectId: "focus-target" } });
+    await vi.waitFor(() => expect(sent).toHaveLength(2));
+    expect(sent).toContainEqual({ id: "cancel-focus", result: { cancelled: true } });
+    expect(sent).toContainEqual({
+      id: "r-1",
+      error: expect.objectContaining({ code: "cancelled" }),
+    });
+    expect(cdp.send).not.toHaveBeenCalledWith(7, "DOM.focus", expect.anything());
+    expect(cdp.send).not.toHaveBeenCalledWith(7, "Runtime.callFunctionOn", expect.anything());
+    if (action === "scroll_to" || action === "wheel") {
+      expect(cdp.send).toHaveBeenCalledWith(7, "Runtime.releaseObjectGroup", {
+        objectGroup: expect.any(String),
+      });
+    } else {
+      expect(cdp.send).toHaveBeenCalledWith(7, "Runtime.releaseObject", {
+        objectId: "focus-target",
+      });
+    }
+    expect(chrome.tabs.sendMessage).toHaveBeenCalledWith(
+      7,
+      expect.objectContaining({ enabled: false }),
+    );
+    if (action === "wheel") {
+      expect(cdp.send).toHaveBeenCalledWith(7, "Input.dispatchMouseEvent", {
+        type: "mouseMoved",
+        x: 10,
+        y: 20,
+      });
+      expect(cdp.send).not.toHaveBeenCalledWith(
+        7,
+        "Input.dispatchMouseEvent",
+        expect.objectContaining({ type: "mouseWheel" }),
+      );
+    }
+    expect(dispatcher.inflightAbortControllers.size).toBe(0);
+    dispatcher.stop();
   });
 
   it("invokes onBrowserControlResumed for browser-control tools but not passive reads", async () => {

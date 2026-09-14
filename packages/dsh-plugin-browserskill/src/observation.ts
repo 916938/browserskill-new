@@ -562,6 +562,10 @@ export function actionForLabel(label: string): string {
       return "clicking";
     case "hover":
       return "hovering";
+    case "focus":
+      return "focusing";
+    case "blur":
+      return "blurring";
     case "fill":
       return "filling";
     case "select":

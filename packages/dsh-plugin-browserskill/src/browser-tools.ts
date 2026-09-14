@@ -156,6 +156,10 @@ const BROWSER_TOOL_SPECS: BrowserToolSpec[] = [
       tabId: TAB_ID_PARAM,
       maxDepth: { type: "integer", description: "Tree depth cap for observe/snapshot." },
       maxTokens: { type: "integer", description: "Token cap for observe/snapshot." },
+      cursor: {
+        type: "string",
+        description: "Observe continuation cursor; use current refs before continuing.",
+      },
       ref: { type: "string", description: "Fresh ref for scoped html or cropped screenshot." },
       maxBytes: { type: "integer", description: "HTML byte cap." },
       since: { type: "integer", description: "Console/network sequence cursor." },
@@ -167,12 +171,16 @@ const BROWSER_TOOL_SPECS: BrowserToolSpec[] = [
   {
     name: "browser_interact",
     description:
-      "Interact with an element in the active Agent Window tab. Actions: click, hover, fill, select, " +
-      "press. click/hover/fill/select require target; fill also requires value; select requires " +
-      "values; press requires key and may optionally focus target first.",
+      "Interact with the active Agent Window tab. Actions: click, hover, wheel, scroll-to, focus, blur, fill, select, " +
+      "press. click/hover/scroll-to/focus/blur/fill/select require target; fill also requires value; select requires " +
+      "values; press requires key and may optionally focus target first. wheel requires a nonzero deltaX or deltaY and optionally accepts target; observe afterwards to check the response.",
     actions: {
       click: "interact.click",
       hover: "interact.hover",
+      wheel: "interact.wheel",
+      "scroll-to": "interact.scroll-to",
+      focus: "interact.focus",
+      blur: "interact.blur",
       fill: "interact.fill",
       select: "interact.select",
       press: "interact.press",
@@ -182,15 +190,29 @@ const BROWSER_TOOL_SPECS: BrowserToolSpec[] = [
       tabId: TAB_ID_PARAM,
       target: TARGET_PARAM,
       button: { type: "string", enum: ["left", "middle", "right"], description: "Click button." },
-      clickCount: { type: "integer", description: "Click count." },
+      clickCount: { type: "integer", description: "Click count; Canvas accepts 1 or 2." },
+      captureId: { type: "string", description: "Single-use Canvas screenshot capture for click." },
+      imageX: {
+        type: "number",
+        description: "Click X in original PNG pixels; requires captureId/imageY.",
+      },
+      imageY: {
+        type: "number",
+        description: "Click Y in original PNG pixels; requires captureId/imageX.",
+      },
       value: { type: "string", description: "Text for fill." },
       noClear: { type: "boolean", description: "Append instead of clearing for fill." },
       modifiers: {
         type: "array",
         items: { type: "string", enum: ["alt", "ctrl", "meta", "shift"] },
-        description: "Modifiers held during hover.",
+        description: "Modifiers held during hover or wheel input.",
       },
       settleMs: { type: "integer", description: "Hover settle delay." },
+      deltaX: {
+        type: "number",
+        description: "Horizontal wheel input in CSS pixels; defaults to 0.",
+      },
+      deltaY: { type: "number", description: "Vertical wheel input in CSS pixels; defaults to 0." },
       timeoutMs: TIMEOUT_MS_PARAM,
       values: {
         type: "array",

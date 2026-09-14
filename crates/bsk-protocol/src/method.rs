@@ -21,6 +21,9 @@ pub enum MethodEffect {
 /// Namespaced method string (`system.handshake`, `tool.tab_list`, …).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Method {
+    /// Extension-only local history API; browser identity comes from the peer.
+    #[serde(rename = "audit.request")]
+    AuditRequest,
     #[serde(rename = "system.handshake")]
     SystemHandshake,
     #[serde(rename = "system.ping")]
@@ -86,6 +89,14 @@ pub enum Method {
     ToolClick,
     #[serde(rename = "tool.hover")]
     ToolHover,
+    #[serde(rename = "tool.wheel")]
+    ToolWheel,
+    #[serde(rename = "tool.scroll_to")]
+    ToolScrollTo,
+    #[serde(rename = "tool.focus")]
+    ToolFocus,
+    #[serde(rename = "tool.blur")]
+    ToolBlur,
     #[serde(rename = "tool.fill")]
     ToolFill,
     #[serde(rename = "tool.press")]
@@ -104,6 +115,12 @@ pub enum Method {
     ToolGetHtml,
     #[serde(rename = "tool.screenshot")]
     ToolScreenshot,
+    #[serde(rename = "tool.screenshot_full_page")]
+    ToolScreenshotFullPage,
+    #[serde(rename = "tool.screenshot_read")]
+    ToolScreenshotRead,
+    #[serde(rename = "tool.screenshot_release")]
+    ToolScreenshotRelease,
     #[serde(rename = "tool.console")]
     ToolConsole,
     #[serde(rename = "tool.network")]
@@ -182,6 +199,10 @@ impl Method {
             | Method::ToolNavigateForward
             | Method::ToolReload
             | Method::ToolClick
+            | Method::ToolWheel
+            | Method::ToolScrollTo
+            | Method::ToolFocus
+            | Method::ToolBlur
             | Method::ToolFill
             | Method::ToolPress
             | Method::ToolSelect
@@ -194,7 +215,7 @@ impl Method {
 
             // Transient input — no committed browser action, but still page
             // input. It must be stopped by pending user interrupts.
-            Method::ToolHover | Method::ToolObserve => MethodEffect::TransientInput,
+            Method::ToolHover | Method::ToolObserve | Method::ToolScreenshotFullPage => MethodEffect::TransientInput,
 
             // Passive reads — transparent.
             // `record_stop` / `record_await` observe / finish a recording
@@ -204,6 +225,7 @@ impl Method {
             | Method::ToolSnapshot
             | Method::ToolGetHtml
             | Method::ToolScreenshot
+            | Method::ToolScreenshotRead
             | Method::ToolConsole
             | Method::ToolNetwork
             | Method::ToolWaitForNavigation
@@ -221,7 +243,8 @@ impl Method {
             | Method::ToolSessionStop => MethodEffect::ControlPlane,
 
             // System / control — not gated.
-            Method::SystemHandshake
+            Method::AuditRequest
+            | Method::SystemHandshake
             | Method::SystemPing
             | Method::SystemStatus
             | Method::BrowserList
@@ -230,6 +253,7 @@ impl Method {
             | Method::TransferFinish
             | Method::TransferRead
             | Method::TransferRelease
+            | Method::ToolScreenshotRelease
             | Method::Cancel => MethodEffect::ControlPlane,
 
             // Template management — list/get/create/update/delete are
@@ -303,6 +327,18 @@ mod tests {
     }
 
     #[test]
+    fn full_page_capture_is_input_but_export_reads_are_not() {
+        assert!(Method::ToolScreenshotFullPage.requires_interrupt_gate());
+        assert_eq!(
+            Method::ToolScreenshotFullPage.effect(),
+            MethodEffect::TransientInput
+        );
+        assert!(!Method::ToolScreenshot.requires_interrupt_gate());
+        assert!(!Method::ToolScreenshotRead.requires_interrupt_gate());
+        assert!(!Method::ToolScreenshotRelease.requires_interrupt_gate());
+    }
+
+    #[test]
     fn is_mutating_classifies_read_only_tools_as_non_mutating() {
         assert!(!Method::ToolTabList.is_mutating());
         assert!(!Method::ToolSnapshot.is_mutating());
@@ -328,6 +364,10 @@ mod tests {
         assert!(Method::ToolNavigateForward.is_mutating());
         assert!(Method::ToolReload.is_mutating());
         assert!(Method::ToolClick.is_mutating());
+        assert!(Method::ToolWheel.is_mutating());
+        assert!(Method::ToolScrollTo.is_mutating());
+        assert!(Method::ToolFocus.is_mutating());
+        assert!(Method::ToolBlur.is_mutating());
         assert!(Method::ToolFill.is_mutating());
         assert!(Method::ToolPress.is_mutating());
         assert!(Method::ToolSelect.is_mutating());
@@ -372,6 +412,10 @@ mod tests {
         assert_eq!(Method::ToolHover.effect(), MethodEffect::TransientInput);
         assert_eq!(Method::ToolObserve.effect(), MethodEffect::TransientInput);
         assert_eq!(Method::ToolClick.effect(), MethodEffect::BrowserMutation);
+        assert_eq!(Method::ToolWheel.effect(), MethodEffect::BrowserMutation);
+        assert_eq!(Method::ToolScrollTo.effect(), MethodEffect::BrowserMutation);
+        assert_eq!(Method::ToolFocus.effect(), MethodEffect::BrowserMutation);
+        assert_eq!(Method::ToolBlur.effect(), MethodEffect::BrowserMutation);
         assert_eq!(Method::Cancel.effect(), MethodEffect::ControlPlane);
     }
 
@@ -381,6 +425,10 @@ mod tests {
         assert!(Method::ToolHover.requires_interrupt_gate());
         assert!(Method::ToolObserve.requires_interrupt_gate());
         assert!(Method::ToolClick.requires_interrupt_gate());
+        assert!(Method::ToolWheel.requires_interrupt_gate());
+        assert!(Method::ToolScrollTo.requires_interrupt_gate());
+        assert!(Method::ToolFocus.requires_interrupt_gate());
+        assert!(Method::ToolBlur.requires_interrupt_gate());
         assert!(!Method::Cancel.requires_interrupt_gate());
     }
 }

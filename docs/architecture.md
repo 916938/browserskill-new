@@ -29,8 +29,11 @@ flowchart TB
 ### bsk CLI (`crates/bsk-cli`)
 
 - Parses verb-noun subcommands (`bsk session start`, `bsk click`, …).
-- On first use, **auto-spawns** the daemon if `~/.bsk/daemon.lock` is absent or stale.
-- Speaks JSON Lines over `~/.bsk/daemon.sock` (Unix) or a named pipe (Windows).
+- Uses IPC to discover a running daemon. Automatically starts one only when
+  discovery or its listener is absent, unless `BSK_AUTO_START=0` disables implicit
+  startup. See [sandboxed agent setup](sandboxed-agents.md) for host-managed daemons.
+- Speaks JSON Lines over `$BSK_HOME/run/daemon.sock` (Unix) or a named pipe (Windows);
+  the default home is `~/.bsk`.
 - Renders human-readable output by default; `--json` emits structured responses.
 
 Key modules:
@@ -43,7 +46,7 @@ Key modules:
 
 ### bsk daemon (same binary: `bsk daemon`)
 
-- Listens on loopback WebSocket (default **52800**) for extensions.
+- Listens on loopback WebSocket (default **52800**, configurable with `bsk daemon start --port`) for extensions. The extension popup saves the matching connection port; saving ends existing sessions and reconnects when enabled.
 - Validates `Origin: chrome-extension://…` on handshake.
 - Maintains `browsers` (connected extensions) and `sessions` (Agent Window bindings).
 - **Per-session queue** serializes tool calls targeting one session.
@@ -83,6 +86,11 @@ Shared Rust types + JSON Schema generation. TypeScript mirrors frame shapes in
 3. Daemon resolves session `ab12` → browser client → forwards `tool.click` over WS.
 4. Extension dispatcher validates sandbox rules, invokes CDP via `BrowserDriver`.
 5. Response travels CLI ← daemon ← extension; CLI prints result and exits.
+
+The [scroll-to primitive reference](scroll-to.md) documents `tool.scroll_to`,
+including its CLI/plugin mappings, visible-bounds contract and cancellation
+behavior. It follows the same routing path and is classified as a browser
+mutation for session queueing and user-interruption gating.
 
 ## Session and sandbox model
 

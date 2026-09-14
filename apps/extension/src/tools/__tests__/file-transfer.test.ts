@@ -436,6 +436,8 @@ describe("file transfer tools", () => {
         if (method === "DOM.getContentQuads") {
           return { quads: [[10, 20, 210, 20, 210, 120, 10, 120]] };
         }
+        if (method === "Runtime.evaluate")
+          return { result: { value: { width: 400, height: 300 } } };
         if (method === "Page.getLayoutMetrics") {
           return { cssLayoutViewport: { clientWidth: 400, clientHeight: 300 } };
         }

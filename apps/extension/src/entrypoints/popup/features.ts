@@ -1,24 +1,39 @@
 import type { RemixiconComponentType } from "@remixicon/react";
-import { RiFileList3Line, RiRecordCircleLine } from "@remixicon/react";
+import { RiFileList3Line, RiHistoryLine, RiRecordCircleLine, RiScreenshot2Line } from "@remixicon/react";
 
-export type PopupFeatureId = "record" | "templates";
+export type PopupFeatureId = "record" | "long-screenshot" | "audit" | "templates";
 
 export type PopupView = "main" | "features" | PopupFeatureId;
 
 export type PopupFeature = {
   id: PopupFeatureId;
   icon: RemixiconComponentType;
-  titleKey: "popup.record.sectionTitle" | "popup.templates.sectionTitle";
-  descKey: "popup.record.cardDesc" | "popup.templates.cardDesc";
+  titleKey:
+    | "popup.record.sectionTitle"
+    | "longScreenshot.title"
+    | "audit.title"
+    | "popup.templates.sectionTitle";
+  descKey:
+    | "popup.record.cardDesc"
+    | "longScreenshot.cardDesc"
+    | "audit.cardDesc"
+    | "popup.templates.cardDesc";
 };
 
 export const POPUP_FEATURES: PopupFeature[] = [
+  {
+    id: "long-screenshot",
+    icon: RiScreenshot2Line,
+    titleKey: "longScreenshot.title",
+    descKey: "longScreenshot.cardDesc",
+  },
   {
     id: "record",
     icon: RiRecordCircleLine,
     titleKey: "popup.record.sectionTitle",
     descKey: "popup.record.cardDesc",
   },
+  { id: "audit", icon: RiHistoryLine, titleKey: "audit.title", descKey: "audit.cardDesc" },
   {
     id: "templates",
     icon: RiFileList3Line,

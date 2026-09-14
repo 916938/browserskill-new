@@ -1,13 +1,17 @@
 import { i18n } from "@browser-skill/i18n";
 import { ChromiumCdp } from "@/browser-driver/chromium-cdp";
 import { applyTemplate } from "@/lib/apply-template";
+import { getAuditEnabled } from "@/lib/audit";
+import { attachAuditBridge } from "@/lib/audit-bridge";
 import { ConnectionController } from "@/lib/connection-controller";
+import { watchDaemonPort } from "@/lib/daemon-port-preference";
 import { startHeartbeat } from "@/lib/heartbeat";
 import {
   getConnectionEnabled,
   setConnectionEnabled as persistConnectionEnabled,
   setLabel,
 } from "@/lib/instance-id";
+import { interactionPolicy, interactionPreferences } from "@/lib/interaction-preferences";
 import { startKeepalive } from "@/lib/keepalive";
 import {
   OVERLAY_AGENT_STATE,
@@ -25,6 +29,7 @@ import { POPUP_PORT_NAME, type PopupInbound, type PopupOutbound } from "@/lib/po
 import { recordFrameCoordinator } from "@/lib/recording/frame-coordinator";
 import { attachSessionsLiveFlag } from "@/lib/sessions-live-flag";
 import { initTemplateClient, templateClient } from "@/lib/template-client";
+import { attachLongScreenshot } from "@/long-screenshot/background";
 import { createDisconnectCleanup } from "@/session-manager/disconnect-cleanup";
 import { attachSessionEventHandler } from "@/session-manager/event-handler";
 import { isAgentControlledTab, SessionManager } from "@/session-manager/manager";
@@ -45,6 +50,7 @@ import {
 } from "@/tools/record";
 import { chromeTabsApi } from "@/tools/shared";
 import { chromeTabMutationApi } from "@/tools/tabs";
+import { resolveDaemonWsUrl } from "@/transport/daemon-endpoint";
 import { detectBrowserMeta } from "@/transport/handshake";
 import type { Transport } from "@/transport/transport";
 import { WSTransport } from "@/transport/ws-transport";
@@ -54,6 +60,10 @@ export default defineBackground(() => {
   const transport = new WSTransport({ url: __BSK_DAEMON_WS_URL__ });
   initTemplateClient(transport);
   const sessions = new SessionManager();
+  attachLongScreenshot({
+    isTabBusy: (tabId) => sessions.list().some((session) => isAgentControlledTab(session, tabId)),
+  });
+  attachAuditBridge(controller, transport);
   const cdp = new ChromiumCdp(undefined, {
     shouldAutoAcceptDialog: async (tabId) => {
       const tab = await chrome.tabs.get(tabId);
@@ -63,6 +73,14 @@ export default defineBackground(() => {
   const sessionsLive = attachSessionsLiveFlag({ manager: sessions });
   let overlayGeneration = 0;
   const controlModes = new Map<string, OverlayMode>();
+
+  const daemonPort = watchDaemonPort((port) => {
+    const url = resolveDaemonWsUrl(port);
+    void controller.reconfigureTransport(url, () => {
+      transport.setUrl(url);
+    });
+  });
+  let preferenceWrites = Promise.resolve();
 
   function setControlMode(sessionId: string, mode: OverlayMode): void {
     if (controlModes.get(sessionId) === mode) return;
@@ -219,7 +237,24 @@ export default defineBackground(() => {
   attachRecordFinishListener(recordDeps);
   attachRecordQueryListener(recordDeps);
 
+  interactionPreferences.subscribe((preferences) => {
+    for (const ctx of sessions.list()) {
+      try {
+        transport.send({
+          event: "session.interaction_changed",
+          payload: {
+            session_id: ctx.sessionId,
+            interaction: interactionPolicy(preferences),
+          },
+        });
+      } catch {
+        /* Reconnection tears down these sessions. */
+      }
+    }
+  });
+  void interactionPreferences.readyOrFallback();
   const dispatcher = new ToolDispatcher({
+    interactionPreferences,
     transport,
     sessions,
     cdp,
@@ -229,8 +264,14 @@ export default defineBackground(() => {
     onAgentTabClaimed: (tabId, windowId) => {
       void pushOverlayStateForTab(tabId, windowId);
     },
-    approveBorrow: (ctx) =>
-      requestBorrowConfirmation(ctx.tabId, {
+    approveBorrow: async (ctx) => {
+      await interactionPreferences.readyOrFallback();
+      return requestBorrowConfirmation(ctx.tabId, {
+        timeoutMs: ctx.timeoutMs,
+        autoAllow: {
+          get: () => !interactionPreferences.get().confirmTabBorrow,
+          subscribe: (listener) => interactionPreferences.subscribe(listener),
+        },
         ...(ctx.signal !== undefined ? { signal: ctx.signal } : {}),
         deps: {
           // Skip every Agent Window when choosing where to render the
@@ -241,7 +282,8 @@ export default defineBackground(() => {
           // without re-creating the dispatcher.
           notificationCopy: makeBorrowNotificationCopy(),
         },
-      }),
+      });
+    },
     helpNotificationCopy: () => ({
       title: i18n.t("helpRequest.notificationTitle", { ns: "extension" }),
       body: "",
@@ -288,7 +330,7 @@ export default defineBackground(() => {
   // the BrowserSkill connection.
   startKeepalive({
     transport,
-    shouldConnect: () => controller.isConnectionEnabled,
+    requestConnect: () => controller.requestConnect(),
   });
 
   // Application-level heartbeat (Chrome 116+): while the post-handshake
@@ -310,13 +352,7 @@ export default defineBackground(() => {
   // the worker and let us reconnect immediately instead of waiting for
   // the next 30s alarm tick. They only help when the daemon is actually
   // running; a cold daemon is (re)spawned by the next `bsk` command.
-  const reconnectIfNeeded = () => {
-    if (!controller.isConnectionEnabled) return;
-    if (transport.state === "connected") return;
-    void transport.connect().catch((err) => {
-      console.debug("[browser-skill] wake reconnect attempt failed", err);
-    });
-  };
+  const reconnectIfNeeded = () => controller.requestConnect();
   if (typeof chrome.runtime?.onStartup?.addListener === "function") {
     chrome.runtime.onStartup.addListener(reconnectIfNeeded);
   }
@@ -331,20 +367,23 @@ export default defineBackground(() => {
   }
 
   void (async () => {
-    const connectionEnabled = await getConnectionEnabled();
+    const [connectionEnabled, , auditEnabled] = await Promise.all([
+      getConnectionEnabled(),
+      daemonPort.ready,
+      getAuditEnabled(),
+    ]);
+    controller.setAuditEnabled(auditEnabled);
+    const cleanup = async () => {
+      const report = await cleanupAfterDisconnect();
+      if (report.failures.length > 0) {
+        throw new Error(
+          `Session cleanup incomplete: ${report.failures.map((failure) => failure.message).join("; ")}`,
+        );
+      }
+    };
     await controller.attach(transport, detectBrowserMeta(), connectionEnabled, {
-      beforeDisconnect: async () => {
-        const report = await cleanupAfterDisconnect();
-        if (report.failures.length > 0) {
-          console.warn("[browser-skill] session cleanup before disconnect was incomplete", report);
-        }
-      },
-      onDisconnected: async () => {
-        const report = await cleanupAfterDisconnect();
-        if (report.failures.length > 0) {
-          console.warn("[browser-skill] session cleanup after disconnect was incomplete", report);
-        }
-      },
+      beforeDisconnect: cleanup,
+      onDisconnected: cleanup,
     });
   })().catch((err) => {
     console.error("[browser-skill] controller failed to attach", err);
@@ -422,9 +461,13 @@ export default defineBackground(() => {
           // silently doing nothing (review M4/M5 C2).
           console.warn("[browser-skill] set_port is not wired yet; ignoring", msg.value);
         } else if (msg.kind === "set_connection_enabled") {
-          void controller
-            .setConnectionEnabled(msg.value)
-            .then(() => persistConnectionEnabled(msg.value));
+          void controller.setConnectionEnabled(msg.value);
+          // Persist user intent in message order, independently of slow cleanup.
+          preferenceWrites = preferenceWrites
+            .then(() => persistConnectionEnabled(msg.value))
+            .catch((err) => {
+              console.error("[browser-skill] connection preference write failed", err);
+            });
           // ── Template operations (routed to daemon via templateClient) ──
         } else if (msg.kind === "template_list") {
           void templateClient

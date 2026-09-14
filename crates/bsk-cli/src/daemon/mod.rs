@@ -1,6 +1,7 @@
 //! Daemon runtime: long-lived background process exposing IPC + WS.
 
 pub mod abort;
+pub mod audit;
 pub mod browsers;
 mod cancel_forward;
 pub mod file_transfer;
@@ -9,6 +10,7 @@ pub mod info;
 pub mod ipc;
 pub mod lockfile;
 pub mod paths;
+pub(crate) mod probe;
 pub mod queue;
 pub mod session_interrupt;
 pub mod sessions;
@@ -16,6 +18,9 @@ pub mod start;
 pub mod state;
 pub mod templates;
 pub mod ws;
+
+#[cfg(test)]
+mod test_support;
 
 pub use start::{DaemonConfig, run_foreground};
 pub use state::{DaemonHandle, DaemonState};

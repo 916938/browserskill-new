@@ -1,5 +1,7 @@
-// DOM interaction tools — `tool.click`, `tool.fill`, `tool.press`, and
-// `tool.select`.
+import { consumeVisualCapture, isVisualPointRequest } from "./visual-capture";
+import { resolveVisualRegionNow, sameVisualMapping, verifyVisualHit } from "./visual-target";
+import { isAbortError } from "./vom/capture-abort";
+// DOM interaction tools — click, hover, focus/blur, fill, press, and select.
 //
 // All interaction tools:
 // 1. Resolve target tab (sandbox: must be inside Agent Window).
@@ -14,10 +16,14 @@ import { ChromiumCdp } from "@/browser-driver/chromium-cdp";
 import type { CdpTarget } from "@/browser-driver/frame-graph";
 import type { SessionContext, SessionManager } from "@/session-manager/manager";
 import type {
+  BlurParams,
+  BlurResult,
   ClickParams,
   ClickResult,
   FillParams,
   FillResult,
+  FocusParams,
+  FocusResult,
   HoverParams,
   HoverResult,
   KeyModifier,
@@ -227,6 +233,207 @@ export async function resolveBackendNode(
   }
 }
 
+// Check the target's own root, then its hosts: closed shadow roots are not
+// reachable via host.shadowRoot. DOM focus remains meaningful in background tabs.
+const FOCUS_CHECK = `function() {
+  if (!this.isConnected) return false;
+  let element = this;
+  while (element) {
+    const root = element.getRootNode();
+    if (root.activeElement !== element) return false;
+    element = root.host;
+  }
+  return true;
+}`;
+
+const BLUR_TARGET = `function() {
+  if (!this.isConnected) throw new Error('blur target is detached');
+  const wasFocused = (${FOCUS_CHECK}).call(this);
+  if (typeof this.blur !== 'function') return { ok: false, was_focused: wasFocused };
+  this.blur();
+  return { ok: true, was_focused: wasFocused };
+}`;
+
+interface FocusScriptReply<T> {
+  result?: { value?: T };
+  exceptionDetails?: { text?: string; exception?: { description?: string } };
+}
+
+function checkFocusAbort(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) throw new DOMException("interaction aborted", "AbortError");
+}
+
+// Only focus/blur use this view. Guard every CDP boundary, including commands
+// inside selector resolution and frame scrolling, without changing other tools.
+function focusCdp(cdp: CdpRunner, signal: AbortSignal | undefined): CdpRunner {
+  const send = <T = unknown>(target: CdpTarget, method: string, params?: object): Promise<T> => {
+    checkFocusAbort(signal);
+    return cdpRunnerForTarget(cdp, target).send<T>(target.tabId, method, params);
+  };
+  return {
+    send: (tabId, method, params) => send({ tabId }, method, params),
+    sendToTarget: send,
+    trackSessionTab: cdp.trackSessionTab?.bind(cdp),
+    getFrameGraph: cdp.getFrameGraph
+      ? (tabId) => {
+          checkFocusAbort(signal);
+          return cdp.getFrameGraph!(tabId);
+        }
+      : undefined,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// tool.focus / tool.blur
+// ---------------------------------------------------------------------------
+
+export function handleFocus(
+  manager: SessionManager,
+  params: FocusParams,
+  deps: InteractionDeps = getDefaultDeps(),
+): Promise<FocusResult | RpcError> {
+  return changeFocus(manager, params, deps, "focus");
+}
+
+export function handleBlur(
+  manager: SessionManager,
+  params: BlurParams,
+  deps: InteractionDeps = getDefaultDeps(),
+): Promise<BlurResult | RpcError> {
+  return changeFocus(manager, params, deps, "blur");
+}
+
+function changeFocus(
+  manager: SessionManager,
+  params: FocusParams,
+  deps: InteractionDeps,
+  action: "focus",
+): Promise<FocusResult | RpcError>;
+function changeFocus(
+  manager: SessionManager,
+  params: BlurParams,
+  deps: InteractionDeps,
+  action: "blur",
+): Promise<BlurResult | RpcError>;
+async function changeFocus(
+  manager: SessionManager,
+  params: FocusParams | BlurParams,
+  deps: InteractionDeps,
+  action: "focus" | "blur",
+): Promise<FocusResult | BlurResult | RpcError> {
+  const ctx = lookupSession(manager, params, action);
+  if (isRpcError(ctx)) return ctx;
+  const cdp = focusCdp(deps.cdp, deps.signal);
+  let objectId: string | undefined;
+  let cleanupCdp: CdpRunner | undefined;
+  let tabId: number | undefined;
+  try {
+    checkFocusAbort(deps.signal);
+    const target = await resolveTargetTab(manager, ctx, params.tab_id, deps.tabsApi);
+    checkFocusAbort(deps.signal);
+    if (isRpcError(target)) return target;
+    const denied = enforceAgentWindow(ctx, target, action);
+    if (denied) return denied;
+    tabId = target.tabId;
+    const dialogCursor = markDialogCursor(deps.cdp, tabId);
+    const node = await resolveBackendNode(cdp, ctx, target, params, action);
+    checkFocusAbort(deps.signal);
+    if (isRpcError(node)) return node;
+    const nodeCdp = cdpRunnerForTarget(cdp, node.cdpTarget);
+    cleanupCdp = cdpRunnerForTarget(deps.cdp, node.cdpTarget);
+    deps.cdp.trackSessionTab?.(ctx.sessionId, tabId);
+
+    if (action === "focus") {
+      const scrollErr = await scrollElementAndFramesIntoView(
+        cdp,
+        tabId,
+        node.cdpTarget,
+        node.backendNodeId,
+        node.frameId,
+      );
+      checkFocusAbort(deps.signal);
+      if (scrollErr) return scrollErr;
+    }
+    const resolved = await backendNodeToObject(nodeCdp, tabId, node.backendNodeId);
+    // Keep the handle before checking cancellation so finally can release it.
+    if (!isRpcError(resolved)) objectId = resolved;
+    checkFocusAbort(deps.signal);
+    if (isRpcError(resolved)) return resolved;
+
+    const runScript = async <T>(functionDeclaration: string): Promise<T | undefined> => {
+      const reply = await nodeCdp.send<FocusScriptReply<T>>(
+        target.tabId,
+        "Runtime.callFunctionOn",
+        {
+          objectId,
+          functionDeclaration,
+          returnByValue: true,
+        },
+      );
+      checkFocusAbort(deps.signal);
+      if (reply.exceptionDetails) {
+        const details = reply.exceptionDetails;
+        throw new Error(
+          `${action} script failed: ${details.exception?.description ?? details.text ?? "unknown exception"}`,
+        );
+      }
+      return reply.result?.value;
+    };
+
+    let wasFocused: boolean | undefined;
+    if (action === "focus") {
+      await nodeCdp.send(tabId, "DOM.focus", { backendNodeId: node.backendNodeId });
+      checkFocusAbort(deps.signal);
+    } else {
+      const mutation = await runScript<{ ok: boolean; was_focused: boolean }>(BLUR_TARGET);
+      if (typeof mutation?.ok !== "boolean" || typeof mutation.was_focused !== "boolean") {
+        throw new Error("blur script returned an unexpected result");
+      }
+      if (!mutation.ok) {
+        return { code: "invalid_params", message: "target element does not support blur()" };
+      }
+      wasFocused = mutation.was_focused;
+    }
+    // Use a separate call so microtasks from focus/blur handlers finish before
+    // we report success. In particular, a blur handler can restore focus.
+    const focused = await runScript<boolean>(FOCUS_CHECK);
+    if (typeof focused !== "boolean") {
+      throw new Error(`${action} verification returned an unexpected result`);
+    }
+    if (focused !== (action === "focus")) {
+      throw new Error(
+        action === "focus"
+          ? "target element did not become focused"
+          : "target element remained focused after blur()",
+      );
+    }
+    return attachDialogs(deps.cdp, tabId, dialogCursor, {
+      tab_id: tabId,
+      used_ref: node.usedRef,
+      used_selector: node.usedSelector,
+      focused,
+      ...(action === "blur" ? { was_focused: wasFocused! } : {}),
+    });
+  } catch (err) {
+    return (
+      throwIfAborted(deps.signal) ?? {
+        code: "cdp_failed",
+        message: err instanceof Error ? err.message : String(err),
+      }
+    );
+  } finally {
+    if (objectId !== undefined && cleanupCdp && tabId !== undefined) {
+      // Cleanup must also run after cancellation. Navigation may have already
+      // disposed the object, which must not replace the operation's result.
+      try {
+        await cleanupCdp.send(tabId, "Runtime.releaseObject", { objectId });
+      } catch {
+        // The target or execution context may no longer exist.
+      }
+    }
+  }
+}
+
 export async function resolveActionTarget(
   cdp: CdpRunner,
   ctx: SessionContext,
@@ -256,6 +463,7 @@ export async function handleClick(
   if (isRpcError(target)) return target;
   const denied = enforceAgentWindow(ctx, target, "click");
   if (denied) return denied;
+  if (isVisualPointRequest(params)) return clickVisualPoint(ctx, target, params, deps);
   const resolved = await resolveActionTarget(deps.cdp, ctx, target, params, "click");
   if (isRpcError(resolved)) return resolved;
   return clickResolvedTarget(ctx, resolved, params, deps);
@@ -292,13 +500,10 @@ export async function clickResolvedTarget(
     return { code: "cancelled", message: "click aborted" };
   }
 
-  const button: MouseButton = params.button ?? "left";
   const clickCount = params.click_count ?? 1;
   if (clickCount < 1) {
     return { code: "invalid_params", message: "click_count must be greater than zero" };
   }
-  const modifiers = modifiersBitfield(params.modifiers);
-
   const overlayBlocking = await checkOverlayAtPoint(deps.cdp, target.tabId, centre.x, centre.y);
   let automationBypassEnabled = false;
   if (overlayBlocking && deps.bypassOverlay) {
@@ -311,52 +516,8 @@ export async function clickResolvedTarget(
   }
 
   try {
-    // Move first so hover state activates, then press → release.
-    await deps.cdp.send(target.tabId, "Input.dispatchMouseEvent", {
-      type: "mouseMoved",
-      x: centre.x,
-      y: centre.y,
-      modifiers,
-    });
-    if (throwIfAborted(deps.signal)) {
-      return { code: "cancelled", message: "click aborted" };
-    }
-    await deps.cdp.send(target.tabId, "Input.dispatchMouseEvent", {
-      type: "mousePressed",
-      x: centre.x,
-      y: centre.y,
-      button,
-      clickCount,
-      modifiers,
-    });
-    if (throwIfAborted(deps.signal)) {
-      try {
-        await deps.cdp.send(target.tabId, "Input.dispatchMouseEvent", {
-          type: "mouseReleased",
-          x: centre.x,
-          y: centre.y,
-          button,
-          clickCount,
-          modifiers,
-        });
-      } catch (err) {
-        console.debug("[bsk interaction] best-effort mouseReleased after abort failed", err);
-      }
-      return { code: "cancelled", message: "click aborted" };
-    }
-    await deps.cdp.send(target.tabId, "Input.dispatchMouseEvent", {
-      type: "mouseReleased",
-      x: centre.x,
-      y: centre.y,
-      button,
-      clickCount,
-      modifiers,
-    });
-  } catch (err) {
-    return {
-      code: "cdp_failed",
-      message: err instanceof Error ? err.message : String(err),
-    };
+    const error = await dispatchClickAtPoint(target.tabId, centre, params, deps);
+    if (error) return error;
   } finally {
     if (automationBypassEnabled && deps.bypassOverlay && !deps.keepOverlayBypassAfterHover) {
       try {
@@ -374,6 +535,153 @@ export async function clickResolvedTarget(
     x: centre.x,
     y: centre.y,
   });
+}
+
+/** Shared mouse lifecycle; visual clicks additionally verify after move and emit full double clicks. */
+async function dispatchClickAtPoint(
+  tabId: number,
+  point: { x: number; y: number },
+  params: Pick<ClickParams, "button" | "click_count" | "modifiers">,
+  deps: InteractionDeps,
+  beforePress?: () => Promise<RpcError | null>,
+): Promise<RpcError | null> {
+  const button = params.button ?? "left",
+    modifiers = modifiersBitfield(params.modifiers);
+  let releaseNeeded = false,
+    attempted = false,
+    moved = false,
+    count = params.click_count ?? 1;
+  const release = () =>
+    deps.cdp.send(tabId, "Input.dispatchMouseEvent", {
+      type: "mouseReleased",
+      ...point,
+      button,
+      clickCount: count,
+      modifiers,
+    });
+  const failure = (error: RpcError): RpcError =>
+    beforePress
+      ? {
+          ...error,
+          data: {
+            ...error.data,
+            effect_state: attempted ? "unknown" : "none",
+            pointer_moved: moved,
+          },
+        }
+      : error;
+  try {
+    if (deps.signal?.aborted) return failure({ code: "cancelled", message: "click aborted" });
+    moved = true;
+    await deps.cdp.send(tabId, "Input.dispatchMouseEvent", {
+      type: "mouseMoved",
+      ...point,
+      modifiers,
+    });
+    if (beforePress) {
+      const error = await beforePress();
+      if (error) return failure(error);
+    }
+    const counts = beforePress
+      ? Array.from({ length: params.click_count ?? 1 }, (_, i) => i + 1)
+      : [count];
+    for (count of counts) {
+      if (beforePress && count > 1) {
+        const error = await beforePress();
+        if (error) return failure(error);
+      }
+      if (deps.signal?.aborted) return failure({ code: "cancelled", message: "click aborted" });
+      attempted = true;
+      releaseNeeded = true;
+      await deps.cdp.send(tabId, "Input.dispatchMouseEvent", {
+        type: "mousePressed",
+        ...point,
+        button,
+        clickCount: count,
+        modifiers,
+      });
+      await release();
+      releaseNeeded = false;
+    }
+    if (deps.signal?.aborted) return failure({ code: "cancelled", message: "click aborted" });
+    return null;
+  } catch (error) {
+    return failure({
+      code: deps.signal?.aborted || isAbortError(error) ? "cancelled" : "cdp_failed",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  } finally {
+    if (releaseNeeded) await release().catch(() => {});
+  }
+}
+
+async function clickVisualPoint(
+  ctx: SessionContext,
+  target: ResolvedTargetTab,
+  params: ClickParams,
+  deps: InteractionDeps,
+): Promise<ClickResult | RpcError> {
+  const consumed = consumeVisualCapture(ctx.refStore, target.tabId, params);
+  if (isRpcError(consumed)) return consumed;
+  const { capture, point } = consumed;
+  const dialogCursor = markDialogCursor(deps.cdp, target.tabId);
+  const changed = () =>
+    rpcError(
+      "not_found",
+      "visual_capture_stale",
+      "visual target, mapping or hit target changed; observe and screenshot again",
+    );
+  const validate = async (): Promise<RpcError | null> => {
+    if (
+      ctx.refStore.resolveEntry(capture.ref) !== capture.entry ||
+      ctx.refStore.revision !== capture.generation
+    )
+      return changed();
+    const current = await resolveVisualRegionNow(deps.cdp, capture.entry.candidate, deps.signal);
+    if (isRpcError(current)) return current;
+    if (
+      !sameVisualMapping(capture.mapping, current) ||
+      !(await verifyVisualHit(deps.cdp, current, point, deps.signal))
+    )
+      return changed();
+    if (
+      ctx.refStore.resolveEntry(capture.ref) !== capture.entry ||
+      ctx.refStore.revision !== capture.generation ||
+      current.mappings.some(
+        (m) => deps.cdp.getAttachmentId?.(target.tabId) !== m.document.attachmentId,
+      )
+    )
+      return changed();
+    return null;
+  };
+  let bypass = false;
+  try {
+    deps.cdp.trackSessionTab?.(ctx.sessionId, target.tabId);
+    if (deps.bypassOverlay) {
+      await deps.bypassOverlay(target.tabId, true);
+      bypass = true;
+    }
+    const invalid = await validate();
+    if (invalid) return { ...invalid, data: { ...invalid.data, effect_state: "none" } };
+    const error = await dispatchClickAtPoint(target.tabId, point, params, deps, async () => {
+      await wait(32, deps.signal); // Scheduling opportunity, not a claim of page stability.
+      return validate();
+    });
+    if (error) return error;
+    return attachDialogs(deps.cdp, target.tabId, dialogCursor, {
+      tab_id: target.tabId,
+      used_ref: capture.ref,
+      ...point,
+    });
+  } catch (error) {
+    return {
+      code: deps.signal?.aborted || isAbortError(error) ? "cancelled" : "cdp_failed",
+      message: error instanceof Error ? error.message : String(error),
+      data: { effect_state: "none" },
+    };
+  } finally {
+    if (bypass) await deps.bypassOverlay!(target.tabId, false).catch(() => {});
+  }
 }
 
 // ---------------------------------------------------------------------------

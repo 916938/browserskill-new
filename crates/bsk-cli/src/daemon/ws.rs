@@ -236,6 +236,10 @@ async fn drive_connection(
         .params
         .clone()
         .ok_or_else(|| anyhow!("handshake missing params"))?;
+    let audit_enabled = params_raw
+        .get("audit_enabled")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
     let params: HandshakeParams = serde_json::from_value(params_raw)
         .map_err(|err| anyhow!("invalid HandshakeParams: {err}"))?;
 
@@ -324,6 +328,8 @@ async fn drive_connection(
         last_seen: std::sync::Mutex::new(std::time::Instant::now()),
         heartbeat_seen: std::sync::atomic::AtomicBool::new(false),
     });
+    // Restore opt-in before making the browser available to CLI callers.
+    let audit_ready = state.audit.configure(&browser_id.0, audit_enabled).is_ok();
     state.browsers.insert(Arc::clone(&client));
     info!(
         id = %browser_id,
@@ -345,9 +351,12 @@ async fn drive_connection(
         min_compatible_peer: Some(legacy_min_peer),
         min_compatible_protocol: Some(MIN_COMPATIBLE_PROTOCOL.to_string()),
     };
+    let mut result = serde_json::to_value(&result)?;
+    result["audit_version"] = serde_json::json!(1);
+    result["audit_ready"] = serde_json::json!(audit_ready);
     let resp = ResponseFrame {
         id: request.id.clone(),
-        body: ResponseBody::Ok(serde_json::to_value(&result).unwrap()),
+        body: ResponseBody::Ok(result),
     };
     writer
         .send(Message::Text(serde_json::to_string(&resp)?))
@@ -442,12 +451,27 @@ async fn handle_inbound_text(state: &Arc<DaemonState>, client: &Arc<BrowserClien
             }
         }
         Frame::Event(ev) => match ev.event {
+            bsk_protocol::EventKind::AuditContext => state.audit.context(&client.id.0, &ev.payload),
             bsk_protocol::EventKind::SystemHeartbeat => {
                 // `touch()` already ran for this frame in the read loop;
                 // additionally opt this browser in to liveness reaping now
                 // that we know it speaks the heartbeat.
                 client.mark_heartbeat_seen();
                 debug!(id = %client.id, "heartbeat");
+            }
+            bsk_protocol::EventKind::SessionInteractionChanged => {
+                #[derive(serde::Deserialize)]
+                struct Change {
+                    session_id: String,
+                    interaction: bsk_protocol::tools::InteractionPolicy,
+                }
+                if let Ok(change) = serde_json::from_value::<Change>(ev.payload) {
+                    state.sessions.update_interaction(
+                        &super::sessions::SessionId(change.session_id),
+                        &client.id,
+                        change.interaction,
+                    );
+                }
             }
             bsk_protocol::EventKind::SessionWindowClosed => {
                 handle_session_window_closed(state, &client.id, &ev.payload);
@@ -473,6 +497,11 @@ async fn handle_inbound_text(state: &Arc<DaemonState>, client: &Arc<BrowserClien
                         trace!(id = %client.id, "responded to system.ping");
                     }
                 }
+                bsk_protocol::Method::AuditRequest => {
+                    let body =
+                        handle_audit_request(state, &client.id.0, req.params.unwrap_or_default());
+                    let _ = client.sink.send(Frame::Response(ResponseFrame { id: req.id, body }));
+                }
                 // ── template.* (daemon-local CRUD) ───────────
                 bsk_protocol::Method::TemplateList => {
                     handle_ws_template_list(state, client, req.id, req.params);
@@ -494,10 +523,74 @@ async fn handle_inbound_text(state: &Arc<DaemonState>, client: &Arc<BrowserClien
                 }
                 _ => {
                     debug!(method = ?req.method, "extension request not yet handled");
+                    let body = ResponseBody::Err(RpcError {
+                        code: bsk_protocol::ErrorCode::UnknownMethod,
+                        message: "Unsupported extension request".into(),
+                        data: None,
+                    });
+                    let _ = client.sink.send(Frame::Response(ResponseFrame { id: req.id, body }));
                 }
             }
         }
     }
+}
+
+fn handle_audit_request(
+    state: &DaemonState,
+    browser: &str,
+    params: serde_json::Value,
+) -> ResponseBody {
+    let action = params
+        .get("action")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("");
+    let id = params
+        .get("id")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("");
+    let offset = params
+        .get("offset")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0)
+        .min(1_000_000) as usize;
+    let limit = params
+        .get("limit")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(100)
+        .min(500) as usize;
+    let result = match action {
+        "configure" => match params.get("enabled").and_then(serde_json::Value::as_bool) {
+            Some(enabled) => state.audit.configure(browser, enabled),
+            None => Err(anyhow!("Missing enabled preference")),
+        },
+        "list" => state.audit.list(browser, offset, limit),
+        "get" => state.audit.get(browser, id, offset, limit),
+        "delete" => state.audit.delete(browser, id),
+        "open_directory" => open_audit_directory(&state.audit),
+        _ => Err(anyhow!("Unknown audit action")),
+    };
+    match result {
+        Ok(value) => ResponseBody::Ok(value),
+        Err(_) => ResponseBody::Err(RpcError {
+            code: bsk_protocol::ErrorCode::ProtocolError,
+            message: "Audit request failed. Check local storage, task availability, or retry."
+                .into(),
+            data: None,
+        }),
+    }
+}
+
+fn open_audit_directory(audit: &super::audit::AuditStore) -> anyhow::Result<serde_json::Value> {
+    let path = audit.directory()?;
+    std::fs::create_dir_all(path)?;
+    #[cfg(target_os = "macos")]
+    let program = "open";
+    #[cfg(windows)]
+    let program = "explorer.exe";
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let program = "xdg-open";
+    std::process::Command::new(program).arg(path).spawn()?;
+    Ok(serde_json::json!({"opened": true}))
 }
 
 fn handle_session_window_closed(
@@ -616,6 +709,7 @@ fn handle_session_user_interrupt(
         }
     }
 
+    state.audit.marker(&sid.0, "user_interrupt");
     state.session_interrupts.mark(&sid);
 }
 

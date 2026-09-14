@@ -38,6 +38,10 @@ https://github.com/user-attachments/assets/db782c92-b1d4-4aae-a255-039675937a90
   dialogs, or other human-only steps, the Agent can ask you to take over and
   then continue afterwards.
 
+Capture a long image in **Quick actions → Full-page screenshot**, or let an Agent use
+`bsk screenshot --session <id> --full-page --out page.png`. See the
+[full-page screenshot guide](docs/long-screenshot.md) for page support, cancellation and export.
+
 ## Runtime Environment
 
 BrowserSkill has two local runtime pieces: the `bsk` CLI/daemon and the browser
@@ -49,6 +53,11 @@ extension.
 | Browsers | Chrome and Microsoft Edge are supported; other Chromium-based browsers are expected to work when they support unpacked Chromium extensions; Firefox is planned |
 
 ## Quick Start
+
+Using an agent sandbox that reaps background processes after each command?
+Follow the [sandboxed agent setup](docs/sandboxed-agents.md) to keep the daemon
+in a persistent host environment and connect with a shared `BSK_HOME` plus
+`BSK_AUTO_START=0`. Ordinary local use keeps automatic startup by default.
 
 <details open>
 <summary><b>Install with your Agent (recommended)</b></summary>
@@ -132,6 +141,28 @@ Use <kbd>Space</kbd> to select the Agent harness you want to install into, then
 press <kbd>Enter</kbd> to install the skill. Run `bsk install-skill --list` to see
 internal variants and install paths.
 
+To install your own instructions, use `bsk install-skill --harness cursor --source ./SKILL.md`.
+An explicit `--source` stays custom even if its contents match the bundled skill.
+Existing installations are skipped unless you add `--force`.
+
+Daemon startup, `session start`, and `doctor` automatically update managed skills
+only when their contents still match the last installed version. Local edits are
+preserved and automatic updates pause. An older installation without a content
+baseline is enrolled automatically only if it exactly matches the current bundled
+skill; this writes the source marker without rewriting `SKILL.md`. Explicit custom
+installations stay custom even when their contents match.
+
+For differing historical files, local edits, or an unrecognized source marker,
+`doctor` shows `WARN` with the reason and recovery options. These warnings do not
+make the health check fail (`--json` reports `status: "warn"` and `ok: true`).
+A concurrent install or sync is reported as deferred and retried on a later pass.
+
+To keep your current instructions as an explicit customization, run
+`bsk install-skill --harness cursor --source <existing-SKILL.md> --force`, replacing
+`<existing-SKILL.md>` with the path to your existing file. To restore the bundled
+skill and resume automatic updates, run `bsk install-skill --harness cursor --force`
+without `--source`. This second command overwrites the existing instructions.
+
 Other shell-capable agent harnesses are supported too. Copy
 [`skill/SKILL.md`](skill/SKILL.md) into your harness's skills directory as
 `browser-skill/SKILL.md` to install the skill manually. DeepSeek Harness uses a
@@ -145,25 +176,85 @@ Start a new Agent session and write a prompt that needs the browser, for example
 /browser-skill open example.com and summarize what is on the page.
 ```
 
+### Automation settings
+
+The extension popup has two independent **Automation settings**, both enabled by default.
+The user's saved browser settings are authoritative for every session:
+
+| Confirm before borrowing tabs | Allow requests for human help | Behavior |
+| --- | --- | --- |
+| On | On | Borrowing requires approval; help requests show the existing UI. |
+| On | Off | Borrowing requires approval; help requests return `disabled`. |
+| Off | On | Borrowing skips confirmation; help requests show the existing UI. |
+| Off | Off | Borrowing skips confirmation; help requests return `disabled`. |
+
+Settings save automatically for the browser profile and apply to existing and new sessions.
+Turning confirmation off releases pending borrow confirmations; turning help off finishes pending
+help requests as `disabled`. Turning either back on restores its behavior for subsequent operations,
+including sessions created with the legacy `--unattended` flag. Completed borrows are not undone,
+and finished help requests are not reopened. Allowing help makes `request-help` available; it does
+not require every browser action to ask for permission. Task authorization and host approvals still apply.
+
+Start tasks with `bsk session start`; add `--no-focus` to avoid focusing the Agent Window.
+For unattended operation, turn off the corresponding settings in the extension. `--unattended`,
+`tab borrow --no-confirm`, and `BSK_REQUEST_HELP=off` remain accepted for compatibility but are
+deprecated and cannot override the switches. The CLI logs a notice when these inputs are used;
+the daemon also logs a notice for its inherited environment setting. Scripts that relied on these
+inputs alone to avoid waiting must now use the browser settings. `session start --json` and
+`session list --json` report the browser's effective `interaction` policy.
+
+When help is disabled, `request-help` returns `disabled` without confirming any human action.
+The skill directs the agent to re-observe and make reasonable efforts to complete authorized steps
+using existing login state, authorized inputs, and available tools. Where task authorization and
+host rules allow, models with image understanding may attempt graphical verification. Phone-only
+QR scans, face verification, unavailable SMS codes, and image-only CAPTCHAs for text-only models
+may remain blocked. A disabled result neither completes the task nor grants additional permission.
+
+If preference loading fails, the runtime retains known values or defaults to both enabled when no
+valid value is available. It does not write fallback defaults or block session creation. Later reads
+and storage events can recover the settings. The popup reports read failures and prevents saving;
+failed writes are not treated as successful. A disconnected browser produces an error, not a local
+`disabled` result based on command-line flags or environment variables.
+
+`tab borrow --timeout 60s` controls the confirmation wait, not whether confirmation is required.
+Protocol 1.3 retains connection compatibility with protocols 1.0–1.2. Ordinary sessions and
+default tab borrowing remain available during staggered upgrades. The popup identifies older
+daemons, while `bsk status` reports protocol differences. Custom borrowing waits require both
+daemon and extension protocol 1.2 or later; only that operation returns an upgrade error when
+unsupported. Older daemons may still have shorter default borrowing waits.
+
+The current CLI requires daemon protocol 1.3 for `request-help`, because older daemons can answer
+locally without consulting the browser. This restriction does not disconnect the browser or stop
+other operations. Update the CLI, running daemon, and extension for full enforcement of the
+settings above. New extensions always enforce their saved settings on requests they receive.
+An older CLI may exit locally for `BSK_REQUEST_HELP=off` before contacting the daemon; mixed-version
+installations retain such legacy behavior, which updating only the extension cannot change.
+
 ## DeepSeek Harness plugin
 
 Using [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`dsh`)?
 BrowserSkill ships a first-class dsh plugin on npm as
 [`@wxg-prc-cpg/browser-skill-dsh-plugin`](https://www.npmjs.com/package/@wxg-prc-cpg/browser-skill-dsh-plugin).
-It injects native `browser_*` tools (no shelling out to `bsk`) and a live Web UI
-overlay of each Agent Window.
+It gives the agent native `browser_*` tools and a live view of its browser sessions
+in the Web UI. The plugin runs `bsk` on the agent's behalf.
 
-Add it to a dsh profile, then start that profile:
+Install the `bsk` CLI and connect the browser extension first. Then add the plugin
+to a dsh profile and start it (replace `web` with your profile name):
 
 ```sh
 dsh plugin --profile web add @wxg-prc-cpg/browser-skill-dsh-plugin
 dsh --profile web
 ```
 
-The plugin carries its own copy of the skill, so `bsk install-skill` is not needed
-for dsh — but the `bsk` CLI and the browser extension are still prerequisites. See
-the [plugin README](packages/dsh-plugin-browserskill/README.md) for the tool list,
-configuration, and the observation overlay.
+The plugin includes the `browser-skill` skill, so `bsk install-skill` is not needed
+for dsh. Installed plugins do not update automatically. To upgrade this plugin:
+
+```sh
+dsh plugin --profile web update @wxg-prc-cpg/browser-skill-dsh-plugin --latest
+```
+
+Restart the profile after upgrading. See the
+[plugin README](packages/dsh-plugin-browserskill/README.md) for usage and configuration.
 
 ## How It Works
 
@@ -222,12 +313,15 @@ different browsers are fully independent.
 
 ## For Developers
 
+The [scroll-to primitive reference](docs/scroll-to.md) covers its CLI, protocol
+and plugin entry points, visible bounds and interruption behavior.
+
 The repository is a Cargo + pnpm workspace:
 
 - `crates/bsk-cli` — `bsk` CLI and local daemon
 - `crates/bsk-protocol` — shared wire types and JSON schemas
 - `apps/extension` — browser extension
-- `packages/ui` and `packages/i18n` — shared extension UI support
+- `packages/ui` and [`packages/i18n`](packages/i18n/README.md) — shared extension UI support, including English, Simplified Chinese and Korean localization
 - `packages/dsh-plugin-browserskill` — DeepSeek Harness plugin (`@wxg-prc-cpg/browser-skill-dsh-plugin`)
 - [`evals/browser`](evals/browser/README.md) — deterministic local pages and agent-neutral browser capability evaluation
 

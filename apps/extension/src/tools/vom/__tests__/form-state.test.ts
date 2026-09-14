@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { type CdpRunner, cdpRunnerForTarget } from "../../shared";
-import { captureViewModel } from "../capture";
+import { enrichFormControlStates } from "../form-capture";
+import { decodeDocument } from "../snapshot";
 
 interface Control {
   id: number;
@@ -77,21 +78,32 @@ function reply(entries: Array<[number, unknown]>) {
   };
 }
 
-function fakeCdp(groups: Control[][], evaluate: (params: Record<string, unknown>) => unknown) {
+async function fakeCdp(
+  groups: Control[][],
+  evaluate: (params: Record<string, unknown>) => unknown,
+) {
   const snap = snapshot(groups);
   const send = vi.fn(async (_tabId: number, method: string, params?: object) => {
-    if (method === "DOMSnapshot.captureSnapshot") return snap;
     if (method === "Runtime.evaluate") return evaluate(params as Record<string, unknown>);
     return {};
   });
-  return { send, cdp: { send: send as CdpRunner["send"] } };
+  const nodes = await decodeControls(snap);
+  return { send, cdp: { send: send as CdpRunner["send"] }, nodes };
+}
+
+async function decodeControls(snap: ReturnType<typeof snapshot>) {
+  return Promise.all(
+    snap.documents.map(async (doc) =>
+      (await decodeDocument(doc, snap.strings)).nodes.map((node) => ({ ...node, rect: null })),
+    ),
+  );
 }
 
 describe("form state identity", () => {
   it("matches reordered controls by identity and preserves controls missing from the batch", async () => {
     // The snapshot includes a shadow input. The runtime query skips it,
     // encounters a new input, and sees the remaining inputs in a new order.
-    const { cdp } = fakeCdp(
+    const { cdp, nodes } = await fakeCdp(
       [
         [
           { id: 10, value: "" },
@@ -106,21 +118,21 @@ describe("form state identity", () => {
           [11, state("alice@example.com")],
         ]),
     );
-    const captured = await captureViewModel(cdp, 7);
-    expect(captured.nodes.find((n) => n.backendNodeId === 10)).toMatchObject({
+    await enrichFormControlStates(cdp, 7, nodes);
+    expect(nodes[0].find((n) => n.backendNodeId === 10)).toMatchObject({
       formValue: "",
       formState: "empty",
       formPlaceholder: "snapshot placeholder",
     });
-    expect(captured.nodes.find((n) => n.backendNodeId === 11)).toMatchObject({
+    expect(nodes[0].find((n) => n.backendNodeId === 11)).toMatchObject({
       formValue: "alice@example.com",
     });
-    expect(captured.nodes.find((n) => n.backendNodeId === 12)).toMatchObject({ formValue: "上海" });
-    expect(captured.nodes.some((n) => n.backendNodeId === 99)).toBe(false);
+    expect(nodes[0].find((n) => n.backendNodeId === 12)).toMatchObject({ formValue: "上海" });
+    expect(nodes[0].some((n) => n.backendNodeId === 99)).toBe(false);
   });
 
   it("does not shift state between frames when one frame is absent from the runtime batch", async () => {
-    const { cdp } = fakeCdp(
+    const { cdp, nodes } = await fakeCdp(
       [
         [],
         [{ id: 11, value: "inaccessible frame" }],
@@ -133,8 +145,8 @@ describe("form state identity", () => {
           [21, state("second frame")],
         ]),
     );
-    const captured = await captureViewModel(cdp, 7);
-    const controls = [...captured.iframeNodes.values()].flat();
+    await enrichFormControlStates(cdp, 7, nodes);
+    const controls = nodes.slice(1).flat();
     expect(controls.find((n) => n.backendNodeId === 11)?.formValue).toBe("inaccessible frame");
     expect(controls.find((n) => n.backendNodeId === 21)?.formValue).toBe("second frame");
     expect(controls.find((n) => n.backendNodeId === 31)?.formValue).toBe("third frame");
@@ -142,7 +154,6 @@ describe("form state identity", () => {
 
   it("keeps identical backend ids in different OOPIF targets separate", async () => {
     const sendToTarget = vi.fn(async (target, method) => {
-      if (method === "DOMSnapshot.captureSnapshot") return snapshot([[{ id: 11, value: "old" }]]);
       if (method === "Runtime.evaluate") return reply([[11, state(target.sessionId)]]);
       return {};
     });
@@ -151,8 +162,9 @@ describe("form state identity", () => {
     });
     const cdp = { send, sendToTarget } as unknown as CdpRunner;
     for (const sessionId of ["left-frame", "right-frame"]) {
-      const captured = await captureViewModel(cdpRunnerForTarget(cdp, { tabId: 7, sessionId }), 7);
-      expect(captured.nodes.find((n) => n.backendNodeId === 11)?.formValue).toBe(sessionId);
+      const nodes = await decodeControls(snapshot([[{ id: 11, value: "old" }]]));
+      await enrichFormControlStates(cdpRunnerForTarget(cdp, { tabId: 7, sessionId }), 7, nodes);
+      expect(nodes[0].find((n) => n.backendNodeId === 11)?.formValue).toBe(sessionId);
       expect(sendToTarget).toHaveBeenCalledWith(
         { tabId: 7, sessionId },
         "Runtime.releaseObjectGroup",
@@ -168,7 +180,7 @@ describe("form state identity", () => {
     "malformed",
     "invalid-state",
   ])("preserves snapshot data when enrichment is %s", async (mode) => {
-    const { cdp, send } = fakeCdp([[{ id: 11, value: "snapshot value" }]], () => {
+    const { cdp, send, nodes } = await fakeCdp([[{ id: 11, value: "snapshot value" }]], () => {
       if (mode === "unsupported") throw new Error("serialization unsupported");
       if (mode === "legacy") return { result: { value: { controls: [state("wrong value")] } } };
       const result = reply([
@@ -178,8 +190,8 @@ describe("form state identity", () => {
         result.result.deepSerializedValue.value[0].value[1].value = "not json";
       return result;
     });
-    const captured = await captureViewModel(cdp, 7);
-    expect(captured.nodes.find((n) => n.backendNodeId === 11)).toMatchObject({
+    expect(await enrichFormControlStates(cdp, 7, nodes)).toBe(mode !== "unsupported");
+    expect(nodes[0].find((n) => n.backendNodeId === 11)).toMatchObject({
       formValue: "snapshot value",
       formPlaceholder: "snapshot placeholder",
     });
@@ -188,18 +200,34 @@ describe("form state identity", () => {
 
   it("releases the batch's remote objects when capture is cancelled", async () => {
     const controller = new AbortController();
-    const { cdp, send } = fakeCdp([[{ id: 11, value: "old" }]], () => {
+    const { cdp, send, nodes } = await fakeCdp([[{ id: 11, value: "old" }]], () => {
       controller.abort();
       return reply([[11, state("new")]]);
     });
-    await expect(captureViewModel(cdp, 7, { signal: controller.signal })).rejects.toMatchObject({
+    await expect(enrichFormControlStates(cdp, 7, nodes, controller.signal)).rejects.toMatchObject({
       name: "AbortError",
     });
     expect(send).toHaveBeenCalledWith(7, "Runtime.releaseObjectGroup", expect.anything());
   });
 
+  it("does not report success when cancelled during object cleanup", async () => {
+    const controller = new AbortController();
+    const nodes = await decodeControls(snapshot([[{ id: 11, value: "old" }]]));
+    const cdp: CdpRunner = {
+      send: vi.fn(async (_tabId, method) => {
+        if (method === "Runtime.evaluate") return reply([[11, state("new")]]);
+        if (method === "Runtime.releaseObjectGroup") controller.abort();
+        return {};
+      }) as CdpRunner["send"],
+    };
+    await expect(enrichFormControlStates(cdp, 7, nodes, controller.signal)).rejects.toMatchObject({
+      name: "AbortError",
+    });
+    expect(cdp.send).toHaveBeenCalledWith(7, "Runtime.releaseObjectGroup", expect.anything());
+  });
+
   it("skips entries without node identity while still applying valid entries", async () => {
-    const { cdp } = fakeCdp(
+    const { cdp, nodes } = await fakeCdp(
       [
         [
           { id: 11, value: "snapshot value" },
@@ -216,20 +244,20 @@ describe("form state identity", () => {
         return result;
       },
     );
-    const captured = await captureViewModel(cdp, 7);
-    expect(captured.nodes.find((n) => n.backendNodeId === 11)?.formValue).toBe("snapshot value");
-    expect(captured.nodes.find((n) => n.backendNodeId === 12)?.formValue).toBe("live value");
+    await enrichFormControlStates(cdp, 7, nodes);
+    expect(nodes[0].find((n) => n.backendNodeId === 11)?.formValue).toBe("snapshot value");
+    expect(nodes[0].find((n) => n.backendNodeId === 12)?.formValue).toBe("live value");
   });
 
   it.each([
     "password",
     "text",
   ])("redacts a sensitive %s control after identity matching", async (type) => {
-    const { cdp } = fakeCdp([[{ id: 11, value: "secret", type }]], () =>
+    const { cdp, nodes } = await fakeCdp([[{ id: 11, value: "secret", type }]], () =>
       reply([[11, { ...state("secret"), sensitive: true }]]),
     );
-    const captured = await captureViewModel(cdp, 7);
-    const control = captured.nodes.find((n) => n.backendNodeId === 11);
+    await enrichFormControlStates(cdp, 7, nodes);
+    const control = nodes[0].find((n) => n.backendNodeId === 11);
     expect(control?.formState).toBe("filled");
     expect(control?.formValue).toBeUndefined();
     expect(control?.formDefaultValue).toBeUndefined();
@@ -246,7 +274,7 @@ describe("form state identity", () => {
       defaultValue: "",
       placeholder: "",
     }));
-    const { cdp, send } = fakeCdp([controls], (params) => {
+    const { cdp, send, nodes } = await fakeCdp([controls], (params) => {
       const doc = {
         querySelectorAll: (selector: string) =>
           selector === "input,textarea,select" ? elements : [],
@@ -257,9 +285,9 @@ describe("form state identity", () => {
       expect(entries).toHaveLength(250);
       return reply(entries.map(([element, json]) => [element.backendNodeId, JSON.parse(json)]));
     });
-    const captured = await captureViewModel(cdp, 7);
-    expect(captured.nodes.find((n) => n.backendNodeId === 250)?.formValue).toBe("live 250");
-    expect(captured.nodes.find((n) => n.backendNodeId === 251)?.formValue).toBe("old");
+    await enrichFormControlStates(cdp, 7, nodes);
+    expect(nodes[0].find((n) => n.backendNodeId === 250)?.formValue).toBe("live 250");
+    expect(nodes[0].find((n) => n.backendNodeId === 251)?.formValue).toBe("old");
     expect(send.mock.calls.filter(([, method]) => method === "Runtime.evaluate")).toHaveLength(1);
     expect(
       send.mock.calls.filter(([, method]) => method === "Runtime.releaseObjectGroup"),
