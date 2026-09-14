@@ -61,45 +61,9 @@ export function readRemoteEndpoint(value: unknown): RemoteEndpoint | null {
   return endpoint;
 }
 
-export function remoteSocket(
-  url: string,
-  endpoint: RemoteEndpoint | null,
-  focusWindow?: (sessionId: string) => Promise<void>,
-  preview?: (sessionId: string) => Promise<unknown>,
-): WebSocket {
-  // Never attach a remote credential to a different endpoint, including a local fallback.
+export function remoteSocket(url: string, endpoint: RemoteEndpoint | null): WebSocket {
   if (endpoint && endpoint.url !== url) throw new Error("Remote endpoint changed");
-  const socket = endpoint
+  return endpoint
     ? new WebSocket(url, [REMOTE_AUTH_PROTOCOL_PREFIX + endpoint.token])
     : new WebSocket(url);
-  if (endpoint && focusWindow)
-    socket.addEventListener("message", (event) => {
-      let request: { id?: string; method?: string; params?: { session_id?: string } };
-      try {
-        request = JSON.parse(event.data);
-      } catch {
-        return;
-      }
-      if (request.method !== "gateway.task_focus" && request.method !== "gateway.task_preview")
-        return;
-      event.stopImmediatePropagation();
-      if (!request.id || !request.params?.session_id) return;
-      const work =
-        request.method === "gateway.task_preview"
-          ? preview
-            ? preview(request.params.session_id)
-            : Promise.reject(new Error("Preview unavailable"))
-          : focusWindow(request.params.session_id).then(() => ({ focused: true }));
-      void work.then(
-        (result) => {
-          if (socket.readyState === WebSocket.OPEN)
-            socket.send(JSON.stringify({ id: request.id, result }));
-        },
-        () => {
-          if (socket.readyState === WebSocket.OPEN)
-            socket.send(JSON.stringify({ id: request.id, error: { code: "window_unavailable" } }));
-        },
-      );
-    });
-  return socket;
 }

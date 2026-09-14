@@ -19,6 +19,7 @@ pub mod get_html;
 pub mod human_loop;
 pub mod install_skill;
 pub mod interaction;
+pub(crate) mod interaction_policy;
 pub mod logs;
 pub mod navigate;
 pub mod network;
@@ -140,7 +141,7 @@ pub enum Command {
     /// Emulate a mobile device environment (viewport, UA, touch) on a tab.
     Emulate(EmulateArgs),
 
-    /// Capture a PNG of the active tab or a snapshot ref element.
+    /// Capture a PNG of the viewport, full page, DOM element or Canvas region.
     Screenshot(ScreenshotArgs),
 
     /// Produce an indented aria-snapshot with @eN refs.

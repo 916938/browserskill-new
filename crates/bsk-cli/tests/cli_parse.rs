@@ -15,6 +15,63 @@ fn parse(args: &[&str]) -> Cli {
 }
 
 #[test]
+fn parses_unattended_session_without_changing_normal_defaults() {
+    for unattended in [false, true] {
+        let mut argv = vec!["bsk", "session", "start"];
+        if unattended {
+            argv.extend(["--unattended", "--no-focus"]);
+        }
+        let Command::Session(SessionCmd {
+            sub: SessionSub::Start(args),
+        }) = parse(&argv).command
+        else {
+            panic!("expected session start");
+        };
+        assert_eq!(args.unattended, unattended);
+        assert_eq!(args.no_focus, unattended);
+    }
+}
+
+#[test]
+fn parses_single_borrow_override_and_confirmation_timeout() {
+    use bsk::cli::tab::TabSub;
+    for override_confirmation in [false, true] {
+        let mut argv = vec!["bsk", "tab", "borrow", "42", "--session", "s1"];
+        if override_confirmation {
+            argv.extend(["--no-confirm", "--timeout", "120s"]);
+        }
+        let Command::Tab(command) = parse(&argv).command else {
+            panic!("expected tab command");
+        };
+        let TabSub::Borrow(args) = command.sub else {
+            panic!("expected borrow");
+        };
+        assert_eq!(args.no_confirm, override_confirmation);
+        assert_eq!(
+            args.timeout,
+            if override_confirmation {
+                Some(120_000)
+            } else {
+                None
+            }
+        );
+    }
+    assert!(
+        Cli::try_parse_from([
+            "bsk",
+            "tab",
+            "borrow",
+            "42",
+            "--session",
+            "s1",
+            "--timeout",
+            "0ms"
+        ])
+        .is_err()
+    );
+}
+
+#[test]
 fn parses_upload_modes() {
     let cli = parse(&[
         "bsk",
@@ -712,6 +769,38 @@ fn rejects_invalid_wheel_numbers_and_timeouts() {
     ] {
         let mut argv = vec!["bsk", "wheel", "--session", "s1"];
         argv.extend(options);
+        assert!(Cli::try_parse_from(argv).is_err());
+    }
+}
+
+#[test]
+fn canvas_click_requires_complete_capture_coordinates() {
+    let cli = parse(&[
+        "bsk",
+        "click",
+        "e1",
+        "--session",
+        "test",
+        "--capture",
+        "image",
+        "--image-x",
+        "12.5",
+        "--image-y",
+        "20",
+    ]);
+    let Command::Click(args) = cli.command else {
+        panic!("expected click")
+    };
+    assert_eq!(args.capture_id.as_deref(), Some("image"));
+    assert_eq!(args.image_x, Some(12.5));
+    assert_eq!(args.image_y, Some(20.0));
+    for extra in [
+        vec!["--capture", "image"],
+        vec!["--image-x", "12"],
+        vec!["--capture", "image", "--image-x", "12"],
+    ] {
+        let mut argv = vec!["bsk", "click", "e1", "--session", "test"];
+        argv.extend(extra);
         assert!(Cli::try_parse_from(argv).is_err());
     }
 }

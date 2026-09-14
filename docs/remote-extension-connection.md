@@ -1,117 +1,125 @@
-# Connecting an extension through an authenticated gateway
+# Remote browser connections
 
-This opt-in extension mode addresses the browser-side connection portion of
-[issue #50](https://github.com/Tencent/BrowserSkill/issues/50). The default remains
-the local daemon and its configurable port. This does not expose the daemon to
-the internet or implement a remote CLI server.
+An Agent can run on a server while the BrowserSkill extension controls a browser on the user's computer. The extension initiates an outbound connection; the user's computer needs no inbound port. Tasks continue to use separate Agent Windows, including the existing borrow-and-return flow for user tabs.
 
-Open the extension popup, expand **Remote connection**, and paste a gateway-issued
-pairing link:
+`bsk` includes device pairing, connection authentication, credential renewal and revocation. No account system or authentication gateway is required. Alternatively, the extension can pair with a third-party gateway implementing the protocol below.
 
-```text
-wss://gateway.example/browser/extension#<base64url-credential>
+## Local mode
+
+The existing local workflow remains the default:
+
+```sh
+bsk daemon start
+# Equivalent: bsk daemon start --mode local
 ```
 
-The destination is shown before saving. Saving uses the existing connection
-controller: finish session cleanup and return borrowed tabs before switching the
-transport. If cleanup fails, the controller retains the failure rather than
-silently abandoning borrowed tabs. **Use local daemon** removes the remote
-preference and goes through the same cleanup path.
+It listens on loopback. Existing CLI commands and extension port settings continue to work. Select **Local connection** in the extension to leave a remote connection; this ends its current tasks.
 
-## Gateway authorization contract
+## Standalone server
 
-This consumer patch adds a proposed HTTP exchange before the native handshake.
-Saving a pairing link sends POST to the WebSocket path plus `/authorize` (HTTPS
-for WSS), using `Authorization: Bearer <pairing-token>` and JSON
-`{ "action": "pair", "next_token": "<client-generated-256-bit-token>", "label": "Chrome · BrowserSkill" }`.
-The gateway atomically consumes the one-use pairing token and returns
-`device_id`, `expires_at` and `renew_after` (ISO date strings), plus an optional
-`service_name` used for the visible task-group label (up to 48 characters; defaults
-to BrowserSkill). It stores only a
-hash of the next token. HTTP redirects are rejected; cookies are omitted.
+Run the Agent, CLI and daemon under the same OS user on the server. Automation commands continue to use the existing local IPC socket; the public listener accepts only authenticated extension connections and credential exchanges.
 
-The extension stores device metadata and its token in trusted extension-local
-storage. At renewal time it persists a candidate token, then uses the same
-endpoint with action `renew` and the current device token as Bearer authorization.
-The gateway must handle repeated old/new token pairs idempotently, allowing a
-lost response to be retried after restart. The consumer gateway uses a 5-minute
-pairing lifetime, 90-day device lifetime and renewal after 30 days. First-time
-activation response loss requires a new pairing link. Renewal of the same device
-does not tear down active sessions.
+With a certificate and private key for `browser.example.com`:
 
-## WebSocket contract
+```sh
+bsk daemon start --mode server \
+  --listen 0.0.0.0 --port 52800 \
+  --public-url wss://browser.example.com:52800/extension \
+  --tls-cert /etc/bsk/fullchain.pem \
+  --tls-key /etc/bsk/privkey.pem
+```
 
-- The extension strips the fragment before opening the WebSocket. It offers one
-  subprotocol, `bsk-auth.<credential>`. The credential must be 32–256 base64url
-  characters. A gateway must validate it before forwarding any browser traffic,
-  and select the offered subprotocol when accepting the WebSocket.
-- Non-loopback connections require WSS. Query parameters and URL userinfo are
-  rejected. Do not log WebSocket subprotocol headers: this is a bearer credential.
-- After upgrade, the first application frame remains `system.handshake`. Native
-  BrowserSkill automation RPC methods and payloads remain unchanged. Forward the native handshake and
-  frames to the authorized daemon connection without the credential subprotocol.
-- Authenticate and isolate each user's daemon/routing context. The BrowserSkill
-  compatibility handshake is not account authentication.
-- Expiry and revocation are gateway responsibilities; renewal follows the HTTP contract above. Close an existing
-  connection on revocation. Never replay commands on reconnect.
-- A token authorizes the server to create and operate background task tabs. Existing
-  user tabs still use BrowserSkill's original borrow confirmation and return flow.
+Use a certificate trusted by the user's browser. The certificate's hostname must match the public URL. `bsk` does not issue certificates or modify browser trust settings. Server mode stays in the foreground and does not exit when idle; a process supervisor can manage it. Certificate changes require a restart with the same flags. Session idle limits still apply. The server does not automatically update or restart itself.
 
-The stored remote endpoint uses `chrome.storage.local`, not sync storage. The
-popup displays the server URL, not the saved credential. A configured remote
-connection never silently falls back to localhost after a transport failure.
+Set `BSK_AUTO_START=0` in the Agent environment so a stopped managed server is reported as unavailable. Keep `BSK_HOME` consistent between the daemon and its CLI clients. Persist this private directory across service restarts and container replacements: it contains device grants and local IPC metadata. Do not share it between independent running servers or untrusted OS users.
 
-For local gateway development only, `ws://127.0.0.1`, `ws://localhost`, and
-`ws://[::1]` are accepted. This exception does not allow plaintext LAN endpoints.
+In another shell on the server:
+
+```sh
+bsk daemon pair
+```
+
+Copy the resulting pairing link into the extension's **Remote connection** field and save it. The link is a secret, expires after five minutes and can be used once. Saving it switches the connection and ends existing tasks. BrowserSkill then replaces the pairing secret with a device credential generated in the extension.
+
+Once connected, run the existing commands on the server:
+
+```sh
+bsk status
+bsk session start
+```
+
+With multiple paired browsers, select the browser using the existing `--browser` option. Each device receives its own stable browser identity; it cannot select another device's identity through its handshake.
+
+Manage grants from the server's local CLI:
+
+```sh
+bsk daemon devices
+bsk daemon revoke DEVICE_ID
+bsk daemon revoke --all
+```
+
+`devices` includes device and browser IDs, label and expiration, never credentials. `revoke --all` also invalidates unused pairing links. Revocation closes existing connections as well as rejecting new ones. The server checks grants before processing messages and polls idle connections once per second. Actions already performed on a page cannot be undone by revocation.
+
+Defaults are configurable at server startup:
+
+| Flag | Default | Meaning |
+| --- | --- | --- |
+| `--pairing-ttl` | `5m` | One-use pairing lifetime, at most one hour |
+| `--device-ttl` | `90d` | Device lifetime from pairing or successful renewal, at most 366 days |
+| `--renew-after` | `30d` | Time before the extension should renew; must be less than device lifetime |
+
+The extension checks for renewal on startup and periodically while running. If it remains offline past expiration, create a new pairing link. A renewal rotates the credential; its pending replacement is persisted before the request so a lost response can be retried after a service-worker or server restart. Changing lifetime flags affects subsequent exchanges, not grants already issued.
+
+## TLS reverse proxy
+
+A conventional TLS reverse proxy can terminate HTTPS/WSS without implementing authentication:
+
+```sh
+bsk daemon start --mode server --listen 127.0.0.1 --port 52800 \
+  --public-url wss://browser.example.com/extension
+```
+
+Forward both `/extension` and `/extension/authorize` to `127.0.0.1:52800`, preserving the path and WebSocket upgrade headers. Preserve `Origin`, `Authorization` and `Sec-WebSocket-Protocol`. Never log authorization headers, WebSocket subprotocol values or request bodies. Do not pass credentials in query strings. The built-in server remains responsible for authentication; proxy-injected user headers do not bypass it.
+
+Without native TLS, the listener must be on loopback. Plain `ws://` public URLs are allowed only for loopback development. Non-loopback browser connections require WSS. Changing the configured public URL requires revoking existing grants and generating new pairing links.
+
+## Third-party gateway protocol
+
+The extension uses the same protocol whether it connects to `bsk` or a compatible gateway. It does not call provider-specific login APIs. The gateway may use any account or management system to issue its pairing links, but must implement this browser-facing contract:
+
+1. A pairing link is `wss://HOST/PATH#PAIRING_SECRET`. Its fragment contains 32–256 base64url characters and is removed before any network request.
+2. The extension POSTs to `https://HOST/PATH/authorize` with `Authorization: Bearer PAIRING_SECRET` and JSON `{ "action": "pair", "next_token": "…", "label": "…" }`. `next_token` is a new random 256-bit, unpadded base64url credential (43 characters). Consume the pairing secret once and bind the replacement to one device. Pairing secrets cannot open a WebSocket.
+3. Return HTTP 200 with `{ "device_id": "32 lowercase hex characters", "expires_at": "RFC3339 timestamp", "renew_after": "RFC3339 timestamp", "service_name": "optional display name" }`. Invalid or unauthorized exchanges fail with a non-2xx response. The extension refuses redirects and sends no cookies.
+4. WebSocket upgrades to `wss://HOST/PATH` authenticate with exactly one `Sec-WebSocket-Protocol: bsk-auth.DEVICE_TOKEN`. Validate before upgrading and echo the selected subprotocol. A browser-shaped Origin alone is never authorization. Credentials belong to the specific endpoint and cannot authorize another device or deployment.
+5. Renewal uses the same POST endpoint and the current token, with `action: "renew"` and a new `next_token`. Keep the same `device_id`. Invalidate the old credential for new connections. An exact retry of the same old/new pair returns the original successful response; the old credential must not rotate to a different replacement. Revocation invalidates retries too. An already connected socket can remain open during renewal while its device grant is valid.
+6. After upgrade, support the existing native handshake and RPC frames. Bind all RPC routing, responses, events and session state to the authenticated device. Do not trust its self-reported browser ID as authorization to another device's tasks. Close active sockets on expiration or revocation and cancel their pending work.
+
+A gateway can bridge this protocol to a local `bsk` daemon on its server, keeping that daemon's loopback/IPC boundary private. A gateway that terminates device authentication owns that authentication lifecycle and routing isolation. Merely forwarding its credentials to the built-in server will not authorize them: the built-in server accepts its own issued grants.
+
+## Browser permissions and task lifetime
+
+Pair only with a server you trust to operate your browser. A paired server can create Agent Windows and navigate using that browser profile, including its signed-in website sessions. Pairing is device authorization, not a restricted account or website sandbox.
+
+Remote content reads, screenshots, recording and page operations require a tab explicitly created or borrowed by the task. Listing tab titles and URLs remains available to select a tab to borrow. A user tab moved or opened inside an Agent Window does not by itself become authorized. Borrowing uses the existing browser-controlled confirmation preference; remote request flags cannot change that preference. After a borrowed tab is returned, remote content access ends. Returning a tab during remote recording cancels that recording before releasing the tab.
+
+Disconnecting cancels task work, returns borrowed tabs and closes task-created tabs. User-created tabs survive cleanup. Failed returns preserve the window and must be resolved before reconnecting. Reconnection starts new tasks; commands and sessions are never replayed. Failed remote authentication does not select a local connection automatically.
+
+Remote upload and download are unsupported in this version and return the `unsupported` error. Existing local file transfer behavior is unchanged. Screenshots and other existing RPC content results remain supported. There is no gateway preview or focus side protocol, background task tab group, or alternative window model.
+
+Device credentials live in extension-origin IndexedDB; only a non-secret revision is published in ordinary extension settings. The standalone server persists hashed credentials with private file permissions and atomic writes. Treat the whole browser profile and `BSK_HOME` as trusted local data. Protect TLS private keys separately.
 
 ## Validation
 
-The extension tests cover unsafe endpoint rejection, credential destination
-binding, out-of-order storage reads and disposal. Existing controller tests cover
-session teardown and reconnect generations. An integration consumer additionally
-tested a released v0.2.1 daemon and the built extension in isolated Chromium:
-popup pairing, session start, navigation, Chinese text input, click, snapshot,
-screenshot, pause/resume and session stop. The gateway is external to this patch.
+Build the CLI and extension, then run the ordinary Rust and extension suites. The real browser regression additionally needs an isolated Chrome for Testing executable:
 
-The subprotocol convention is proposed for upstream review; it is not an existing
-published BrowserSkill remote-auth standard.
+```sh
+cargo test --workspace
+pnpm --filter @browser-skill/extension test
+cargo build -p bsk
+pnpm --filter @browser-skill/extension build
+BSK_REMOTE_CLI=/absolute/path/to/target/debug/bsk \
+BSK_REMOTE_CHROME=/absolute/path/to/chrome-for-testing \
+  pnpm --filter @browser-skill/extension test src/transport/__tests__/remote-connection.browser.test.ts
+```
 
-## Optional gateway UI messages
-
-The extension intercepts `gateway.task_focus` and `gateway.task_preview` before
-native transport dispatch. These are proposed optional gateway messages, not
-published native BrowserSkill RPCs. Both require an existing `session_id` from
-the authenticated gateway's own task mapping. Focus locates that task's current
-tab; it cannot start or resume a task or select an arbitrary browser tab.
-Preview is described below. A gateway should expose focus only as a user action.
-
-## Remote task tabs and preview
-
-Remote gateway sessions use background task tabs in an existing non-incognito
-Chrome window, grouped and labeled for the integration. The local-daemon mode
-retains dedicated Agent Windows. Tab groups are visual only: explicit created
-and borrowed tab IDs define ownership. A shared window is never a permission
-boundary for remote tasks; other sessions' tabs remain invisible and even passive
-page reads require an owned/borrowed tab. Existing tabs are borrowed in place
-after the original confirmation, then released without moving or closing them.
-Stopping a remote task closes only its created tabs, never the shared user window.
-
-Logical task-tab selection does not activate Chrome's visible tab. Remote human
-help and borrow requests preserve the original confirmation/notification UI but
-do not proactively focus a window. Explicit user notification clicks and the
-consumer's `gateway.task_focus` message can locate the task tab.
-
-The optional `gateway.task_preview` UI message captures the authorized task tab through
-CDP outside the automation queue. It returns a JPEG (`image_base64`, `format`,
-`tab_id`, `title`, `captured_at`); final bitmap width is limited to 640 pixels,
-including on HiDPI screens. Concurrent captures for the same task are coalesced.
-The gateway consumer should rate-limit, authenticate, and scope preview requests,
-and the viewer should stop requesting images while hidden. This is low-frame-rate
-preview, not a video streaming API. Both UI messages are optional gateway
-proposals and must not be represented as published native BrowserSkill RPCs.
-
-Validation includes task-tab ownership/cleanup, rejected unapproved reads,
-borrowing without moving user tabs, non-focusing human help, preview capture
-coalescing/HiDPI bounds, and an external integration test using the released
-v0.2.1 daemon plus headed Chromium. No cloud gateway implementation is shipped
-in this repository.
+The remote server integration tests cover credential exchange, rotation retries, stable device routing, replacement connections, revocation and native TLS. TLS fixtures contain a test-only private key and must never be used for deployment.

@@ -2,13 +2,10 @@ import { AGENT_WINDOW_HOME, type AgentWindowApi, chromeAgentWindowApi } from "./
 import { RefStore } from "./ref-store";
 
 export interface SessionContext {
+  /** Remote connections retain dedicated windows, with explicit page ownership. */
+  remote?: boolean;
   sessionId: string;
   agentWindowId: number;
-  /** Remote tasks own tabs, never the shared host window. */
-  tabMode?: boolean;
-  stopping?: boolean;
-  activeTabId?: number;
-  taskGroupId?: number;
   refStore: RefStore;
   borrowedTabs: Map<number, BorrowedTab>;
   /**
@@ -29,7 +26,6 @@ export interface BorrowedTab {
   tabId: number;
   originalWindowId: number;
   originalIndex: number;
-  stationary?: boolean;
 }
 
 export interface BorrowReservation {
@@ -38,10 +34,9 @@ export interface BorrowReservation {
 }
 
 export interface SessionManagerOptions {
+  remote?: () => boolean;
   agentWindow?: AgentWindowApi;
   now?: () => number;
-  taskTabs?: () => boolean;
-  taskLabel?: () => string;
 }
 
 /** Options for starting a session's Agent Window. */
@@ -97,19 +92,18 @@ function throwIfSessionStartAborted(signal: AbortSignal | undefined): void {
  * so vitest never touches a real `chrome.windows` object.
  */
 export class SessionManager {
+  private readonly remote: () => boolean;
   private readonly sessions = new Map<string, SessionContext>();
   private readonly windowIndex = new Map<number, string>();
   private readonly borrowReservations = new Map<number, string>();
+  private readonly expectedWindowClosures = new WeakSet<SessionContext>();
   private readonly agentWindow: AgentWindowApi;
   private readonly now: () => number;
-  private readonly taskTabs: () => boolean;
-  private readonly taskLabel: () => string;
 
   constructor(options: SessionManagerOptions = {}) {
+    this.remote = options.remote ?? (() => false);
     this.agentWindow = options.agentWindow ?? chromeAgentWindowApi;
     this.now = options.now ?? Date.now;
-    this.taskTabs = options.taskTabs ?? (() => false);
-    this.taskLabel = options.taskLabel ?? (() => "BrowserSkill");
   }
 
   has(sessionId: string): boolean {
@@ -120,13 +114,24 @@ export class SessionManager {
     return this.sessions.get(sessionId) ?? null;
   }
 
+  isWindowCloseExpected(ctx: SessionContext): boolean {
+    return this.expectedWindowClosures.has(ctx);
+  }
+
+  /** Mark only the committed window/tab removal stage of session.stop. */
+  async withExpectedWindowClose<T>(ctx: SessionContext, close: () => Promise<T>): Promise<T> {
+    this.expectedWindowClosures.add(ctx);
+    try {
+      return await close();
+    } finally {
+      // Failed teardown must not hide a later user-initiated close.
+      this.expectedWindowClosures.delete(ctx);
+    }
+  }
+
   findByWindowId(windowId: number): SessionContext | null {
     const id = this.windowIndex.get(windowId);
     return id ? (this.sessions.get(id) ?? null) : null;
-  }
-
-  findByTabId(tabId: number): SessionContext | null {
-    return this.list().find((ctx) => isAgentControlledTab(ctx, tabId)) ?? null;
   }
 
   list(): SessionContext[] {
@@ -142,7 +147,7 @@ export class SessionManager {
     this.borrowReservations.delete(tabId);
     for (const ctx of this.sessions.values()) {
       ctx.agentCreatedTabs.delete(tabId);
-      if (ctx.tabMode || !isWindowClosing) ctx.borrowedTabs.delete(tabId);
+      if (!isWindowClosing) ctx.borrowedTabs.delete(tabId);
     }
   }
 
@@ -172,7 +177,8 @@ export class SessionManager {
    * write after `chrome.tabs.move`.
    */
   tryReserveBorrow(tabId: number, sessionId: string): BorrowReservation | { borrowedBy: string } {
-    const borrowedBy = this.findBorrowingSession(tabId, sessionId);
+    const borrowedBy =
+      this.borrowReservations.get(tabId) ?? this.findBorrowingSession(tabId, sessionId);
     if (borrowedBy) return { borrowedBy };
     this.borrowReservations.set(tabId, sessionId);
     let closed = false;
@@ -214,45 +220,6 @@ export class SessionManager {
     }
     throwIfSessionStartAborted(opts.signal);
 
-    if (this.taskTabs()) {
-      const windows = await chrome.windows.getAll({ windowTypes: ["normal"] });
-      const host =
-        windows.find((w) => w.focused && !w.incognito) ?? windows.find((w) => !w.incognito);
-      if (host?.id === undefined)
-        throw new Error("Open a normal Chrome window before starting a browser task");
-      const home = await chrome.tabs.create({
-        windowId: host.id,
-        url: AGENT_WINDOW_HOME,
-        active: false,
-      });
-      if (home.id === undefined) throw new Error("Could not create task tab");
-      try {
-        throwIfSessionStartAborted(opts.signal);
-        const groupId = await chrome.tabs.group({ tabIds: [home.id] });
-        await chrome.tabGroups.update(groupId, {
-          title: `${this.taskLabel().slice(0, 48)} · ${sessionId.slice(-4)}`,
-          color: "green",
-          collapsed: false,
-        });
-        throwIfSessionStartAborted(opts.signal);
-        const ctx: SessionContext = {
-          sessionId,
-          agentWindowId: host.id,
-          tabMode: true,
-          activeTabId: home.id,
-          taskGroupId: groupId,
-          refStore: new RefStore(),
-          borrowedTabs: new Map(),
-          agentCreatedTabs: new Set([home.id]),
-          createdAtMs: this.now(),
-        };
-        this.sessions.set(sessionId, ctx);
-        return ctx;
-      } catch (err) {
-        await chrome.tabs.remove(home.id);
-        throw err;
-      }
-    }
     let windowId: number | null = null;
     try {
       const { signal: _signal, ...createOptions } = opts;
@@ -262,6 +229,7 @@ export class SessionManager {
       throwIfSessionStartAborted(opts.signal);
 
       const ctx: SessionContext = {
+        ...(this.remote() ? { remote: true } : {}),
         sessionId,
         agentWindowId: windowId,
         refStore: new RefStore(),
@@ -301,21 +269,10 @@ export class SessionManager {
     const ctx = this.sessions.get(sessionId);
     if (!ctx) return null;
     if (!options.dropOnly) {
-      ctx.stopping = true;
-      if (ctx.tabMode) {
-        // Never close the shared user window, even when queries/cleanup fail.
-        for (const tabId of ctx.agentCreatedTabs) {
-          try {
-            await chrome.tabs.get(tabId);
-          } catch {
-            continue;
-          }
-          await chrome.tabs.remove(tabId);
-        }
-      } else await this.agentWindow.remove(ctx.agentWindowId);
+      await this.agentWindow.remove(ctx.agentWindowId);
     }
     this.sessions.delete(sessionId);
-    if (!ctx.tabMode) this.windowIndex.delete(ctx.agentWindowId);
+    this.windowIndex.delete(ctx.agentWindowId);
     return ctx;
   }
 

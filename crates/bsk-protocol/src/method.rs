@@ -21,6 +21,9 @@ pub enum MethodEffect {
 /// Namespaced method string (`system.handshake`, `tool.tab_list`, …).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Method {
+    /// Extension-only local history API; browser identity comes from the peer.
+    #[serde(rename = "audit.request")]
+    AuditRequest,
     #[serde(rename = "system.handshake")]
     SystemHandshake,
     #[serde(rename = "system.ping")]
@@ -98,6 +101,12 @@ pub enum Method {
     ToolGetHtml,
     #[serde(rename = "tool.screenshot")]
     ToolScreenshot,
+    #[serde(rename = "tool.screenshot_full_page")]
+    ToolScreenshotFullPage,
+    #[serde(rename = "tool.screenshot_read")]
+    ToolScreenshotRead,
+    #[serde(rename = "tool.screenshot_release")]
+    ToolScreenshotRelease,
     #[serde(rename = "tool.console")]
     ToolConsole,
     #[serde(rename = "tool.network")]
@@ -192,7 +201,7 @@ impl Method {
 
             // Transient input — no committed browser action, but still page
             // input. It must be stopped by pending user interrupts.
-            Method::ToolHover | Method::ToolObserve => MethodEffect::TransientInput,
+            Method::ToolHover | Method::ToolObserve | Method::ToolScreenshotFullPage => MethodEffect::TransientInput,
 
             // Passive reads — transparent.
             // `record_stop` / `record_await` observe / finish a recording
@@ -202,6 +211,7 @@ impl Method {
             | Method::ToolSnapshot
             | Method::ToolGetHtml
             | Method::ToolScreenshot
+            | Method::ToolScreenshotRead
             | Method::ToolConsole
             | Method::ToolNetwork
             | Method::ToolWaitForNavigation
@@ -219,7 +229,8 @@ impl Method {
             | Method::ToolSessionStop => MethodEffect::ControlPlane,
 
             // System / control — not gated.
-            Method::SystemHandshake
+            Method::AuditRequest
+            | Method::SystemHandshake
             | Method::SystemPing
             | Method::SystemStatus
             | Method::BrowserList
@@ -228,6 +239,7 @@ impl Method {
             | Method::TransferFinish
             | Method::TransferRead
             | Method::TransferRelease
+            | Method::ToolScreenshotRelease
             | Method::Cancel => MethodEffect::ControlPlane,
         }
     }
@@ -289,6 +301,18 @@ mod tests {
             serde_json::to_value(result).unwrap(),
             json!({ "cancelled": true })
         );
+    }
+
+    #[test]
+    fn full_page_capture_is_input_but_export_reads_are_not() {
+        assert!(Method::ToolScreenshotFullPage.requires_interrupt_gate());
+        assert_eq!(
+            Method::ToolScreenshotFullPage.effect(),
+            MethodEffect::TransientInput
+        );
+        assert!(!Method::ToolScreenshot.requires_interrupt_gate());
+        assert!(!Method::ToolScreenshotRead.requires_interrupt_gate());
+        assert!(!Method::ToolScreenshotRelease.requires_interrupt_gate());
     }
 
     #[test]

@@ -1,13 +1,18 @@
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { readRemoteConnection } from "@/transport/remote-storage";
 import { watchDaemonConnection } from "../daemon-connection-preference";
 
-afterEach(() => vi.unstubAllGlobals());
-it("a late startup read cannot overwrite newer credentials", async () => {
-  let changed: (values: unknown, area: string) => void = () => {};
-  const resolvers: Array<(value: unknown) => void> = [];
+vi.mock("@/transport/remote-storage", () => ({
+  initializeRemoteStorage: async () => {},
+  readRemoteConnection: vi.fn(),
+  REMOTE_CONNECTION_REVISION: "revision",
+}));
+let changed: (values: unknown, area: string) => void;
+beforeEach(() => {
+  vi.mocked(readRemoteConnection).mockReset();
   vi.stubGlobal("chrome", {
     storage: {
-      local: { get: () => new Promise((resolve) => resolvers.push(resolve)) },
+      local: { get: async () => ({ bsk_daemon_port: 1234 }) },
       onChanged: {
         addListener: (fn: typeof changed) => {
           changed = fn;
@@ -16,35 +21,41 @@ it("a late startup read cannot overwrite newer credentials", async () => {
       },
     },
   });
+});
+afterEach(() => vi.unstubAllGlobals());
+it("a late startup read cannot overwrite newer credentials", async () => {
+  let finish!: (value: null) => void;
+  vi.mocked(readRemoteConnection).mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
   const callback = vi.fn();
   const watch = watchDaemonConnection(callback);
-  changed({ bsk_remote_endpoint: {} }, "local");
+  await vi.waitFor(() => expect(readRemoteConnection).toHaveBeenCalledOnce());
   const remote = { url: "wss://example.com/bsk", token: "a".repeat(43) };
-  resolvers[1]({ bsk_remote_endpoint: remote });
-  await Promise.resolve();
-  resolvers[0]({ bsk_daemon_port: 1234 });
+  vi.mocked(readRemoteConnection).mockResolvedValueOnce(remote);
+  changed({ revision: {} }, "local");
+  await vi.waitFor(() => expect(callback).toHaveBeenCalledWith(remote.url, remote));
+  finish(null);
   await watch.ready;
   expect(callback).toHaveBeenCalledTimes(1);
-  expect(callback).toHaveBeenCalledWith(remote.url, remote);
   watch.dispose();
 });
 it("disposal prevents pending reads from configuring a connection", async () => {
-  let finish: (value: unknown) => void = () => {};
-  vi.stubGlobal("chrome", {
-    storage: {
-      local: {
-        get: () =>
-          new Promise((resolve) => {
-            finish = resolve;
-          }),
-      },
-      onChanged: { addListener: vi.fn(), removeListener: vi.fn() },
-    },
-  });
+  vi.mocked(readRemoteConnection).mockResolvedValue(null);
   const callback = vi.fn();
   const watch = watchDaemonConnection(callback);
   watch.dispose();
-  finish({});
   await watch.ready;
   expect(callback).not.toHaveBeenCalled();
+});
+it("corrupt remote storage fails closed instead of selecting localhost", async () => {
+  vi.mocked(readRemoteConnection).mockRejectedValue(new Error("invalid storage"));
+  const callback = vi.fn();
+  const watch = watchDaemonConnection(callback);
+  await expect(watch.ready).rejects.toThrow("invalid storage");
+  expect(callback).not.toHaveBeenCalled();
+  watch.dispose();
 });

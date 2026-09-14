@@ -1,11 +1,8 @@
 import { useTranslation } from "@browser-skill/i18n/react";
 import { Button, Input, Label } from "@browser-skill/ui";
 import { useEffect, useState } from "react";
-import {
-  parseRemoteEndpoint,
-  REMOTE_ENDPOINT_KEY,
-  readRemoteEndpoint,
-} from "@/transport/remote-endpoint";
+import { parseRemoteEndpoint } from "@/transport/remote-endpoint";
+import { REMOTE_CONNECTION_REVISION, readRemoteConnection } from "@/transport/remote-storage";
 
 export function RemoteConnection({
   onRemoteChange,
@@ -23,15 +20,14 @@ export function RemoteConnection({
     let revision = 0;
     const read = async () => {
       const current = ++revision;
-      const values = await chrome.storage.local.get(REMOTE_ENDPOINT_KEY);
+      const remote = await readRemoteConnection();
       if (!alive || current !== revision) return;
-      const remote = readRemoteEndpoint(values[REMOTE_ENDPOINT_KEY]);
       setServer(remote?.url ?? null);
       onRemoteChange?.(remote !== null);
       setReady(true);
     };
     const changed = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {
-      if (area === "local" && changes[REMOTE_ENDPOINT_KEY])
+      if (area === "local" && changes[REMOTE_CONNECTION_REVISION])
         void read().catch(() => alive && setError(true));
     };
     if (typeof chrome === "undefined" || !chrome.storage?.local) return;

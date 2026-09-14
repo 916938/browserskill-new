@@ -7,6 +7,13 @@ import {
 import { REMOTE_ENDPOINT_KEY, type RemoteEndpoint } from "../remote-endpoint";
 
 let values: Record<string, unknown>;
+vi.mock("../remote-storage", () => ({
+  initializeRemoteStorage: async () => {},
+  readRemoteConnection: async () => values["bsk_remote_endpoint"],
+  writeRemoteConnection: async (endpoint: unknown) => {
+    values["bsk_remote_endpoint"] = structuredClone(endpoint);
+  },
+}));
 const endpoint: RemoteEndpoint = {
   url: "wss://gateway.example/api/v1/local-browser/extension",
   token: "a".repeat(43),
@@ -66,6 +73,19 @@ describe("durable remote authorization", () => {
     expect(JSON.parse(String(vi.mocked(fetch).mock.calls[0][1]?.body)).next_token).toBe(
       JSON.parse(String(vi.mocked(fetch).mock.calls[1][1]?.body)).next_token,
     );
+  });
+  it.each([
+    { device_id: "wrong", expires_at: "2099-02-01T00:00:00Z", renew_after: "2099-01-01T00:00:00Z" },
+    {
+      device_id: "b".repeat(32),
+      expires_at: "2099-02-01T00:00:00Z",
+      renew_after: "2099-01-01T00:00:00Z",
+    },
+    { device_id: endpoint.deviceId, expires_at: "invalid", renew_after: "2099-01-01T00:00:00Z" },
+  ])("does not persist an invalid renewal response", async (data) => {
+    vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify(data)));
+    await expect(renewRemoteAuthorization()).rejects.toThrow();
+    expect((values[REMOTE_ENDPOINT_KEY] as RemoteEndpoint).token).toBe(endpoint.token);
   });
   it("does not renew a current authorization", async () => {
     values[REMOTE_ENDPOINT_KEY] = { ...endpoint, renewAfter: "2099-01-01T00:00:00Z" };

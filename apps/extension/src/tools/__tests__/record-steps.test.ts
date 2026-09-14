@@ -1214,6 +1214,69 @@ describe("recorded user steps reach the exported trace", () => {
     expect(result).toMatchObject({ code: "invalid_params" });
   });
 
+  it("does not record an unclaimed user tab inside a remote Agent Window", async () => {
+    const chromeApi = installChrome();
+    const manager = fakeManager();
+    const context = { ...manager.get("abcd")!, remote: true, agentCreatedTabs: new Set([TAB_ID]) };
+    manager.get = (id) => (id === "abcd" ? context : null);
+    const privateUrl = "https://private.example/secret";
+    const tabsApi = makeMultiTabsApi([
+      {
+        id: TAB_ID,
+        windowId: AGENT_WINDOW_ID,
+        active: true,
+        status: "complete",
+        url: START_URL,
+      } as chrome.tabs.Tab,
+      {
+        id: 5,
+        windowId: AGENT_WINDOW_ID,
+        active: false,
+        status: "complete",
+        url: privateUrl,
+      } as chrome.tabs.Tab,
+    ]);
+    const cdp = makeFakeCdp(undefined, {
+      treesByTab: { [TAB_ID]: axTree("Allowed"), 5: axTree("Private secret") },
+    });
+    const send = vi.spyOn(cdp, "send");
+    let requestId = "";
+    const sendToTab = vi.fn(async (_tabId: number, message: unknown) => {
+      const typed = message as { type?: string; requestId?: string };
+      if (typed.type === RECORD_START && typed.requestId) requestId = typed.requestId;
+      return { ok: true };
+    });
+    const deps = { tabsApi, sendToTab, cdp };
+    const started = await handleRecordStart(manager, RECORD_START_V3, deps);
+    expect(started).toMatchObject({ recording: true });
+    attachRecordStepListener(deps);
+    tabsApi.activate(5);
+    chromeApi.tabsOnActivated.emit({ tabId: 5, windowId: AGENT_WINDOW_ID });
+    runtimeOnMessageEmit(
+      chromeApi,
+      requestId,
+      {
+        op: "click",
+        page_url: privateUrl,
+        target: { role: "button", name: "Secret", tag: "button" },
+      },
+      5,
+    );
+    chromeApi.webNavigationOnCompleted.emit({
+      tabId: 5,
+      frameId: 0,
+      url: privateUrl,
+    } as chrome.webNavigation.WebNavigationFramedCallbackDetails);
+    await settleWait();
+    tabsApi.activate(TAB_ID);
+    const stopped = await handleRecordStop(manager, { session_id: "abcd" }, deps);
+    const trace = asTraceV3((stopped as RecordStopResult).trace);
+    expect(JSON.stringify(trace)).not.toContain(privateUrl);
+    expect(JSON.stringify(trace)).not.toContain("Private secret");
+    expect(sendToTab.mock.calls.some(([tabId]) => tabId === 5)).toBe(false);
+    expect(send.mock.calls.some(([tabId]) => tabId === 5)).toBe(false);
+  });
+
   it("records tab transitions and binds actions to each tab's observation", async () => {
     const chromeApi = installChrome();
     const manager = fakeManager();

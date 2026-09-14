@@ -1,4 +1,6 @@
+import type { InteractionPreferenceStore } from "@/lib/interaction-preferences";
 import { OVERLAY_AUTOMATION_BYPASS } from "@/lib/overlay-bridge";
+import { ScreenshotExports } from "@/long-screenshot/exports";
 import type { SessionManager } from "@/session-manager/manager";
 import type { Transport } from "@/transport/transport";
 import type {
@@ -28,7 +30,10 @@ import type {
   RequestHelpParams,
   ResponseFrame,
   RpcError,
+  ScreenshotFullPageParams,
   ScreenshotParams,
+  ScreenshotReadParams,
+  ScreenshotReleaseParams,
   ScrollToParams,
   SelectParams,
   SnapshotParams,
@@ -37,6 +42,7 @@ import type {
   WheelParams,
 } from "@/transport/types";
 import { isRequestFrame } from "@/transport/types";
+import { auditContext } from "./audit-context";
 import { handleConsole } from "./console";
 import { handleDownload } from "./download";
 import { type EmulateCdpRunner, handleEmulate } from "./emulate";
@@ -68,11 +74,13 @@ import {
   handleSnapshot,
 } from "./observation";
 import {
+  clearRecordingForSession,
   handleRecordAwait,
   handleRecordStart,
   handleRecordStop,
   type RecordRuntimeDeps,
 } from "./record";
+import { handleFullPageScreenshot } from "./screenshot-full-page";
 import { handleScrollTo } from "./scroll";
 import {
   handleSessionStart,
@@ -138,6 +146,7 @@ export interface DispatcherDeps {
   onAgentTabClaimed?: (tabId: number, windowId: number) => void;
   /** User approval for `tool.tab_borrow` (overlay in content script). */
   approveBorrow?: BorrowConfirmationApprover;
+  interactionPreferences?: InteractionPreferenceStore;
   /** i18n notification copy for `tool.request_help` (resolved per-call). */
   helpNotificationCopy?: () => { title: string; body: string };
 }
@@ -161,12 +170,14 @@ export interface DispatcherDeps {
 export class ToolDispatcher {
   private readonly transport: Transport;
   private readonly sessions: SessionManager;
+  private screenshotExports: ScreenshotExports;
   private readonly cdp?: DispatcherCdpRunner;
   private readonly recording?: RecordRuntimeDeps;
   private readonly onSessionsChanged?: () => void;
   private readonly onBrowserControlResumed?: (sessionId: string) => void;
   private readonly onAgentTabClaimed?: (tabId: number, windowId: number) => void;
   private readonly approveBorrow?: BorrowConfirmationApprover;
+  private readonly interactionPreferences?: InteractionPreferenceStore;
   private readonly helpNotificationCopy?: () => { title: string; body: string };
   private subscription: { dispose(): void } | null = null;
   private readonly hoverBypassTabs = new Map<number, string>();
@@ -182,12 +193,14 @@ export class ToolDispatcher {
   constructor(deps: DispatcherDeps) {
     this.transport = deps.transport;
     this.sessions = deps.sessions;
+    this.screenshotExports = new ScreenshotExports((id) => this.sessions.has(id));
     this.cdp = deps.cdp;
     this.recording = deps.recording;
     this.onSessionsChanged = deps.onSessionsChanged;
     this.onBrowserControlResumed = deps.onBrowserControlResumed;
     this.onAgentTabClaimed = deps.onAgentTabClaimed;
     this.approveBorrow = deps.approveBorrow;
+    this.interactionPreferences = deps.interactionPreferences;
     this.helpNotificationCopy = deps.helpNotificationCopy;
   }
 
@@ -211,6 +224,9 @@ export class ToolDispatcher {
       }
     }
     this.inflightAbortControllers.clear();
+    const exports = this.screenshotExports;
+    this.screenshotExports = new ScreenshotExports((id) => this.sessions.has(id));
+    void exports.dispose();
   }
 
   private async dispatch(msg: ProtocolFrame): Promise<void> {
@@ -252,6 +268,13 @@ export class ToolDispatcher {
     try {
       const sessionId = sessionIdForBrowserControlMethod(req);
       if (sessionId) this.onBrowserControlResumed?.(sessionId);
+      // Best-effort context must never prevent the requested operation.
+      try {
+        const context = await auditContext(req, this.sessions);
+        if (context) this.transport.send({ event: "audit.context", payload: context });
+      } catch {
+        /* The daemon still has the original operation metadata. */
+      }
       const result = await this.invoke(req, ac.signal);
       if (isRpcError(result)) {
         body = { id: req.id, error: classifyCdpError(result) };
@@ -315,10 +338,25 @@ export class ToolDispatcher {
   }
 
   private async invoke(req: RequestFrame, signal: AbortSignal): Promise<unknown | RpcError> {
+    const sessionId = (req.params as { session_id?: string } | undefined)?.session_id;
+    if (
+      sessionId &&
+      this.sessions.get(sessionId)?.remote &&
+      (req.method === "tool.upload" || req.method === "tool.download")
+    ) {
+      return {
+        code: "unsupported",
+        message: "Remote connections do not support upload or download",
+      };
+    }
     switch (req.method) {
       case "tool.session_start":
-        return handleSessionStart(this.sessions, req.params as SessionStartParams, { signal });
+        return handleSessionStart(this.sessions, req.params as SessionStartParams, {
+          signal,
+          preferences: this.interactionPreferences,
+        });
       case "tool.session_stop": {
+        await this.screenshotExports.releaseSession((req.params as SessionStopParams).session_id);
         await this.releaseHoverLatch((req.params as SessionStopParams).session_id);
         return handleSessionStop(this.sessions, req.params as SessionStopParams, {
           cdp: this.cdp,
@@ -363,7 +401,10 @@ export class ToolDispatcher {
         return handleTabReturn(this.sessions, req.params as TabReturnParams, {
           signal,
           cdp: this.cdp,
-          beforeReturn: (sessionId, tabId) => this.releaseHoverLatch(sessionId, tabId),
+          beforeReturn: async (sessionId, tabId) => {
+            if (this.sessions.get(sessionId)?.remote) clearRecordingForSession(sessionId);
+            await this.releaseHoverLatch(sessionId, tabId);
+          },
         });
       case "tool.window_resize":
         return handleWindowResize(
@@ -378,6 +419,22 @@ export class ToolDispatcher {
           req.params as EmulateParams,
           this.cdp ? { cdp: this.cdp, tabsApi: chromeTabsApi, signal } : undefined,
         );
+      case "tool.screenshot_full_page":
+        if (!this.cdp) return { code: "unsupported", message: "Full-page screenshot requires CDP" };
+        return handleFullPageScreenshot(
+          this.sessions,
+          req.params as ScreenshotFullPageParams,
+          {
+            cdp: this.cdp,
+            tabsApi: chromeTabsApi,
+            exports: this.screenshotExports,
+          },
+          signal,
+        );
+      case "tool.screenshot_read":
+        return this.screenshotExports.read(req.params as ScreenshotReadParams);
+      case "tool.screenshot_release":
+        return this.screenshotExports.release(req.params as ScreenshotReleaseParams);
       case "tool.screenshot":
         return handleScreenshot(
           this.sessions,
@@ -657,6 +714,7 @@ export class ToolDispatcher {
         );
       case "tool.request_help":
         return handleRequestHelp(this.sessions, req.params as RequestHelpParams, {
+          preferences: this.interactionPreferences,
           tabsApi: chromeTabsApi,
           windows: { update: (id, info) => chrome.windows.update(id, info) },
           activateTab: async (tabId) => {
@@ -857,6 +915,7 @@ function sessionIdForBrowserControlMethod(req: RequestFrame): string | null {
     case "tool.download":
     case "tool.evaluate":
     case "tool.observe":
+    case "tool.screenshot_full_page":
     case "tool.request_help":
     case "tool.record_start": {
       const sessionId = (req.params as { session_id?: unknown } | undefined)?.session_id;

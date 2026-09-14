@@ -1,9 +1,9 @@
+import { parseRemoteEndpoint, type RemoteEndpoint, readRemoteEndpoint } from "./remote-endpoint";
 import {
-  parseRemoteEndpoint,
-  REMOTE_ENDPOINT_KEY,
-  type RemoteEndpoint,
-  readRemoteEndpoint,
-} from "./remote-endpoint";
+  initializeRemoteStorage,
+  readRemoteConnection,
+  writeRemoteConnection,
+} from "./remote-storage";
 
 function newToken(): string {
   const bytes = crypto.getRandomValues(new Uint8Array(32));
@@ -45,7 +45,7 @@ async function authorize(
   ) {
     throw new Error("Invalid browser authorization response");
   }
-  return {
+  const updated = readRemoteEndpoint({
     url: endpoint.url,
     token: nextToken,
     deviceId: data.device_id,
@@ -53,7 +53,11 @@ async function authorize(
       typeof data.service_name === "string" ? data.service_name.slice(0, 48) : endpoint.serviceName,
     expiresAt: data.expires_at,
     renewAfter: data.renew_after,
-  };
+  });
+  if (!updated || (action === "renew" && updated.deviceId !== endpoint.deviceId)) {
+    throw new Error("Authorization device changed");
+  }
+  return updated;
 }
 
 export async function activateRemoteEndpoint(endpoint: RemoteEndpoint): Promise<RemoteEndpoint> {
@@ -68,9 +72,10 @@ function serialized<T>(action: () => Promise<T>): Promise<T> {
 }
 export function updateRemoteConnection(pairing: string | null): Promise<string | null> {
   return serialized(async () => {
+    await initializeRemoteStorage();
     const endpoint =
       pairing === null ? null : await activateRemoteEndpoint(parseRemoteEndpoint(pairing));
-    await chrome.storage.local.set({ [REMOTE_ENDPOINT_KEY]: endpoint });
+    await writeRemoteConnection(endpoint);
     return endpoint?.url ?? null;
   });
 }
@@ -88,8 +93,8 @@ export async function renewRemoteAuthorization(): Promise<void> {
 }
 async function renewRemote(): Promise<void> {
   {
-    const stored = await chrome.storage.local.get(REMOTE_ENDPOINT_KEY);
-    const endpoint = readRemoteEndpoint(stored[REMOTE_ENDPOINT_KEY]);
+    await initializeRemoteStorage();
+    const endpoint = await readRemoteConnection();
     if (
       !endpoint?.deviceId ||
       !endpoint.renewAfter ||
@@ -98,11 +103,9 @@ async function renewRemote(): Promise<void> {
       return;
     const nextToken = endpoint.pendingToken ?? newToken();
     const pending = { ...endpoint, pendingToken: nextToken };
-    await chrome.storage.local.set({ [REMOTE_ENDPOINT_KEY]: pending });
+    await writeRemoteConnection(pending);
     const updated = await authorize(endpoint, "renew", nextToken);
-    const latest = readRemoteEndpoint(
-      (await chrome.storage.local.get(REMOTE_ENDPOINT_KEY))[REMOTE_ENDPOINT_KEY],
-    );
+    const latest = await readRemoteConnection();
     // A settings change during the request must not resurrect an old connection.
     if (
       latest?.url === endpoint.url &&
@@ -110,14 +113,13 @@ async function renewRemote(): Promise<void> {
       latest.deviceId === endpoint.deviceId &&
       latest.pendingToken === nextToken
     ) {
-      await chrome.storage.local.set({ [REMOTE_ENDPOINT_KEY]: updated });
+      await writeRemoteConnection(updated);
     }
   }
 }
 
 export function watchRemoteAuthorization() {
-  // Content scripts do not need the gateway credential.
-  void chrome.storage.local.setAccessLevel({ accessLevel: "TRUSTED_CONTEXTS" });
+  const ready = initializeRemoteStorage();
   chrome.runtime.onMessage.addListener((message, sender, reply) => {
     if (message?.kind !== "bsk-remote-authorization") return false;
     if (
@@ -145,5 +147,5 @@ export function watchRemoteAuthorization() {
   chrome.alarms.onAlarm.addListener(listener);
   void chrome.alarms.create("bsk-remote-authorization", { periodInMinutes: 1 });
   run();
-  return { changed: run, dispose: () => chrome.alarms.onAlarm.removeListener(listener) };
+  return { ready, changed: run, dispose: () => chrome.alarms.onAlarm.removeListener(listener) };
 }

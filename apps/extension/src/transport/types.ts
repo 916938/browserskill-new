@@ -24,6 +24,12 @@ export type RpcErrorReason =
   | "agent_window_scope"
   | "element_not_visible"
   | "ref_not_found"
+  | "ref_kind_unsupported"
+  | "visual_capture_stale"
+  | "visual_capture_invalid"
+  | "visual_coordinate_invalid"
+  | "visual_target_changed"
+  | "visual_pixel_budget_exceeded"
   | "selector_not_found"
   | "target_not_fillable"
   | "fill_value_invalid"
@@ -38,6 +44,11 @@ export type RpcErrorReason =
   | "restricted_tab_url"
   | "cdp_extension_access_denied"
   | "borrow_conflict"
+  | "borrow_in_progress"
+  | "user_denied"
+  | "confirmation_timeout"
+  | "confirmation_ui_unavailable"
+  | "borrow_outcome_unknown"
   | "screenshot_capture_failed"
   | "file_input_probe_failed"
   | "file_input_not_activated"
@@ -107,12 +118,18 @@ export function isEventFrame(f: ProtocolFrame): f is EventFrame {
   return typeof (f as EventFrame).event === "string";
 }
 
+export interface InteractionPolicy {
+  borrow_confirmation: "always" | "never";
+  request_help: "enabled" | "disabled";
+}
+
 export interface BrowserPeerInfo {
   name: string;
   version: string;
 }
 
 export interface HandshakeParams {
+  audit_enabled?: boolean;
   client: string;
   version: string;
   protocol_version: string;
@@ -129,6 +146,8 @@ export interface HandshakeParams {
 }
 
 export interface HandshakeResult {
+  audit_version?: number;
+  audit_ready?: boolean;
   server: string;
   version: string;
   protocol_version: string;
@@ -314,12 +333,46 @@ export interface ScreenshotParams {
 }
 
 export interface ScreenshotResult {
+  capture_id?: string;
+  capture_unavailable?: string;
   image_base64: string;
   width: number;
   height: number;
   format: string;
   tab_id: number;
   dialogs?: JavaScriptDialogInfo[];
+}
+
+export interface ScreenshotFullPageParams {
+  session_id: string;
+  tab_id?: number;
+  timeout_ms?: number;
+}
+export interface ScreenshotFullPageResult {
+  capture_id: string;
+  width: number;
+  height: number;
+  format: "png";
+  tab_id: number;
+  byte_size: number;
+  dialogs?: JavaScriptDialogInfo[];
+}
+export interface ScreenshotReadParams {
+  session_id: string;
+  capture_id: string;
+  offset: number;
+}
+export interface ScreenshotReadResult {
+  data_base64: string;
+  next_offset: number;
+  eof: boolean;
+}
+export interface ScreenshotReleaseParams {
+  session_id: string;
+  capture_id: string;
+}
+export interface ScreenshotReleaseResult {
+  released: boolean;
 }
 
 export interface SnapshotParams {
@@ -338,11 +391,13 @@ export interface SnapshotResult {
 }
 
 export interface ObserveParams extends SnapshotParams {
+  cursor?: string;
   debug_surfaces?: boolean;
   probe_hover?: boolean;
 }
 
 export interface ObserveResult extends SnapshotResult {
+  next_cursor?: string;
   hover_probe?: {
     performed: boolean;
     revealed_content: boolean;
@@ -432,6 +487,9 @@ export type MouseButton = "left" | "middle" | "right";
 export type KeyModifier = "alt" | "ctrl" | "meta" | "shift";
 
 export interface ClickParams {
+  capture_id?: string;
+  image_x?: number;
+  image_y?: number;
   session_id: string;
   ref?: string;
   selector?: string;

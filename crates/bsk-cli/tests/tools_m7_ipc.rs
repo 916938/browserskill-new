@@ -77,7 +77,7 @@ async fn do_handshake(ws: &mut Ws) -> HandshakeResult {
     let params = HandshakeParams {
         client: "browser-skill-extension".into(),
         version: "0.1.0-dev.0".parse().unwrap(),
-        protocol_version: "1.0".into(),
+        protocol_version: bsk::daemon::state::PROTOCOL_VERSION.into(),
         instance_id: TEST_EXT_ID.into(),
         browser: BrowserPeerInfo {
             name: "chrome".into(),
@@ -136,6 +136,7 @@ where
                     window_id += 1;
                     ResponseBody::Ok(
                         serde_json::to_value(SessionStartResult {
+                            interaction: None,
                             agent_window_id: Some(id),
                         })
                         .unwrap(),
@@ -343,6 +344,9 @@ async fn click_round_trips_ref_and_modifiers() {
         }
         let p: ClickParams = serde_json::from_value(params).unwrap();
         assert_eq!(p.ref_.as_deref(), Some("@e3"));
+        assert_eq!(p.capture_id.as_deref(), Some("capture-test"));
+        assert_eq!(p.image_x, Some(12.5));
+        assert_eq!(p.image_y, Some(34.0));
         assert_eq!(p.button, Some(MouseButton::Right));
         assert_eq!(
             p.modifiers,
@@ -366,6 +370,9 @@ async fn click_round_trips_ref_and_modifiers() {
         &sock,
         Method::ToolClick,
         ClickParams {
+            capture_id: Some("capture-test".into()),
+            image_x: Some(12.5),
+            image_y: Some(34.0),
             session_id,
             ref_: Some("@e3".into()),
             selector: None,
@@ -734,6 +741,9 @@ async fn m7_tools_propagate_extension_errors() {
         &sock,
         Method::ToolClick,
         ClickParams {
+            capture_id: None,
+            image_x: None,
+            image_y: None,
             session_id: session_id.clone(),
             ref_: Some("@e1".into()),
             selector: None,
