@@ -469,7 +469,7 @@ describe("App - Label Editing", () => {
 
   /** Helper to get the label save button */
   function getSaveButton(): HTMLButtonElement {
-    return screen.getByRole("button", { name: /保存|已保存/ }) as HTMLButtonElement;
+    return screen.getByRole("button", { name: /^(?:保存|已保存)$/ }) as HTMLButtonElement;
   }
 
   it("renders label input and save button", () => {

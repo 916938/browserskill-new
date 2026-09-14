@@ -197,9 +197,13 @@ async fn run_record_stop(home: &Path, output: &Path) -> std::process::Output {
         .unwrap()
 }
 
-async fn setup_daemon(temp: &Path) -> (bsk::daemon::DaemonHandle, PathBuf, PathBuf) {
+// Windows 管道名只取文件名主干；同名 sock 的并发测试会互相冲突，调用方须给唯一名。
+async fn setup_daemon(
+    temp: &Path,
+    sock_name: &str,
+) -> (bsk::daemon::DaemonHandle, PathBuf, PathBuf) {
     let home = temp.join("bsk-home");
-    let sock = temp.join("daemon.sock");
+    let sock = temp.join(sock_name);
     let daemon = daemon::run(DaemonConfig::new(0), Some(sock.clone()))
         .await
         .unwrap();
@@ -222,7 +226,7 @@ async fn existing_trace_json_file_is_rejected_before_record_stop() {
         .prefix("bsk-record-json-")
         .tempdir()
         .unwrap();
-    let (daemon, home, sock) = setup_daemon(temp.path()).await;
+    let (daemon, home, sock) = setup_daemon(temp.path(), "daemon-json.sock").await;
     let output = temp.path().join("trace.json");
     std::fs::write(&output, "{}\n").unwrap();
 
@@ -270,7 +274,7 @@ async fn failed_bundle_export_can_be_recovered() {
         .prefix("bsk-record-recov-")
         .tempdir()
         .unwrap();
-    let (daemon, home, sock) = setup_daemon(temp.path()).await;
+    let (daemon, home, sock) = setup_daemon(temp.path(), "daemon-recov.sock").await;
     let output = temp.path().join("trace");
     std::fs::create_dir_all(&output).unwrap();
     std::fs::write(output.join("states"), "not a directory\n").unwrap();

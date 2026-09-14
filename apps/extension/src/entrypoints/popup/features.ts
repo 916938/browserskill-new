@@ -1,5 +1,10 @@
 import type { RemixiconComponentType } from "@remixicon/react";
-import { RiFileList3Line, RiHistoryLine, RiRecordCircleLine, RiScreenshot2Line } from "@remixicon/react";
+import {
+  RiFileList3Line,
+  RiHistoryLine,
+  RiRecordCircleLine,
+  RiScreenshot2Line,
+} from "@remixicon/react";
 
 export type PopupFeatureId = "record" | "long-screenshot" | "audit" | "templates";
 

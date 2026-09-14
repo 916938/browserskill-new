@@ -500,7 +500,9 @@ async fn handle_inbound_text(state: &Arc<DaemonState>, client: &Arc<BrowserClien
                 bsk_protocol::Method::AuditRequest => {
                     let body =
                         handle_audit_request(state, &client.id.0, req.params.unwrap_or_default());
-                    let _ = client.sink.send(Frame::Response(ResponseFrame { id: req.id, body }));
+                    let _ = client
+                        .sink
+                        .send(Frame::Response(ResponseFrame { id: req.id, body }));
                 }
                 // ── template.* (daemon-local CRUD) ───────────
                 bsk_protocol::Method::TemplateList => {
@@ -528,7 +530,9 @@ async fn handle_inbound_text(state: &Arc<DaemonState>, client: &Arc<BrowserClien
                         message: "Unsupported extension request".into(),
                         data: None,
                     });
-                    let _ = client.sink.send(Frame::Response(ResponseFrame { id: req.id, body }));
+                    let _ = client
+                        .sink
+                        .send(Frame::Response(ResponseFrame { id: req.id, body }));
                 }
             }
         }

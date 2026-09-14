@@ -973,16 +973,17 @@ describe("getConnectionEnabled / setConnectionEnabled (edge cases)", () => {
 // Edge Case Tests - STORAGE_KEYS export
 // ============================================================================
 describe("STORAGE_KEYS (edge cases)", () => {
-  it("exports all three keys with correct values", () => {
+  it("exports all five keys with correct values", () => {
     expect(STORAGE_KEYS.INSTANCE_ID).toBe("bsk_instance_id");
     expect(STORAGE_KEYS.LABEL).toBe("bh_label");
     expect(STORAGE_KEYS.CONNECTION_ENABLED).toBe("bh_connection_enabled");
     expect(STORAGE_KEYS.CONTROL_HINTS_HIDDEN).toBe("bsk_control_hints_hidden");
+    expect(STORAGE_KEYS.DAEMON_PORT).toBe("bsk_daemon_port");
   });
 
   it("is a frozen/as const object (immutable)", () => {
-    // Verify the object has exactly 4 keys
-    expect(Object.keys(STORAGE_KEYS)).toHaveLength(4);
+    // Verify the object has exactly 5 keys
+    expect(Object.keys(STORAGE_KEYS)).toHaveLength(5);
     // Verify all values are strings
     for (const value of Object.values(STORAGE_KEYS)) {
       expect(typeof value).toBe("string");
