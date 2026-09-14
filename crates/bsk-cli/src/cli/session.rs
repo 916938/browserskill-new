@@ -56,10 +56,14 @@ pub struct SessionStartArgs {
     /// Optional task name displayed in local operation history.
     #[arg(long)]
     pub name: Option<String>,
-    /// Target browser instance id (only required when multiple browsers
-    /// are connected).
-    #[arg(long)]
+    /// Target browser by instance id or label (required when multiple browsers
+    /// are connected, unless --browser-id is used).
+    #[arg(long, conflicts_with = "browser_id")]
     pub browser: Option<String>,
+
+    /// Target only this exact browser instance id, never a label.
+    #[arg(long, value_name = "ID", value_parser = non_empty_browser_id)]
+    pub browser_id: Option<String>,
 
     /// Agent Window outer width in CSS pixels (100..=7680). Both
     /// `--width` and `--height` must be given to take effect.
@@ -74,6 +78,14 @@ pub struct SessionStartArgs {
     /// Open the Agent Window in the background without stealing focus.
     #[arg(long)]
     pub no_focus: bool,
+}
+
+fn non_empty_browser_id(s: &str) -> Result<String, String> {
+    if s.trim().is_empty() {
+        Err("browser id must not be empty".into())
+    } else {
+        Ok(s.to_string())
+    }
 }
 
 /// Parse a `--width` / `--height` Agent Window dimension (CSS pixels).
@@ -107,6 +119,8 @@ struct StartParams {
     task_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     browser_instance_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    browser_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     width: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -197,6 +211,7 @@ fn run_start(sock: PathBuf, args: SessionStartArgs, format: Format) -> Result<()
         SessionStartOptions {
             name: args.name,
             browser: args.browser,
+            browser_id: args.browser_id,
             width: args.width,
             height: args.height,
             focused: args.no_focus.then_some(false),
@@ -233,6 +248,7 @@ fn run_start(sock: PathBuf, args: SessionStartArgs, format: Format) -> Result<()
 pub struct SessionStartOptions {
     pub name: Option<String>,
     pub browser: Option<String>,
+    pub browser_id: Option<String>,
     pub width: Option<u32>,
     pub height: Option<u32>,
     pub focused: Option<bool>,
@@ -240,18 +256,56 @@ pub struct SessionStartOptions {
 
 /// Start a session and open the Agent Window. Used by `session start` and `record start`.
 pub fn start_session(sock: PathBuf, opts: SessionStartOptions) -> Result<StartReply, CliError> {
-    call(
+    if opts.browser.is_some() && opts.browser_id.is_some() {
+        return Err(CliError::Local(anyhow::anyhow!(
+            "--browser and --browser-id are mutually exclusive"
+        )));
+    }
+    if let Some(id) = &opts.browser_id {
+        non_empty_browser_id(id).map_err(|message| CliError::Local(anyhow::anyhow!(message)))?;
+    }
+    // A new field on session.start is unsafe: old daemons ignore it and
+    // may create a window in their only online browser. Never fall back.
+    let strict = opts.browser_id.is_some();
+    let method = if strict {
+        Method::SessionStartStrict
+    } else {
+        Method::SessionStart
+    };
+    let result = call(
         sock,
-        Method::SessionStart,
+        method,
         Some(StartParams {
             task_name: opts.name,
             browser_instance_id: opts.browser,
+            browser_id: opts.browser_id,
             width: opts.width,
             height: opts.height,
             focused: opts.focused,
         }),
         SESSION_START_IPC_TIMEOUT,
-    )
+    );
+    if strict {
+        result.map_err(|err| {
+            const CONTEXT: &str = "--browser-id requires daemon support for session.start_strict; no fallback to session.start was attempted";
+            match err {
+                CliError::Rpc { code, message, data, source }
+                    if matches!(code, ErrorCode::UnknownMethod | ErrorCode::ProtocolError) =>
+                {
+                    CliError::Rpc {
+                        code,
+                        message: format!("{CONTEXT}: {message}"),
+                        data,
+                        source,
+                    }
+                }
+                CliError::Local(err) => CliError::Local(err.context(CONTEXT)),
+                err => err,
+            }
+        })
+    } else {
+        result
+    }
 }
 
 /// Stop a single session by id.
@@ -581,6 +635,7 @@ mod start_params_tests {
         for task_name in [None, Some("Check settings".to_string())] {
             let params = StartParams {
                 task_name: task_name.clone(),
+                browser_id: None,
                 browser_instance_id: None,
                 width: None,
                 height: None,
@@ -600,6 +655,59 @@ mod i3_tests {
     use super::*;
     use crate::cli::error::render_human_to_string;
     use bsk_protocol::RpcError;
+
+    #[test]
+    fn session_start_selectors_have_distinct_ipc_fields() {
+        let strict = StartParams {
+            task_name: None,
+            browser_id: Some("alpha".into()),
+            browser_instance_id: None,
+            width: None,
+            height: None,
+            focused: None,
+        };
+        assert_eq!(
+            serde_json::to_value(strict).unwrap(),
+            serde_json::json!({"browser_id": "alpha"})
+        );
+        let legacy = StartParams {
+            task_name: None,
+            browser_id: None,
+            browser_instance_id: Some("Work".into()),
+            width: None,
+            height: None,
+            focused: None,
+        };
+        assert_eq!(
+            serde_json::to_value(legacy).unwrap(),
+            serde_json::json!({"browser_instance_id": "Work"})
+        );
+    }
+
+    #[test]
+    fn session_start_validates_selectors_before_connecting() {
+        for options in [
+            SessionStartOptions {
+                browser_id: Some("".into()),
+                ..Default::default()
+            },
+            SessionStartOptions {
+                browser_id: Some(" \t".into()),
+                ..Default::default()
+            },
+            SessionStartOptions {
+                browser: Some("Work".into()),
+                browser_id: Some("alpha".into()),
+                ..Default::default()
+            },
+        ] {
+            let err = start_session(PathBuf::new(), options).unwrap_err();
+            assert!(matches!(&err, CliError::Local(_)));
+            assert!(
+                err.to_string().contains("empty") || err.to_string().contains("mutually exclusive")
+            );
+        }
+    }
 
     /// Review I3 contract: the centralised `summary:` and `hint:` lines
     /// come from `render_error::info_for(MultipleBrowsersOnline)` and

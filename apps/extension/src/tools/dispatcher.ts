@@ -43,6 +43,7 @@ import type {
 } from "@/transport/types";
 import { isRequestFrame } from "@/transport/types";
 import { auditContext } from "./audit-context";
+import { handleBrowserTabs } from "./browser-tabs";
 import { handleConsole } from "./console";
 import { handleDownload } from "./download";
 import { type EmulateCdpRunner, handleEmulate } from "./emulate";
@@ -179,6 +180,7 @@ export class ToolDispatcher {
   private readonly interactionPreferences?: InteractionPreferenceStore;
   private readonly helpNotificationCopy?: () => { title: string; body: string };
   private subscription: { dispose(): void } | null = null;
+  private connectionSubscription: { dispose(): void } | null = null;
   private readonly hoverBypassTabs = new Map<number, string>();
   private readonly hoverLatches = new Map<number, HoverLatch>();
   /**
@@ -188,6 +190,8 @@ export class ToolDispatcher {
    * controllers. Made public for tests.
    */
   readonly inflightAbortControllers = new Map<string, AbortController>();
+  private readonly browserTabRequests = new Set<string>();
+  private connectionEpoch = 0;
 
   constructor(deps: DispatcherDeps) {
     this.transport = deps.transport;
@@ -208,11 +212,20 @@ export class ToolDispatcher {
     this.subscription = this.transport.onMessage((msg) => {
       void this.dispatch(msg);
     });
+    this.connectionSubscription = this.transport.onConnectionStateChange((state) => {
+      if (state === "connected" || state === "version_skew") return;
+      this.connectionEpoch += 1;
+      // 断连后停止无会话请求的后续动作，避免旧连接上的延迟聚焦或创建。
+      for (const id of this.browserTabRequests) this.inflightAbortControllers.get(id)?.abort();
+    });
   }
 
   stop(): void {
+    this.connectionEpoch += 1;
     this.subscription?.dispose();
     this.subscription = null;
+    this.connectionSubscription?.dispose();
+    this.connectionSubscription = null;
     // Trip every outstanding controller so dependent waits unblock
     // before the dispatcher is GC'd.
     for (const ac of this.inflightAbortControllers.values()) {
@@ -261,7 +274,15 @@ export class ToolDispatcher {
     const mutatesSessions =
       req.method === "tool.session_start" || req.method === "tool.session_stop";
     const ac = new AbortController();
+    const epoch = this.connectionEpoch;
+    const browserTabRequest = [
+      "browser.tabs.list",
+      "browser.tabs.select",
+      "browser.tabs.create",
+      "browser.tabs.observe",
+    ].includes(req.method);
     this.inflightAbortControllers.set(req.id, ac);
+    if (browserTabRequest) this.browserTabRequests.add(req.id);
     let body: ResponseFrame;
     let startedSession: string | null = null;
     try {
@@ -299,8 +320,13 @@ export class ToolDispatcher {
         };
       }
     } finally {
-      this.inflightAbortControllers.delete(req.id);
+      if (this.inflightAbortControllers.get(req.id) === ac) {
+        this.inflightAbortControllers.delete(req.id);
+        this.browserTabRequests.delete(req.id);
+      }
     }
+    // 旧连接的响应不能发送到重连后的 daemon。
+    if (browserTabRequest && epoch !== this.connectionEpoch) return;
     let sent = true;
     try {
       this.transport.send(body);
@@ -338,6 +364,11 @@ export class ToolDispatcher {
 
   private async invoke(req: RequestFrame, signal: AbortSignal): Promise<unknown | RpcError> {
     switch (req.method) {
+      case "browser.tabs.list":
+      case "browser.tabs.select":
+      case "browser.tabs.create":
+      case "browser.tabs.observe":
+        return handleBrowserTabs(this.sessions, req.method, req.params, undefined, signal);
       case "tool.session_start":
         return handleSessionStart(this.sessions, req.params as SessionStartParams, {
           signal,

@@ -1,0 +1,25 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "BrowserTabsSelectParams",
+  "type": "object",
+  "required": [
+    "browser_id",
+    "tab_id"
+  ],
+  "properties": {
+    "browser_id": {
+      "type": "string"
+    },
+    "expected_origin": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "tab_id": {
+      "type": "integer",
+      "format": "int64"
+    }
+  },
+  "additionalProperties": false
+}

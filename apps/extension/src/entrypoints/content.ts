@@ -11,6 +11,7 @@ import { createHelpRequestData } from "@/content/help-request";
 import overlayCss from "@/content/overlay.css?inline";
 import { OverlayController, shouldShowAgentControlOverlay } from "@/content/overlay-controller";
 import { RecordOverlay } from "@/content/RecordOverlay";
+import { registerUserTabObserve } from "@/content/user-tab-observe";
 import {
   type CaptureSuppressAck,
   type CaptureSuppressMessage,
@@ -68,6 +69,8 @@ export default defineContentScript({
 
   async main(ctx) {
     if (window.top !== window) return;
+    const unregisterObserve = registerUserTabObserve();
+    ctx.onInvalidated(unregisterObserve);
 
     const overlays = new OverlayController();
     let activeRecordRequestId: string | null = null;

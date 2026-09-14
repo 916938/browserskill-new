@@ -3,6 +3,7 @@
 use std::fs;
 use std::path::PathBuf;
 
+use bsk_protocol::browser_tabs::*;
 use bsk_protocol::system::{
     BrowserListParams, HandshakeParams, HandshakeResult, PingParams, PingResult, StatusParams,
     StatusResult,
@@ -36,6 +37,13 @@ fn main() {
     dump!(StatusParams, "system_status_params");
     dump!(StatusResult, "system_status_result");
     dump!(BrowserListParams, "browser_list_params");
+    dump!(BrowserTabsListParams, "browser_tabs_list_params");
+    dump!(BrowserTabsListResult, "browser_tabs_list_result");
+    dump!(BrowserTabsSelectParams, "browser_tabs_select_params");
+    dump!(BrowserTabsCreateParams, "browser_tabs_create_params");
+    dump!(BrowserTabResult, "browser_tab_result");
+    dump!(BrowserTabsObserveParams, "browser_tabs_observe_params");
+    dump!(BrowserTabsObserveResult, "browser_tabs_observe_result");
 
     dump!(CancelParams, "cancel_params");
     dump!(CancelResult, "cancel_result");

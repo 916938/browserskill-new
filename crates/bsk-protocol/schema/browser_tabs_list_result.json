@@ -1,0 +1,57 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "BrowserTabsListResult",
+  "type": "object",
+  "required": [
+    "tabs"
+  ],
+  "properties": {
+    "tabs": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/UserTabInfo"
+      }
+    }
+  },
+  "definitions": {
+    "UserTabInfo": {
+      "type": "object",
+      "required": [
+        "active",
+        "scope",
+        "tab_id",
+        "title",
+        "url",
+        "window_id"
+      ],
+      "properties": {
+        "active": {
+          "type": "boolean"
+        },
+        "scope": {
+          "$ref": "#/definitions/UserTabScope"
+        },
+        "tab_id": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "title": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        },
+        "window_id": {
+          "type": "integer",
+          "format": "int64"
+        }
+      }
+    },
+    "UserTabScope": {
+      "type": "string",
+      "enum": [
+        "user"
+      ]
+    }
+  }
+}

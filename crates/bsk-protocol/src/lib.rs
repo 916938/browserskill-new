@@ -1,5 +1,6 @@
 //! browser-skill wire protocol — frames, methods, tool payloads, handshake.
 
+pub mod browser_tabs;
 pub mod cancel;
 pub mod error;
 pub mod frame;

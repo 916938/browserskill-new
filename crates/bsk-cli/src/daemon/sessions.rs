@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use tokio::time::{Duration, timeout};
 
 use super::abort::AbortToken;
-use super::browsers::{BrowserClient, BrowserId, BrowserRegistry, SelectError};
+use super::browsers::{BrowserClient, BrowserId, BrowserRegistry, BrowserSelector, SelectError};
 use super::queue::{CANCEL_CLEANUP_TIMEOUT, DispatchError, ToolQueueRegistry};
 use super::session_interrupt::SessionInterruptRegistry;
 
@@ -459,11 +459,11 @@ pub struct AgentWindowOptions {
 /// design §5) is also spawned so that subsequent `tool.*` RPCs serialise
 /// against this session's Agent Window / ref-store.
 #[allow(clippy::too_many_arguments)]
-pub async fn start_session(
+pub async fn start_session<'a>(
     registry: &Arc<BrowserRegistry>,
     sessions: &Arc<SessionRegistry>,
     queues: &Arc<ToolQueueRegistry>,
-    requested: Option<&str>,
+    requested: impl Into<BrowserSelector<'a>>,
     window: AgentWindowOptions,
     connect_wait: Duration,
     timeout_dur: Duration,

@@ -33,6 +33,9 @@ pub enum Method {
 
     #[serde(rename = "session.start")]
     SessionStart,
+    /// Exact instance-id selection; older daemons must reject this method.
+    #[serde(rename = "session.start_strict")]
+    SessionStartStrict,
     #[serde(rename = "session.stop")]
     SessionStop,
     #[serde(rename = "session.stop_all")]
@@ -42,6 +45,14 @@ pub enum Method {
 
     #[serde(rename = "browser.list")]
     BrowserList,
+    #[serde(rename = "browser.tabs.list")]
+    BrowserTabsList,
+    #[serde(rename = "browser.tabs.select")]
+    BrowserTabsSelect,
+    #[serde(rename = "browser.tabs.create")]
+    BrowserTabsCreate,
+    #[serde(rename = "browser.tabs.observe")]
+    BrowserTabsObserve,
 
     // ── Template management ────────────────────────────────
     #[serde(rename = "template.list")]
@@ -187,7 +198,9 @@ impl Method {
     pub fn effect(&self) -> MethodEffect {
         match self {
             // Browser/page mutations — gated by pending-interrupt.
-            Method::ToolTabCreate
+            Method::BrowserTabsCreate
+            | Method::BrowserTabsSelect
+            | Method::ToolTabCreate
             | Method::ToolTabClose
             | Method::ToolTabBorrow
             | Method::ToolTabReturn
@@ -221,7 +234,9 @@ impl Method {
             // `record_stop` / `record_await` observe / finish a recording
             // without driving new automation gestures, so they stay
             // ungated (teardown after interrupt must still work).
-            Method::ToolTabList
+            Method::BrowserTabsList
+            | Method::BrowserTabsObserve
+            | Method::ToolTabList
             | Method::ToolSnapshot
             | Method::ToolGetHtml
             | Method::ToolScreenshot
@@ -236,6 +251,7 @@ impl Method {
 
             // Session lifecycle — not gated.
             Method::SessionStart
+            | Method::SessionStartStrict
             | Method::SessionStop
             | Method::SessionStopAll
             | Method::SessionList
@@ -286,6 +302,45 @@ mod tests {
     use super::*;
     use crate::{CancelParams, CancelResult};
     use serde_json::json;
+
+    #[test]
+    fn session_start_strict_method_round_trips() {
+        let method: Method = serde_json::from_value(json!("session.start_strict")).unwrap();
+        assert_eq!(method, Method::SessionStartStrict);
+        assert_eq!(method.effect(), MethodEffect::ControlPlane);
+        assert_eq!(
+            serde_json::to_value(method).unwrap(),
+            json!("session.start_strict")
+        );
+    }
+
+    #[test]
+    fn browser_tabs_methods_are_distinct_from_session_tools() {
+        for (wire, method, effect) in [
+            (
+                "browser.tabs.list",
+                Method::BrowserTabsList,
+                MethodEffect::PassiveRead,
+            ),
+            (
+                "browser.tabs.select",
+                Method::BrowserTabsSelect,
+                MethodEffect::BrowserMutation,
+            ),
+            (
+                "browser.tabs.create",
+                Method::BrowserTabsCreate,
+                MethodEffect::BrowserMutation,
+            ),
+        ] {
+            assert_eq!(
+                serde_json::from_value::<Method>(json!(wire)).unwrap(),
+                method
+            );
+            assert_eq!(method.effect(), effect);
+            assert_eq!(serde_json::to_value(method).unwrap(), json!(wire));
+        }
+    }
 
     #[test]
     fn cancel_method_round_trips() {

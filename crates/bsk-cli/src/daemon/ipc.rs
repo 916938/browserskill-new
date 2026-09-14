@@ -236,10 +236,13 @@ pub fn full_handler(status: DaemonStatus, state: Arc<DaemonState>) -> RpcHandler
                     Ok(v) => ResponseBody::Ok(v),
                     Err(e) => ResponseBody::Err(e),
                 },
-                Method::SessionStart => match handle_session_start(&state, rpc_id, params).await {
-                    Ok(v) => ResponseBody::Ok(v),
-                    Err(e) => ResponseBody::Err(e),
-                },
+                Method::SessionStart | Method::SessionStartStrict => {
+                    let strict = method == Method::SessionStartStrict;
+                    match handle_session_start(&state, rpc_id, params, strict).await {
+                        Ok(v) => ResponseBody::Ok(v),
+                        Err(e) => ResponseBody::Err(e),
+                    }
+                }
                 Method::SessionStop => match handle_session_stop(&state, rpc_id, params).await {
                     Ok(v) => ResponseBody::Ok(v),
                     Err(e) => ResponseBody::Err(e),
@@ -253,6 +256,15 @@ pub fn full_handler(status: DaemonStatus, state: Arc<DaemonState>) -> RpcHandler
                     Ok(v) => ResponseBody::Ok(v),
                     Err(e) => ResponseBody::Err(e),
                 },
+                Method::BrowserTabsList
+                | Method::BrowserTabsSelect
+                | Method::BrowserTabsCreate
+                | Method::BrowserTabsObserve => {
+                    match super::browser_tabs::handle(&state, rpc_id, method, params).await {
+                        Ok(v) => ResponseBody::Ok(v),
+                        Err(e) => ResponseBody::Err(e),
+                    }
+                }
                 Method::TransferBegin => handle_transfer_begin(&state, params),
                 Method::TransferChunk => handle_transfer_chunk(&state, params),
                 Method::TransferFinish => handle_transfer_finish(&state, params),
@@ -809,6 +821,9 @@ fn tool_dispatch_transport_timeout(method: &Method, params: &Value) -> Result<Du
 struct CliSessionStartParams {
     #[serde(default)]
     pub browser_instance_id: Option<String>,
+    /// Strict instance-id selector; unlike browser_instance_id, never matches labels.
+    #[serde(default)]
+    pub browser_id: Option<String>,
     #[serde(default)]
     pub width: Option<u32>,
     #[serde(default)]
@@ -908,6 +923,7 @@ async fn handle_session_start(
     state: &Arc<DaemonState>,
     rpc_id: RpcId,
     params: Value,
+    strict: bool,
 ) -> Result<Value, RpcError> {
     let task_name = params
         .get("task_name")
@@ -925,6 +941,7 @@ async fn handle_session_start(
     let params: CliSessionStartParams = if params.is_null() {
         CliSessionStartParams {
             browser_instance_id: None,
+            browser_id: None,
             width: None,
             height: None,
             focused: None,
@@ -935,6 +952,32 @@ async fn handle_session_start(
             message: err.to_string(),
             data: None,
         })?
+    };
+    if strict && params.browser_id.is_none() {
+        return Err(invalid_params(
+            "session.start_strict requires non-empty browser_id",
+        ));
+    }
+    let requested = match (
+        params.browser_instance_id.as_deref(),
+        params.browser_id.as_deref(),
+    ) {
+        (Some(_), Some(_)) => {
+            return Err(RpcError {
+                code: ErrorCode::InvalidParams,
+                message: "browser_instance_id and browser_id are mutually exclusive".into(),
+                data: None,
+            });
+        }
+        (_, Some(id)) if id.trim().is_empty() => {
+            return Err(RpcError {
+                code: ErrorCode::InvalidParams,
+                message: "browser_id must not be empty".into(),
+                data: None,
+            });
+        }
+        (_, Some(id)) => super::browsers::BrowserSelector::InstanceId(id),
+        (legacy, None) => super::browsers::BrowserSelector::IdOrLabel(legacy),
     };
     // `--width` without `--height` (or vice versa) is rejected: the
     // extension only accepts a complete size pair.
@@ -953,7 +996,7 @@ async fn handle_session_start(
         &state.browsers,
         &state.sessions,
         &state.tool_queues,
-        params.browser_instance_id.as_deref(),
+        requested,
         AgentWindowOptions {
             size: window_size,
             focused: params.focused,

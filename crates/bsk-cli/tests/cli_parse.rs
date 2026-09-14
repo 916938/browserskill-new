@@ -473,6 +473,56 @@ fn parses_record_start_without_url() {
 }
 
 #[test]
+fn parses_session_start_browser_id() {
+    let cli = parse(&["bsk", "session", "start", "--browser-id", "alpha"]);
+    let Command::Session(SessionCmd {
+        sub: SessionSub::Start(args),
+    }) = cli.command
+    else {
+        panic!("expected session start subcommand");
+    };
+    assert_eq!(args.browser_id.as_deref(), Some("alpha"));
+    assert!(args.browser.is_none());
+}
+
+#[test]
+fn session_start_rejects_conflicting_browser_selectors() {
+    for selectors in [
+        ["--browser", "Work", "--browser-id", "alpha"],
+        ["--browser-id", "alpha", "--browser", "Work"],
+        ["--browser", "", "--browser-id", "alpha"],
+    ] {
+        let args = ["bsk", "session", "start"].into_iter().chain(selectors);
+        assert_eq!(
+            Cli::try_parse_from(args).unwrap_err().kind(),
+            clap::error::ErrorKind::ArgumentConflict
+        );
+    }
+}
+
+#[test]
+fn session_start_rejects_empty_browser_id() {
+    for id in ["", " ", "\t\n"] {
+        assert!(Cli::try_parse_from(["bsk", "session", "start", "--browser-id", id]).is_err());
+    }
+}
+
+#[test]
+fn session_start_legacy_browser_selector_is_unchanged() {
+    for value in ["alpha", "Work", ""] {
+        let cli = parse(&["bsk", "session", "start", "--browser", value]);
+        let Command::Session(SessionCmd {
+            sub: SessionSub::Start(args),
+        }) = cli.command
+        else {
+            panic!("expected session start subcommand");
+        };
+        assert_eq!(args.browser.as_deref(), Some(value));
+        assert!(args.browser_id.is_none());
+    }
+}
+
+#[test]
 fn parses_session_start_with_window_size() {
     use bsk::cli::session::{SessionCmd, SessionSub};
     let cli = parse(&[

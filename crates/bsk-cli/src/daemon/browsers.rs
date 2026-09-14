@@ -201,6 +201,18 @@ impl BrowserClient {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum BrowserSelector<'a> {
+    IdOrLabel(Option<&'a str>),
+    InstanceId(&'a str),
+}
+
+impl<'a> From<Option<&'a str>> for BrowserSelector<'a> {
+    fn from(value: Option<&'a str>) -> Self {
+        Self::IdOrLabel(value)
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct BrowserRegistry {
     inner: Mutex<HashMap<BrowserId, std::sync::Arc<BrowserClient>>>,
@@ -358,21 +370,34 @@ impl BrowserRegistry {
         }
     }
 
-    /// Like [`BrowserRegistry::select`] but retries while no matching
+    pub fn select_browser(
+        &self,
+        requested: BrowserSelector<'_>,
+    ) -> Result<std::sync::Arc<BrowserClient>, SelectError> {
+        match requested {
+            BrowserSelector::IdOrLabel(value) => self.select(value),
+            BrowserSelector::InstanceId(id) => self
+                .get(&BrowserId(id.to_string()))
+                .ok_or(SelectError::NotFound),
+        }
+    }
+
+    /// Like [`BrowserRegistry::select_browser`] but retries while no matching
     /// browser is registered yet, so a freshly started daemon can wait
     /// for the extension to finish its WS handshake.
-    pub async fn select_with_connect_wait(
+    pub async fn select_with_connect_wait<'a>(
         &self,
-        requested: Option<&str>,
+        requested: impl Into<BrowserSelector<'a>>,
         connect_wait: Duration,
     ) -> Result<std::sync::Arc<BrowserClient>, SelectError> {
+        let requested = requested.into();
         let deadline = Instant::now() + connect_wait;
         loop {
-            match self.select(requested) {
+            match self.select_browser(requested) {
                 Ok(client) => return Ok(client),
                 Err(SelectError::NoBrowserConnected) => {
                     if Instant::now() >= deadline {
-                        return self.select(requested);
+                        return self.select_browser(requested);
                     }
                     tokio::time::sleep(EXTENSION_CONNECT_POLL).await;
                 }
@@ -381,7 +406,7 @@ impl BrowserRegistry {
                 // already online, an unknown id/label is a real miss.
                 Err(SelectError::NotFound) if self.is_empty() => {
                     if Instant::now() >= deadline {
-                        return self.select(requested);
+                        return self.select_browser(requested);
                     }
                     tokio::time::sleep(EXTENSION_CONNECT_POLL).await;
                 }
@@ -603,6 +628,101 @@ mod tests {
             started.elapsed() < Duration::from_millis(50),
             "unknown selector with browsers online should fail immediately"
         );
+    }
+
+    #[test]
+    fn strict_selection_never_falls_back_to_label_or_default() {
+        let reg = BrowserRegistry::new();
+        reg.insert(fake_client("alpha", "target"));
+        assert!(matches!(
+            reg.select_browser(BrowserSelector::InstanceId("target")),
+            Err(SelectError::NotFound)
+        ));
+        assert_eq!(reg.select(Some("target")).unwrap().id.0, "alpha");
+        assert_eq!(reg.select(None).unwrap().id.0, "alpha");
+        for id in ["", " ", "ALPHA", " alpha "] {
+            assert!(matches!(
+                reg.select_browser(BrowserSelector::InstanceId(id)),
+                Err(SelectError::NotFound)
+            ));
+        }
+        reg.insert(fake_client("target", "Work"));
+        assert_eq!(
+            reg.select_browser(BrowserSelector::InstanceId("target"))
+                .unwrap()
+                .id
+                .0,
+            "target"
+        );
+        reg.remove(&BrowserId("target".into()));
+        assert!(matches!(
+            reg.select_browser(BrowserSelector::InstanceId("target")),
+            Err(SelectError::NotFound)
+        ));
+    }
+
+    #[tokio::test]
+    async fn strict_selection_waits_for_cold_start_target() {
+        let reg = std::sync::Arc::new(BrowserRegistry::new());
+        let reg_bg = reg.clone();
+        let waiter = tokio::spawn(async move {
+            reg_bg
+                .select_with_connect_wait(
+                    BrowserSelector::InstanceId("target"),
+                    Duration::from_secs(1),
+                )
+                .await
+        });
+        tokio::time::sleep(Duration::from_millis(80)).await;
+        reg.insert(fake_client("target", "Work"));
+        assert_eq!(waiter.await.unwrap().unwrap().id.0, "target");
+    }
+
+    #[tokio::test]
+    async fn strict_selection_cold_start_timeout_is_not_found() {
+        let reg = BrowserRegistry::new();
+        let started = Instant::now();
+        let result = reg
+            .select_with_connect_wait(
+                BrowserSelector::InstanceId("missing"),
+                Duration::from_millis(120),
+            )
+            .await;
+        assert!(matches!(result, Err(SelectError::NotFound)));
+        assert!(started.elapsed() >= Duration::from_millis(120));
+    }
+
+    #[tokio::test]
+    async fn strict_selection_does_not_wait_or_fall_back_when_others_are_online() {
+        let reg = BrowserRegistry::new();
+        reg.insert(fake_client("other", "missing"));
+        let result = tokio::time::timeout(
+            Duration::from_millis(100),
+            reg.select_with_connect_wait(
+                BrowserSelector::InstanceId("missing"),
+                Duration::from_secs(1),
+            ),
+        )
+        .await
+        .unwrap();
+        assert!(matches!(result, Err(SelectError::NotFound)));
+    }
+
+    #[tokio::test]
+    async fn strict_selection_rejects_a_different_browser_arriving_during_cold_start() {
+        let reg = std::sync::Arc::new(BrowserRegistry::new());
+        let reg_bg = reg.clone();
+        let waiter = tokio::spawn(async move {
+            reg_bg
+                .select_with_connect_wait(
+                    BrowserSelector::InstanceId("target"),
+                    Duration::from_secs(1),
+                )
+                .await
+        });
+        tokio::time::sleep(Duration::from_millis(80)).await;
+        reg.insert(fake_client("other", "target"));
+        assert!(matches!(waiter.await.unwrap(), Err(SelectError::NotFound)));
     }
 
     #[tokio::test]

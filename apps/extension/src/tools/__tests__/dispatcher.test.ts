@@ -36,6 +36,9 @@ function fakeTransport() {
     deliver(frame: ProtocolFrame) {
       for (const h of handlers) h(frame);
     },
+    changeState(state: ConnectionState) {
+      for (const handler of stateHandlers) handler(state);
+    },
   };
 }
 
@@ -47,6 +50,46 @@ describe("ToolDispatcher", () => {
   afterEach(() => {
     resetBrowserObservationForTests();
     vi.unstubAllGlobals();
+  });
+
+  it("独立 browser.tabs 通道不触发 session 或 CDP，并在断连时取消后续创建", async () => {
+    const { transport, sent, deliver, changeState } = fakeTransport();
+    const sessions = new SessionManager();
+    const start = vi.spyOn(sessions, "start");
+    let resolveWindows!: (windows: chrome.windows.Window[]) => void;
+    const create = vi.fn();
+    vi.stubGlobal("chrome", {
+      tabs: { query: vi.fn(async () => []), create },
+      windows: {
+        getAll: vi.fn(
+          () =>
+            new Promise<chrome.windows.Window[]>((resolve) => {
+              resolveWindows = resolve;
+            }),
+        ),
+        create,
+      },
+    });
+    const onBrowserControlResumed = vi.fn();
+    const dispatcher = new ToolDispatcher({ transport, sessions, onBrowserControlResumed });
+    dispatcher.start();
+    deliver(makeRequest("browser.tabs.list", { browser_id: "edge", scope: "user" }));
+    await vi.waitFor(() => expect(sent).toHaveLength(1));
+    expect(sent[0]).toMatchObject({ result: { tabs: [] } });
+    deliver(
+      makeRequest("browser.tabs.create", { browser_id: "edge", url: "https://agentrouter.org" }),
+    );
+    await vi.waitFor(() => expect(chrome.windows.getAll).toHaveBeenCalledOnce());
+    changeState("disconnected");
+    changeState("connected");
+    resolveWindows([]);
+    await vi.waitFor(() => expect(dispatcher.inflightAbortControllers.size).toBe(0));
+    expect(sent).toHaveLength(1);
+    expect(create).not.toHaveBeenCalled();
+    expect(start).not.toHaveBeenCalled();
+    expect(onBrowserControlResumed).not.toHaveBeenCalled();
+    expect(dispatcher.inflightAbortControllers.size).toBe(0);
+    dispatcher.stop();
   });
 
   it.each([

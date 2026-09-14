@@ -6,6 +6,10 @@ use std::path::PathBuf;
 
 use anyhow::Context;
 use bsk_protocol::Method;
+use bsk_protocol::browser_tabs::{
+    BrowserTabResult, BrowserTabsCreateParams, BrowserTabsListParams, BrowserTabsListResult,
+    BrowserTabsObserveParams, BrowserTabsObserveResult, BrowserTabsSelectParams, UserTabScope,
+};
 use bsk_protocol::tools::{
     TabBorrowParams, TabBorrowResult, TabCloseParams, TabCloseResult, TabCreateParams,
     TabCreateResult, TabInfo, TabListParams, TabListResult, TabReturnParams, TabReturnResult,
@@ -26,13 +30,15 @@ pub struct TabCmd {
 
 #[derive(Debug, Clone, Subcommand)]
 pub enum TabSub {
-    /// List tabs visible to the session, filtered by scope.
+    /// 列出会话标签，或指定精确浏览器 ID 的用户标签。
     List(TabListArgs),
-    /// Open a new tab inside the session's Agent Window.
+    /// 只读采集指定用户标签当前视口的可见正文，不支持 shadow tree。
+    Observe(TabObserveArgs),
+    /// 在会话 Agent Window 或指定浏览器的用户窗口中创建标签。
     Create(TabCreateArgs),
     /// Close a tab in the session's Agent Window.
     Close(TabCloseArgs),
-    /// Activate (focus) a tab in the session's Agent Window.
+    /// 激活会话标签，或激活指定浏览器的用户标签并聚焦原窗口。
     Select(TabSelectArgs),
     /// Borrow a user tab into the session's Agent Window.
     Borrow(TabBorrowArgs),
@@ -63,9 +69,15 @@ impl From<CliScope> for TabScope {
 
 #[derive(Debug, Clone, Args)]
 pub struct TabListArgs {
-    /// Session id (must be active).
-    #[arg(long)]
-    pub session: String,
+    /// 活跃会话，与精确浏览器 ID 互斥。
+    #[arg(
+        long,
+        required_unless_present = "browser_id",
+        conflicts_with = "browser_id"
+    )]
+    pub session: Option<String>,
+    #[arg(long, value_parser = non_empty_browser_id)]
+    pub browser_id: Option<String>,
 
     /// View scope (defaults to `all`).
     #[arg(long, value_enum, default_value_t = CliScope::All)]
@@ -74,12 +86,20 @@ pub struct TabListArgs {
 
 #[derive(Debug, Clone, Args)]
 pub struct TabCreateArgs {
-    /// Session id (must be active).
-    #[arg(long)]
-    pub session: String,
-    /// Destination URL (default `chrome://newtab/`).
-    #[arg(long)]
+    /// 活跃会话，与精确浏览器 ID 互斥。
+    #[arg(
+        long,
+        required_unless_present = "browser_id",
+        conflicts_with = "browser_id"
+    )]
+    pub session: Option<String>,
+    #[arg(long, value_parser = non_empty_browser_id, conflicts_with_all = ["no_active", "index"])]
+    pub browser_id: Option<String>,
+    /// 兼容旧会话模式的 URL 选项。
+    #[arg(long, conflicts_with = "destination")]
     pub url: Option<String>,
+    /// 新标签目标 URL。
+    pub destination: Option<String>,
     /// Open as a *background* tab (default focuses the new tab).
     #[arg(long = "no-active", action = clap::ArgAction::SetTrue)]
     pub no_active: bool,
@@ -100,8 +120,17 @@ pub struct TabCloseArgs {
 pub struct TabSelectArgs {
     /// Tab id to activate.
     pub tab_id: i64,
-    #[arg(long)]
-    pub session: String,
+    #[arg(
+        long,
+        required_unless_present = "browser_id",
+        conflicts_with = "browser_id"
+    )]
+    pub session: Option<String>,
+    #[arg(long, value_parser = non_empty_browser_id)]
+    pub browser_id: Option<String>,
+    /// 激活前重新校验标签的 HTTP(S) origin。
+    #[arg(long, requires = "browser_id", conflicts_with = "session", value_parser = expected_origin)]
+    pub expected_origin: Option<String>,
 }
 
 #[derive(Debug, Clone, Args)]
@@ -126,10 +155,68 @@ pub struct TabReturnArgs {
     pub session: String,
 }
 
+#[derive(Debug, Clone, Args)]
+pub struct TabObserveArgs {
+    #[arg(long, value_parser = non_empty_browser_id)]
+    pub browser_id: String,
+    #[arg(long, value_parser = clap::value_parser!(i64).range(1..=9_007_199_254_740_991))]
+    pub tab_id: i64,
+    #[arg(long, value_parser = expected_origin)]
+    pub expected_origin: String,
+    #[arg(long, default_value_t = 4000, value_parser = clap::value_parser!(u32).range(1..=8000))]
+    pub max_chars: u32,
+}
+
+fn run_observe(sock: PathBuf, args: TabObserveArgs, format: Format) -> Result<(), CliError> {
+    let reply: BrowserTabsObserveResult = ipc_call(
+        "browser-tabs-observe",
+        Method::BrowserTabsObserve,
+        sock,
+        BrowserTabsObserveParams {
+            browser_id: args.browser_id,
+            tab_id: args.tab_id,
+            expected_origin: args.expected_origin,
+            max_chars: args.max_chars,
+        },
+    )?;
+    print_payload(&reply, format, || println!("{}", reply.text))
+}
+
+fn non_empty_browser_id(value: &str) -> Result<String, String> {
+    if value.trim().is_empty() {
+        Err("browser id must not be empty".into())
+    } else {
+        Ok(value.into())
+    }
+}
+
+fn expected_origin(value: &str) -> Result<String, String> {
+    crate::daemon::browser_tabs::validate_url(value, true)?;
+    Ok(value.into())
+}
+
 pub fn dispatch(cmd: TabCmd, format: Format) -> Result<(), CliError> {
+    match &cmd.sub {
+        TabSub::List(args) if args.browser_id.is_some() && args.scope != CliScope::User => {
+            return Err(CliError::Local(anyhow::anyhow!(
+                "--browser-id requires --scope user"
+            )));
+        }
+        TabSub::Create(args) if args.browser_id.is_some() => {
+            let url = args
+                .destination
+                .as_ref()
+                .or(args.url.as_ref())
+                .ok_or_else(|| CliError::Local(anyhow::anyhow!("--browser-id requires a URL")))?;
+            crate::daemon::browser_tabs::validate_url(url, false)
+                .map_err(|e| CliError::Local(anyhow::anyhow!(e)))?;
+        }
+        _ => {}
+    }
     let info = ensure_daemon().context("ensure daemon is running")?;
     match cmd.sub {
         TabSub::List(args) => run_list(info.sock_path, args, format),
+        TabSub::Observe(args) => run_observe(info.sock_path, args, format),
         TabSub::Create(args) => run_create(info.sock_path, args, format),
         TabSub::Close(args) => run_close(info.sock_path, args, format),
         TabSub::Select(args) => run_select(info.sock_path, args, format),
@@ -155,9 +242,24 @@ fn print_payload<T: Serialize>(
 }
 
 fn run_create(sock: PathBuf, args: TabCreateArgs, format: Format) -> Result<(), CliError> {
+    let url = args.destination.or(args.url);
+    if let Some(browser_id) = args.browser_id {
+        let reply: BrowserTabResult = ipc_call(
+            "browser-tabs-create",
+            Method::BrowserTabsCreate,
+            sock,
+            BrowserTabsCreateParams {
+                browser_id,
+                url: url.expect("validated URL"),
+            },
+        )?;
+        return print_payload(&reply, format, || {
+            println!("tab_id={} window_id={}", reply.tab_id, reply.window_id)
+        });
+    }
     let params = TabCreateParams {
-        session_id: args.session,
-        url: args.url,
+        session_id: args.session.expect("clap requires session or browser-id"),
+        url,
         active: if args.no_active { Some(false) } else { None },
         index: args.index,
     };
@@ -188,8 +290,23 @@ fn run_close(sock: PathBuf, args: TabCloseArgs, format: Format) -> Result<(), Cl
 }
 
 fn run_select(sock: PathBuf, args: TabSelectArgs, format: Format) -> Result<(), CliError> {
+    if let Some(browser_id) = args.browser_id {
+        let reply: BrowserTabResult = ipc_call(
+            "browser-tabs-select",
+            Method::BrowserTabsSelect,
+            sock,
+            BrowserTabsSelectParams {
+                browser_id,
+                tab_id: args.tab_id,
+                expected_origin: args.expected_origin,
+            },
+        )?;
+        return print_payload(&reply, format, || {
+            println!("tab_id={} window_id={}", reply.tab_id, reply.window_id)
+        });
+    }
     let params = TabSelectParams {
-        session_id: args.session,
+        session_id: args.session.expect("clap requires session or browser-id"),
         tab_id: args.tab_id,
     };
     let reply: TabSelectResult = ipc_call("tab-select-1", Method::ToolTabSelect, sock, params)?;
@@ -271,8 +388,27 @@ where
 }
 
 fn run_list(sock: PathBuf, args: TabListArgs, format: Format) -> Result<(), CliError> {
+    if let Some(browser_id) = args.browser_id {
+        let reply: BrowserTabsListResult = ipc_call(
+            "browser-tabs-list",
+            Method::BrowserTabsList,
+            sock,
+            BrowserTabsListParams {
+                browser_id,
+                scope: UserTabScope::User,
+            },
+        )?;
+        return print_payload(&reply, format, || {
+            for tab in &reply.tabs {
+                println!(
+                    "{}\t{}\t{}\t{}",
+                    tab.tab_id, tab.window_id, tab.title, tab.url
+                );
+            }
+        });
+    }
     let params = TabListParams {
-        session_id: args.session.clone(),
+        session_id: args.session.expect("clap requires session or browser-id"),
         scope: args.scope.into(),
     };
     let reply: TabListResult = call(sock, params)?;

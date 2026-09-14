@@ -93,6 +93,9 @@ export class SessionManager {
   private readonly windowIndex = new Map<number, string>();
   private readonly borrowReservations = new Map<number, string>();
   private readonly expectedWindowClosures = new WeakSet<SessionContext>();
+  private readonly pendingAgentWindows = new Set<number>();
+  private allocatingAgentWindows = 0;
+  private readonly userTabOperations = new Set<number>();
   private readonly agentWindow: AgentWindowApi;
   private readonly now: () => number;
 
@@ -131,6 +134,27 @@ export class SessionManager {
 
   list(): SessionContext[] {
     return Array.from(this.sessions.values());
+  }
+
+  isAgentWindow(windowId: number): boolean {
+    return this.windowIndex.has(windowId) || this.pendingAgentWindows.has(windowId);
+  }
+
+  hasUnidentifiedAgentWindow(): boolean {
+    return this.allocatingAgentWindows > 0;
+  }
+
+  reserveUserTabOperation(tabId: number): (() => void) | null {
+    if (
+      this.userTabOperations.has(tabId) ||
+      this.findBorrowingSession(tabId, null) ||
+      this.list().some((session) => session.agentCreatedTabs.has(tabId))
+    )
+      return null;
+    this.userTabOperations.add(tabId);
+    return () => {
+      this.userTabOperations.delete(tabId);
+    };
   }
 
   /** Remove a closed tab from agent-created ownership tracking. */
@@ -179,6 +203,7 @@ export class SessionManager {
    * write after `chrome.tabs.move`.
    */
   tryReserveBorrow(tabId: number, sessionId: string): BorrowReservation | { borrowedBy: string } {
+    if (this.userTabOperations.has(tabId)) return { borrowedBy: "user-tab-operation" };
     const borrowedBy =
       this.borrowReservations.get(tabId) ?? this.findBorrowingSession(tabId, sessionId);
     if (borrowedBy) return { borrowedBy };
@@ -225,7 +250,13 @@ export class SessionManager {
     let windowId: number | null = null;
     try {
       const { signal: _signal, ...createOptions } = opts;
-      windowId = await this.agentWindow.create(AGENT_WINDOW_HOME, createOptions);
+      this.allocatingAgentWindows += 1;
+      try {
+        windowId = await this.agentWindow.create(AGENT_WINDOW_HOME, createOptions);
+        this.pendingAgentWindows.add(windowId);
+      } finally {
+        this.allocatingAgentWindows -= 1;
+      }
       throwIfSessionStartAborted(opts.signal);
       const homeTabId = await this.agentWindow.ensureActiveTab(windowId, AGENT_WINDOW_HOME);
       throwIfSessionStartAborted(opts.signal);
@@ -243,11 +274,13 @@ export class SessionManager {
       };
       this.sessions.set(sessionId, ctx);
       this.windowIndex.set(windowId, sessionId);
+      this.pendingAgentWindows.delete(windowId);
       return ctx;
     } catch (startupError) {
       if (windowId !== null) {
         try {
           await this.agentWindow.remove(windowId);
+          this.pendingAgentWindows.delete(windowId);
         } catch (cleanupError) {
           throw new SessionStartCleanupError(windowId, startupError, cleanupError);
         }

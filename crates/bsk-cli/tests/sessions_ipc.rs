@@ -902,6 +902,322 @@ async fn session_start_with_browser_instance_id_picks_target() {
     handle.shutdown().await;
 }
 
+async fn start_against_legacy_daemon(
+    opts: bsk::cli::session::SessionStartOptions,
+    serde_rejects_method: bool,
+) -> (
+    Result<bsk::cli::session::StartReply, bsk::cli::error::CliError>,
+    serde_json::Value,
+    usize,
+) {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+    #[derive(serde::Deserialize)]
+    struct LegacyStartParams {
+        browser_instance_id: Option<String>,
+    }
+    #[derive(serde::Deserialize)]
+    enum LegacyMethod {
+        #[serde(rename = "session.start")]
+        SessionStart,
+    }
+
+    let sock = tempfile_path("bsk-legacy-strict");
+    #[cfg(unix)]
+    let listener = tokio::net::UnixListener::bind(&sock).unwrap();
+    #[cfg(windows)]
+    let listener = tokio::net::windows::named_pipe::ServerOptions::new()
+        .first_pipe_instance(true)
+        .create(format!(
+            r"\\.\pipe\{}",
+            sock.file_stem().unwrap().to_str().unwrap()
+        ))
+        .unwrap();
+    let server = tokio::spawn(async move {
+        #[cfg(unix)]
+        let stream = listener.accept().await.unwrap().0;
+        #[cfg(windows)]
+        let stream = {
+            listener.connect().await.unwrap();
+            listener
+        };
+        let mut stream = BufReader::new(stream);
+        let mut line = String::new();
+        stream.read_line(&mut line).await.unwrap();
+        let request: serde_json::Value = serde_json::from_str(&line).unwrap();
+        let method = serde_json::from_value::<LegacyMethod>(request["method"].clone());
+        let mut created_windows = 0;
+        let mut id = request["id"].as_str().unwrap().to_string();
+        let body = match method {
+            Ok(LegacyMethod::SessionStart) => {
+                // Old serde ignores browser_id, so an unselected start uses the
+                // sole online browser even when its id differs from the request.
+                let params: LegacyStartParams =
+                    serde_json::from_value(request["params"].clone()).unwrap();
+                assert!(params.browser_instance_id.is_none_or(|id| id == "other"));
+                created_windows += 1;
+                ResponseBody::Ok(serde_json::json!({
+                    "session_id": "old-session",
+                    "browser_instance_id": "other",
+                    "agent_window_id": 123,
+                }))
+            }
+            Err(err) if serde_rejects_method => {
+                // The existing transport replies with id=0 when its Method enum
+                // cannot decode the frame; the CLI must fail closed here too.
+                id = "0".into();
+                ResponseBody::Err(RpcError {
+                    code: ErrorCode::ProtocolError,
+                    message: format!("invalid frame: {err}"),
+                    data: None,
+                })
+            }
+            Err(_) => ResponseBody::Err(RpcError {
+                code: ErrorCode::UnknownMethod,
+                message: "method not found".into(),
+                data: None,
+            }),
+        };
+        let response = serde_json::to_string(&ResponseFrame { id, body }).unwrap();
+        stream
+            .write_all(format!("{response}\n").as_bytes())
+            .await
+            .unwrap();
+        stream.flush().await.unwrap();
+        (request, created_windows)
+    });
+    let result = tokio::task::spawn_blocking(move || bsk::cli::session::start_session(sock, opts))
+        .await
+        .unwrap();
+    let (request, created_windows) = server.await.unwrap();
+    (result, request, created_windows)
+}
+
+#[tokio::test]
+async fn session_start_strict_rejects_legacy_daemon_before_creating_a_window() {
+    for serde_rejects_method in [false, true] {
+        let (result, request, created_windows) = start_against_legacy_daemon(
+            bsk::cli::session::SessionStartOptions {
+                browser_id: Some("target".into()),
+                ..Default::default()
+            },
+            serde_rejects_method,
+        )
+        .await;
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("requires daemon support for session.start_strict")
+        );
+        assert!(err.to_string().contains("no fallback to session.start"));
+        assert_eq!(err.exit_code(), if serde_rejects_method { 2 } else { 5 });
+        if !serde_rejects_method {
+            assert!(matches!(
+                err,
+                bsk::cli::error::CliError::Rpc {
+                    code: ErrorCode::UnknownMethod,
+                    ..
+                }
+            ));
+        } else {
+            assert!(matches!(err, bsk::cli::error::CliError::Local(_)));
+        }
+        assert_eq!(request["method"], "session.start_strict");
+        assert_eq!(
+            request["params"],
+            serde_json::json!({"browser_id": "target"})
+        );
+        assert_eq!(created_windows, 0);
+    }
+}
+
+#[tokio::test]
+async fn session_start_legacy_browser_remains_compatible_with_old_daemon() {
+    for browser in [None, Some("other".into())] {
+        let (result, request, created_windows) = start_against_legacy_daemon(
+            bsk::cli::session::SessionStartOptions {
+                browser: browser.clone(),
+                ..Default::default()
+            },
+            true,
+        )
+        .await;
+        assert_eq!(result.unwrap().browser_instance_id, "other");
+        assert_eq!(request["method"], "session.start");
+        assert!(request["params"].get("browser_id").is_none());
+        assert_eq!(
+            request["params"]["browser_instance_id"],
+            serde_json::json!(browser)
+        );
+        assert_eq!(created_windows, 1);
+    }
+}
+
+#[tokio::test]
+async fn session_start_strict_id_targets_only_the_requested_instance() {
+    let (handle, sock) = spawn_daemon().await;
+    let mut target = connect_ext(handle.ws_addr()).await;
+    let _ = handshake_as_ext(&mut target).await;
+    let mut other = connect_second_ext(handle.ws_addr(), "other", TEST_EXT_ID).await;
+    let state = handle.state();
+    wait_for_browser_count(&state, 2).await;
+
+    let start = tokio::task::spawn_blocking(move || {
+        bsk::cli::session::start_session(
+            sock,
+            bsk::cli::session::SessionStartOptions {
+                browser_id: Some(TEST_EXT_ID.into()),
+                width: Some(1280),
+                height: Some(800),
+                focused: Some(false),
+                ..Default::default()
+            },
+        )
+    });
+    let request = tokio::time::timeout(Duration::from_secs(2), next_extension_request(&mut target))
+        .await
+        .unwrap();
+    assert_eq!(request.method, Method::ToolSessionStart);
+    let params = request.params.unwrap();
+    assert_eq!(params["browser_instance_id"], TEST_EXT_ID);
+    assert!(params.get("browser_id").is_none());
+    assert_eq!(params["width"], 1280);
+    assert_eq!(params["height"], 800);
+    assert_eq!(params["focused"], false);
+    send_extension_response(
+        &mut target,
+        ResponseFrame {
+            id: request.id,
+            body: ResponseBody::Ok(serde_json::json!({"agent_window_id": 123})),
+        },
+    )
+    .await;
+    let reply = start.await.unwrap().unwrap();
+    assert_eq!(reply.browser_instance_id, TEST_EXT_ID);
+    assert_eq!(reply.agent_window_id, Some(123));
+    assert_eq!(state.sessions.len(), 1);
+    assert!(
+        tokio::time::timeout(
+            Duration::from_millis(100),
+            next_extension_request(&mut other)
+        )
+        .await
+        .is_err()
+    );
+    handle.shutdown().await;
+}
+
+#[tokio::test]
+async fn session_start_strict_id_never_falls_back_after_target_disconnects() {
+    let (handle, sock) = spawn_daemon().await;
+    let mut target = connect_ext(handle.ws_addr()).await;
+    let _ = handshake_as_ext(&mut target).await;
+    let mut other = connect_second_ext(handle.ws_addr(), "other", TEST_EXT_ID).await;
+    let state = handle.state();
+    wait_for_browser_count(&state, 2).await;
+    target.close(None).await.unwrap();
+    drop(target);
+    wait_for_browser_count(&state, 1).await;
+
+    let result = tokio::task::spawn_blocking(move || {
+        bsk::cli::session::start_session(
+            sock,
+            bsk::cli::session::SessionStartOptions {
+                browser_id: Some(TEST_EXT_ID.into()),
+                ..Default::default()
+            },
+        )
+    })
+    .await
+    .unwrap();
+    assert!(matches!(
+        result,
+        Err(bsk::cli::error::CliError::Rpc {
+            code: ErrorCode::NotFound,
+            ..
+        })
+    ));
+    assert!(state.sessions.is_empty());
+    assert!(
+        tokio::time::timeout(
+            Duration::from_millis(100),
+            next_extension_request(&mut other)
+        )
+        .await
+        .is_err()
+    );
+    handle.shutdown().await;
+}
+
+#[tokio::test]
+async fn session_start_strict_selector_validation_via_ipc() {
+    let (handle, sock) = spawn_daemon_with_connect_wait(Duration::ZERO).await;
+    let mut browser = connect_ext(handle.ws_addr()).await;
+    let _ = handshake_as_ext(&mut browser).await;
+    let mut ipc = IpcClient::connect(&sock).await.unwrap();
+    for (params, code) in [
+        (serde_json::Value::Null, ErrorCode::InvalidParams),
+        (serde_json::json!({}), ErrorCode::InvalidParams),
+        (
+            serde_json::json!({"browser_id": null}),
+            ErrorCode::InvalidParams,
+        ),
+        (
+            serde_json::json!({"browser_instance_id": TEST_EXT_ID}),
+            ErrorCode::InvalidParams,
+        ),
+        (
+            serde_json::json!({"browser_id": "Test"}),
+            ErrorCode::NotFound,
+        ),
+        (
+            serde_json::json!({"browser_id": "missing"}),
+            ErrorCode::NotFound,
+        ),
+        (
+            serde_json::json!({"browser_id": ""}),
+            ErrorCode::InvalidParams,
+        ),
+        (
+            serde_json::json!({"browser_id": " \t\n"}),
+            ErrorCode::InvalidParams,
+        ),
+        (
+            serde_json::json!({"browser_id": 123}),
+            ErrorCode::InvalidParams,
+        ),
+        (
+            serde_json::json!({"browser_id": TEST_EXT_ID, "browser_instance_id": "Test"}),
+            ErrorCode::InvalidParams,
+        ),
+        (
+            serde_json::json!({"browser_id": TEST_EXT_ID, "browser_instance_id": ""}),
+            ErrorCode::InvalidParams,
+        ),
+    ] {
+        let result: Result<serde_json::Value, RpcError> = ipc
+            .call(
+                "strict-validation",
+                Method::SessionStartStrict,
+                Some(params),
+                Duration::from_secs(2),
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.unwrap_err().code, code);
+        assert!(handle.state().sessions.is_empty());
+    }
+    assert!(
+        tokio::time::timeout(
+            Duration::from_millis(100),
+            next_extension_request(&mut browser)
+        )
+        .await
+        .is_err()
+    );
+    handle.shutdown().await;
+}
+
 #[tokio::test]
 async fn session_start_with_unknown_label_returns_not_found() {
     let (handle, sock) = spawn_daemon().await;
