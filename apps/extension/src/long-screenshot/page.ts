@@ -25,6 +25,12 @@ export function createPageCapture(onCancel: (id: string, reason: CaptureCancelRe
       visibility: string;
       priority: string;
     }[] = [];
+    const root = document.documentElement;
+    // Overlay scrollbars paint over content and survive the tiler's gutter crop.
+    // Only suppress them when neither axis reserves space: removing a classic
+    // scrollbar would change wrapping and responsive layout during capture.
+    if (root.clientWidth === window.innerWidth && root.clientHeight === window.innerHeight)
+      setStyle(root, "scrollbar-width", "none");
     const style = document.createElement("style");
     style.textContent = `
       html, body, * { scroll-behavior: auto !important; scroll-snap-type: none !important;

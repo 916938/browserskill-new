@@ -91,6 +91,51 @@ describe("page capture cleanup", () => {
 
   });
 
+  it.each([
+    "finish",
+    "cancel",
+    "watchdog",
+    "dispose",
+  ])("restores root scrollbar styles after %s without changing nested scrollbars", async (end) => {
+    vi.stubGlobal("innerWidth", 800);
+    vi.stubGlobal("innerHeight", 600);
+    const root = document.documentElement;
+    root.style.setProperty("scrollbar-width", "thin", "important");
+    const nested = document.createElement("div");
+    nested.style.cssText = "overflow:auto;scrollbar-width:thin";
+    document.body.append(nested);
+    const nestedStyle = nested.getAttribute("style");
+    try {
+      const before = await send({ action: "probe" });
+      expect(await send({ action: "begin", label: "Capture", cancelLabel: "Cancel" })).toEqual(
+        before,
+      );
+      expect(root.style.getPropertyValue("scrollbar-width")).toBe("none");
+      if (end === "finish") await send({ action: "finish" });
+      else if (end === "cancel")
+        window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+      else if (end === "watchdog") await vi.advanceTimersByTimeAsync(15_001);
+      else capture.dispose();
+      expect(root.style.getPropertyValue("scrollbar-width")).toBe("thin");
+      expect(root.style.getPropertyPriority("scrollbar-width")).toBe("important");
+      expect(nested.getAttribute("style")).toBe(nestedStyle);
+      expect(window.scrollY).toBe(350);
+    } finally {
+      capture.dispose();
+      root.removeAttribute("style");
+    }
+  });
+
+  it.each([
+    [815, 600],
+    [800, 615],
+  ])("preserves reserved scrollbar space at %s/%s", async (width, height) => {
+    vi.stubGlobal("innerWidth", width);
+    vi.stubGlobal("innerHeight", height);
+    await send({ action: "begin", label: "Capture", cancelLabel: "Cancel" });
+    expect(document.documentElement.style.getPropertyValue("scrollbar-width")).toBe("");
+  });
+
   it("restores each changed CSS property and the original two-dimensional scroll", async () => {
     await send({ action: "begin", label: "Capture", cancelLabel: "Cancel" });
     const moving = send({ action: "move", y: 800, capture: true });

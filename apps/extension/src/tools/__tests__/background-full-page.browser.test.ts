@@ -2,6 +2,8 @@
 // Opt in with BSK_BACKGROUND_CHROME after building the extension. Runs the real
 // Agent handler, driver, page script, tiler and PNG exporter in an isolated
 // extension; no daemon or user profile. The harness supplies only session setup.
+// BSK_OVERLAY_SCROLLBAR=1 runs headed and requires visible native overlay pixels
+// in the uncaptured page as a positive control (use macOS overlay scrollbars).
 import { cp, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
@@ -22,7 +24,7 @@ import { ChromiumCdp } from '@/browser-driver/chromium-cdp';
 import { SessionManager } from '@/session-manager/manager';
 import { ScreenshotExports } from '@/long-screenshot/exports';
 import { handleFullPageScreenshot } from '@/tools/screenshot-full-page';
-globalThis.run = async (url) => {
+globalThis.run = async (url, overlay) => {
   const cdp = new ChromiumCdp(chrome.debugger);
   const currentWindow = await chrome.windows.getCurrent();
   const [control] = await chrome.tabs.query({windowId:currentWindow.id,active:true});
@@ -39,7 +41,7 @@ globalThis.run = async (url) => {
   cdp.send=(id,method,params)=>{calls.push(method);return send(id,method,params)};
   const created=[];
   const evaluate=async(id,expression)=>(await cdp.send(id,'Runtime.evaluate',{expression,returnByValue:true,awaitPromise:true})).result.value;
-  const state=id=>evaluate(id,"({y:scrollY,sticky:document.querySelector('#sticky').getAttribute('style'),fixed:document.querySelector('#fixed').getAttribute('style')})");
+  const state=id=>evaluate(id,"({y:scrollY,root:document.documentElement.getAttribute('style'),width:document.documentElement.clientWidth,height:document.documentElement.clientHeight,sticky:document.querySelector('#sticky').getAttribute('style'),fixed:document.querySelector('#fixed').getAttribute('style')})");
   try {
     const results=[];
     for (const variant of ['rows','other']) {
@@ -51,7 +53,22 @@ globalThis.run = async (url) => {
         if(await evaluate(tab.id,"document.readyState==='complete' && !!document.querySelector('#pattern')"))break;
         await new Promise(r=>setTimeout(r,50));
       }
+      await evaluate(tab.id, "scrollTo({top:"+(variant==='rows'?333:900)+",behavior:'instant'})");
       const original=await state(tab.id);
+      let overlayPixels=0;
+      if(overlay && variant==='other') {
+        const geometry=await evaluate(tab.id,'({width:innerWidth,height:innerHeight})');
+        if(geometry.width!==original.width||geometry.height!==original.height)throw new Error('Overlay regression requires zero scrollbar gutter');
+        const raw=await cdp.send(tab.id,'Page.captureScreenshot',{format:'png',fromSurface:true,captureBeyondViewport:false});
+        const image=await createImageBitmap(await (await fetch('data:image/png;base64,'+raw.data)).blob());
+        const surface=new OffscreenCanvas(image.width,image.height),ctx=surface.getContext('2d');ctx.drawImage(image,0,0);image.close();
+        const scale=surface.width/geometry.width;
+        for(let y=50;y<geometry.height-100;y++) {
+          const pixel=ctx.getImageData(surface.width-Math.ceil(3*scale),Math.floor(y*scale),1,1).data;
+          if([20,190,60].some((v,i)=>Math.abs(pixel[i]-v)>3))overlayPixels++;
+        }
+        if(!overlayPixels)throw new Error('Overlay regression requires visible scrollbar pixels before capture');
+      }
       const dpr=await evaluate(tab.id,'devicePixelRatio');
       const result=await handleFullPageScreenshot(manager,{session_id:ctx.sessionId,tab_id:tab.id},{cdp,tabsApi:chrome.tabs,exports});
       if(result.code)throw new Error(JSON.stringify({result,variant,trace,calls}));
@@ -72,8 +89,15 @@ globalThis.run = async (url) => {
         const expected=variant==='other'?[20,190,60]:[y%256,Math.floor(y/256),127];
         if(expected.some((v,i)=>Math.abs(pixel[i]-v)>3)&&bad.length<10)bad.push({y,pixel,expected});
       }
+      const edgeBad=[];
+      for(let y=50;y<2500;y++) {
+        if(y%256<2||y%256>253)continue;
+        const pixel=Array.from(x.getImageData(canvas.width-Math.ceil(3*dpr),Math.floor((31+y+.5)*dpr),1,1).data);
+        const expected=variant==='other'?[20,190,60]:[y%256,Math.floor(y/256),127];
+        if(expected.some((v,i)=>Math.abs(pixel[i]-v)>3)&&edgeBad.length<10)edgeBad.push({y,pixel,expected});
+      }
       const footer=Array.from(x.getImageData(Math.floor(canvas.width-40*dpr),Math.floor(canvas.height-40*dpr),1,1).data);
-      results.push({result,dpr,bad,footer,original,restored:await state(tab.id),active:(await chrome.tabs.get(tab.id)).active});
+      results.push({result,dpr,bad,edgeBad,overlayPixels,footer,original,restored:await state(tab.id),active:(await chrome.tabs.get(tab.id)).active});
       await exports.release({session_id:ctx.sessionId,capture_id:result.capture_id});
     }
     return {results,activated,focused,calls,control:control.id,selected:(await chrome.tabs.query({windowId:currentWindow.id,active:true}))[0].id};
@@ -171,7 +195,7 @@ describe.skipIf(!process.env.BSK_BACKGROUND_CHROME)(
             zoom,
             extensionPath: directory,
             softwareRendering: true,
-            headless: true,
+            headless: !process.env.BSK_OVERLAY_SCROLLBAR,
           },
           async (send: Send) => {
             let origin = "";
@@ -210,7 +234,7 @@ describe.skipIf(!process.env.BSK_BACKGROUND_CHROME)(
             };
             await expect.poll(() => evaluate("typeof run==='function'")).toBe(true);
             await evaluate(
-              `run(${JSON.stringify(url)}).then(value=>globalThis.done={value},error=>globalThis.done={error:String(error)});true`,
+              `run(${JSON.stringify(url)},${!!process.env.BSK_OVERLAY_SCROLLBAR}).then(value=>globalThis.done={value},error=>globalThis.done={error:String(error)});true`,
             );
             await expect.poll(() => evaluate("!!globalThis.done"), { timeout: 100_000 }).toBe(true);
             const done = await evaluate<{
@@ -220,6 +244,8 @@ describe.skipIf(!process.env.BSK_BACKGROUND_CHROME)(
                   result: { height: number };
                   dpr: number;
                   bad: unknown[];
+                  edgeBad: unknown[];
+                  overlayPixels: number;
                   footer: number[];
                   original: unknown;
                   restored: unknown;
@@ -235,13 +261,19 @@ describe.skipIf(!process.env.BSK_BACKGROUND_CHROME)(
             expect(done.error).toBeUndefined();
             for (const item of done.value.results) {
               expect(item.bad).toEqual([]);
+              expect(item.edgeBad).toEqual([]);
               [255, 136, 0, 255].forEach((value, index) =>
-                expect(Math.abs(item.footer[index] - value)).toBeLessThanOrEqual(3),
+                expect(
+                  Math.abs(item.footer[index] - value),
+                  JSON.stringify(item),
+                ).toBeLessThanOrEqual(3),
               );
               expect(Math.abs(item.result.height - 2634 * item.dpr)).toBeLessThanOrEqual(1);
               expect(item.restored).toEqual(item.original);
               expect(item.active).toBe(false);
             }
+            if (process.env.BSK_OVERLAY_SCROLLBAR)
+              expect(done.value.results[1].overlayPixels).toBeGreaterThan(0);
             expect(done.value.selected).toBe(done.value.control);
             expect(done.value.activated).toEqual([]);
             expect(done.value.focused).toEqual([]);
