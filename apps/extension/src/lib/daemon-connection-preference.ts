@@ -16,8 +16,8 @@ export function watchDaemonConnection(
   let revision = 0;
   let retry: ReturnType<typeof setTimeout> | undefined;
   let resolveReady!: () => void;
-  // A failed initial read must neither connect to the default local endpoint
-  // nor permanently prevent an explicit settings change from recovering startup.
+  // Settle after the first current read, including failure, so the controller
+  // can report a blocked connection. Only onChange may enable socket creation.
   const ready = new Promise<void>((resolve) => {
     resolveReady = resolve;
   });
@@ -39,6 +39,7 @@ export function watchDaemonConnection(
       if (!disposed && revision === current) {
         onError();
         retry = setTimeout(() => void read(), 30_000);
+        resolveReady();
       }
     }
   };
