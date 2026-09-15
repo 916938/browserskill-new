@@ -66,6 +66,31 @@ describe("page capture cleanup", () => {
     expect(cancel).not.toHaveBeenCalled();
   });
 
+  it("measures fractional CSS viewport dimensions while retaining scrollbar gutters", async () => {
+    vi.stubGlobal("innerWidth", 815);
+    vi.stubGlobal("innerHeight", 615);
+    vi.stubGlobal("visualViewport", { width: 800.4, height: 600.6, scale: 1 });
+    expect(await send({ action: "probe" })).toMatchObject({
+      viewportWidth: 800.4,
+      viewportHeight: 600.6,
+      innerWidth: 815.4,
+      innerHeight: 615.6,
+    });
+  });
+
+  it("does not substitute a pinched visual viewport for layout geometry", async () => {
+    vi.stubGlobal("innerWidth", 815);
+    vi.stubGlobal("innerHeight", 615);
+    vi.stubGlobal("visualViewport", { width: 400, height: 300, scale: 2 });
+    expect(await send({ action: "probe" })).toMatchObject({
+      viewportWidth: 800,
+      viewportHeight: 600,
+      innerWidth: 815,
+      innerHeight: 615,
+    });
+
+  });
+
   it("restores each changed CSS property and the original two-dimensional scroll", async () => {
     await send({ action: "begin", label: "Capture", cancelLabel: "Cancel" });
     const moving = send({ action: "move", y: 800, capture: true });
