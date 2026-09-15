@@ -651,7 +651,7 @@ describe("handleTabBorrow", () => {
       originalIndex: 4,
     });
     expect(spies.move).toHaveBeenCalledWith(7, { windowId: 100, index: -1 });
-    expect(spies.update).toHaveBeenCalledWith(7, { active: true });
+    expect(spies.update).not.toHaveBeenCalledWith(7, { active: true });
   });
 
   it("refuses to borrow a tab already inside the Agent Window", async () => {
@@ -1248,4 +1248,119 @@ describe("handleTabReturn", () => {
     expect(res.fallback).toBe(true);
     expect(spies.move).toHaveBeenLastCalledWith(7, { windowId: 777, index: 0 });
   });
+});
+
+describe("background tab initialization", () => {
+  it("establishes execution before the destination can start without selecting the tab", async () => {
+    const sm = new SessionManager({ agentWindow: fakeAgentWindow([100]) });
+    const ctx = await sm.start("aa11");
+    const state: FakeTabState = { tabs: new Map(), nextTabId: 50, windowsClosed: new Set() };
+    const { api, spies } = makeTabMutationApi(state);
+    const acquireBackgroundExecution = vi.fn(async (session: string, tabId: number) => {
+      expect(session).toBe("aa11");
+      expect(ctx.agentCreatedTabs.has(tabId)).toBe(true);
+      expect(state.tabs.get(tabId)).toMatchObject({ url: "about:blank", active: false });
+      expect(spies.update).not.toHaveBeenCalled();
+    });
+    expect(
+      await handleTabCreate(
+        sm,
+        { session_id: "aa11", url: "https://fixture.test", active: false },
+        { tabs: api, cdp: { acquireBackgroundExecution } },
+      ),
+    ).toMatchObject({ tab_id: 50, url: "https://fixture.test" });
+    expect(acquireBackgroundExecution).toHaveBeenCalledOnce();
+    expect(spies.update).toHaveBeenCalledExactlyOnceWith(50, { url: "https://fixture.test" });
+  });
+
+  it.each([
+    false,
+    true,
+  ])("rolls back failed or cancelled initialization (cancel=%s)", async (cancel) => {
+    const sm = new SessionManager({ agentWindow: fakeAgentWindow([100]) });
+    const ctx = await sm.start("aa11");
+    const state: FakeTabState = { tabs: new Map(), nextTabId: 50, windowsClosed: new Set() };
+    const { api, spies } = makeTabMutationApi(state);
+    const controller = new AbortController();
+    const cdp = {
+      acquireBackgroundExecution: vi.fn(async () => {
+        if (cancel) controller.abort();
+        else throw new Error("unsupported");
+      }),
+      releaseSessionTab: vi.fn(async () => {}),
+    };
+    expect(
+      await handleTabCreate(
+        sm,
+        { session_id: "aa11", url: "https://fixture.test", active: false },
+        { tabs: api, cdp, signal: controller.signal },
+      ),
+    ).toMatchObject({ code: cancel ? "cancelled" : "cdp_failed" });
+    expect(cdp.releaseSessionTab).toHaveBeenCalledWith("aa11", 50);
+    expect(spies.update).not.toHaveBeenCalled();
+    expect(state.tabs.has(50)).toBe(false);
+    expect(ctx.agentCreatedTabs.has(50)).toBe(false);
+  });
+});
+
+it("creates a CDP-ready blank default tab so later navigation starts under the policy", async () => {
+  const sm = new SessionManager({ agentWindow: fakeAgentWindow([100]) });
+  await sm.start("aa11");
+  const state: FakeTabState = { tabs: new Map(), nextTabId: 50, windowsClosed: new Set() };
+  const { api, spies } = makeTabMutationApi(state);
+  const acquireBackgroundExecution = vi.fn(async () => {});
+  expect(
+    await handleTabCreate(
+      sm,
+      { session_id: "aa11", active: false },
+      { tabs: api, cdp: { acquireBackgroundExecution } },
+    ),
+  ).toMatchObject({ url: "about:blank" });
+  expect(acquireBackgroundExecution).toHaveBeenCalledWith("aa11", 50);
+  expect(spies.update).not.toHaveBeenCalled();
+});
+
+it("returns a borrowed page without activating it when execution setup fails", async () => {
+  const sm = new SessionManager({ agentWindow: fakeAgentWindow([100]) });
+  const ctx = await sm.start("aa11");
+  const state: FakeTabState = {
+    tabs: new Map([
+      [
+        7,
+        {
+          id: 7,
+          windowId: 200,
+          index: 4,
+          active: false,
+          url: "https://fixture.test",
+        } as chrome.tabs.Tab,
+      ],
+    ]),
+    nextTabId: 50,
+    windowsClosed: new Set(),
+  };
+  const { api, spies } = makeTabMutationApi(state);
+  const cdp = {
+    acquireBackgroundExecution: vi.fn(async () => {
+      throw new Error("unsupported");
+    }),
+    releaseSessionTab: vi.fn(async () => {}),
+  };
+  expect(
+    await handleTabBorrow(
+      sm,
+      { session_id: "aa11", tab_id: 7 },
+      {
+        tabs: api,
+        windows: makeWindowsApi(state).api,
+        cdp,
+        approveBorrow: async () => true,
+        agentOverlayReset: { resetAgentOverlays: async () => {} },
+      },
+    ),
+  ).toMatchObject({ code: "cdp_failed" });
+  expect(state.tabs.get(7)).toMatchObject({ windowId: 200, index: 4, active: false });
+  expect(ctx.borrowedTabs.has(7)).toBe(false);
+  expect(cdp.releaseSessionTab).toHaveBeenCalledWith("aa11", 7);
+  expect(spies.update).not.toHaveBeenCalled();
 });

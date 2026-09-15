@@ -135,6 +135,16 @@ bsk tab borrow <tab-id> --session <id>
 bsk tab return <tab-id> --session <id>
 ```
 
+Borrowing does not select the target tab. Keep its returned `tab_id` and pass
+`--tab-id <tab-id>` to subsequent observation, navigation, and input commands;
+omitting it still targets the Agent Window's active tab. Use the same explicit
+targeting after `tab create --no-active`. Created and borrowed web pages continue
+running in the background while controlled, without requiring `tab select`.
+A default created tab starts at `about:blank`. Ordinary viewport and full-page
+screenshots still require an active tab; do not activate a background task just
+to work around that limitation. Prefer semantic observation, and report the
+limitation when an image is required.
+
 Never invent tab IDs or keep a user tab across unrelated work. Do not repeat
 pending, denied or timed-out borrows. For `borrow_outcome_unknown`, inspect tab/
 session state first: the tab may already have moved. Do not bypass an outcome
