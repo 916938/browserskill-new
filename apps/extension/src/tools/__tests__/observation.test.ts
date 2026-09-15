@@ -4407,3 +4407,57 @@ describe("handleGetHtml", () => {
     expect(res.html.length).toBe(100);
   });
 });
+
+describe("controlled viewport screenshot routing", () => {
+  it.each([
+    false,
+    true,
+  ])("uses the exact controlled target instead of the window surface (active=%s)", async (active) => {
+    const manager = new SessionManager({ agentWindow: fakeAgentWindow([100]) });
+    const ctx = await manager.start("aa11");
+    ctx.agentCreatedTabs.add(7);
+    const capture = vi.fn(async () => {
+      throw new Error("Window capture must not run");
+    });
+    const { cdp, sent } = makeFakeCdp({
+      "Page.getFrameTree": () => ({ frameTree: { frame: { id: "main" } } }),
+      "Page.createIsolatedWorld": () => ({ executionContextId: 1 }),
+      "Runtime.evaluate": () => ({
+        result: { deepSerializedValue: { type: "node", value: { backendNodeId: 42 } } },
+      }),
+      "Runtime.releaseObjectGroup": () => ({}),
+      "Page.captureScreenshot": () => ({ data: TINY_PNG }),
+    });
+    cdp.getAttachmentId = () => "attachment";
+    let nowActive = active;
+    const deps = makeScreenshotDeps({
+      cdp,
+      captureVisibleTab: capture,
+      get: vi.fn(async () => ({ id: 7, windowId: 100, active: nowActive }) as chrome.tabs.Tab),
+    });
+    deps.sendToTab = async () => {
+      nowActive = false;
+    };
+    const result = await handleScreenshot(manager, { session_id: "aa11", tab_id: 7 }, deps);
+    expect(result).toMatchObject({ tab_id: 7, image_base64: TINY_PNG, width: 1, height: 1 });
+    expect(capture).not.toHaveBeenCalled();
+    expect(sent.find((call) => call.method === "Page.captureScreenshot")?.params).toMatchObject({
+      captureBeyondViewport: false,
+    });
+  });
+
+  it("does not fall back to the window when controlled capture has no CDP", async () => {
+    const manager = new SessionManager({ agentWindow: fakeAgentWindow([100]) });
+    const ctx = await manager.start("aa11");
+    ctx.agentCreatedTabs.add(7);
+    const capture = vi.fn();
+    expect(
+      await handleScreenshot(
+        manager,
+        { session_id: "aa11", tab_id: 7 },
+        makeScreenshotDeps({ captureVisibleTab: capture }),
+      ),
+    ).toMatchObject({ code: "cdp_failed", data: { reason: "screenshot_capture_failed" } });
+    expect(capture).not.toHaveBeenCalled();
+  });
+});
