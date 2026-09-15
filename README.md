@@ -85,6 +85,7 @@ or [Edge Add-ons](https://microsoftedge.microsoft.com/addons/detail/browserskill
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Tencent/BrowserSkill/main/install.sh | sh
+export PATH="${BSK_INSTALL_DIR:-$HOME/.local/bin}:$PATH"
 ```
 
 **Windows** (PowerShell — installs to `~/.local/bin`):
@@ -93,7 +94,11 @@ curl -fsSL https://raw.githubusercontent.com/Tencent/BrowserSkill/main/install.s
 irm https://raw.githubusercontent.com/Tencent/BrowserSkill/main/install.ps1 | iex
 ```
 
-Verify the binary:
+The export makes the CLI available in the current Unix shell. A running agent may
+need the same PATH setting in each shell call, or the installed binary's absolute
+path. Restart the agent if it retains an old PATH after installation.
+
+Verify the binary in the terminal or agent environment that will use it:
 
 ```bash
 bsk --version
@@ -138,6 +143,11 @@ Use <kbd>Space</kbd> to select the Agent harness you want to install into, then
 press <kbd>Enter</kbd> to install the skill. Run `bsk install-skill --list` to see
 internal variants and install paths.
 
+For non-interactive installation, specify the intended harness, for example
+`bsk install-skill --harness cursor --json`. Explicit selection also works when
+the harness is not detected. `--yes` alone installs into every detected harness
+and fails when none are detected.
+
 To install your own instructions, use `bsk install-skill --harness cursor --source ./SKILL.md`.
 An explicit `--source` stays custom even if its contents match the bundled skill.
 Existing installations are skipped unless you add `--force`.
@@ -165,13 +175,58 @@ Other shell-capable agent harnesses are supported too. Copy
 `browser-skill/SKILL.md` to install the skill manually. DeepSeek Harness uses a
 dedicated plugin instead — see [DeepSeek Harness plugin](#deepseek-harness-plugin).
 
+#### 4. Verify the connection
+
+Run `bsk doctor` and follow its hints. Open the extension popup and confirm it is
+connected. Explain any warnings and resolve failures before testing browser use.
+Doctor can pass with no skill installed (`N/A`); verify skill discovery separately.
+
 </details>
 
-Start a new Agent session and write a prompt that needs the browser, for example:
+Start a new Agent session, confirm `browser-skill` is available in the harness,
+and ask it to open `https://example.com` and summarize the page. For harnesses
+with slash-command skill invocation, for example:
 
 ```text
 /browser-skill open example.com and summarize what is on the page.
 ```
+
+A successful first-use check reads the page and stops its BrowserSkill session.
+If the skill is missing, check the target harness and install path before retrying.
+
+### Updating
+
+For the default local setup, finish active browser tasks before updating:
+
+```sh
+bsk update --yes
+```
+
+If Windows reports a staged update, wait for the replacement to finish before
+checking `bsk --version`.
+
+When it installs an update, this command restarts a running daemon with default
+startup settings. If you replaced the binary using the installer instead, restart
+the existing daemon with `bsk daemon restart` after tasks finish.
+
+For a custom port, host-managed sandbox daemon, or remote server, stop the daemon
+in its owning host or supervisor, run `bsk update --yes --no-restart-daemon`, and
+start it there with its original flags and `BSK_HOME`. Set `BSK_AUTO_START=0`
+in agent commands while managing it; see the [sandbox](docs/sandboxed-agents.md)
+and [remote](docs/remote-extension-connection.md) setup guides.
+
+Update the extension through its browser store; for an unpacked development build,
+rebuild and reload it. Store availability may lag the CLI release. Check the CLI,
+daemon and extension versions with `bsk --version` and `bsk status`, then run
+`bsk doctor`. New features such as full-page screenshots need matching builds.
+Update the [DSH plugin separately](#deepseek-harness-plugin) and restart its profile.
+Managed CLI skills synchronize on daemon startup, `session start`, or `doctor`;
+local edits and custom skills are preserved. Start a new agent session to load
+updated instructions.
+
+**Upgrading to 0.3.0:** `--unattended`, `tab borrow --no-confirm`, and
+`BSK_REQUEST_HELP=off` no longer bypass confirmation or disable help. Choose the
+corresponding extension settings described below. See [what changed](CHANGELOG.md).
 
 ### Automation settings
 
