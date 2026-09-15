@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { capturePage, sameLayout, sliceForFrame } from "./capture";
+import { isStaleFrame } from "./frame-freshness";
 import { type PageCommand, type PageMetrics, ScreenshotError } from "./types";
+
+vi.mock("./frame-freshness", () => ({
+  frameSignature: vi.fn(() => ({})),
+  isStaleFrame: vi.fn(() => false),
+}));
 
 const metrics: PageMetrics = {
   x: 0,
@@ -14,7 +20,10 @@ const metrics: PageMetrics = {
   dpr: 1,
 };
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.mocked(isStaleFrame).mockReset();
+});
 
 describe("long screenshot stitching", () => {
   it("preserves a complete fixed footer even when the final scroll adds only a few rows", () => {
@@ -188,5 +197,54 @@ describe("capture lifecycle", () => {
     expect(batches).toBe(2);
     expect(pixels.slice(0, 2300)).toEqual(Array.from({ length: 2300 }, (_, i) => i));
     expect(pixels.slice(2300)).toEqual(Array(700).fill(-1));
+  });
+});
+
+describe("capture recovery", () => {
+  it("never writes a stale frame and stops after three exposures", async () => {
+    const h = harness();
+    vi.mocked(isStaleFrame).mockReturnValue(true);
+    await expect(capturePage(h.deps)).rejects.toMatchObject({ reason: "stale_frame" });
+    expect(h.draw).toHaveBeenCalledTimes(1);
+    expect(h.bitmaps).toHaveLength(4);
+    expect(h.commands.at(-1)).toEqual({ action: "finish" });
+  });
+  it("retries a stale exposure at the same position without adding rows", async () => {
+    const h = harness();
+    vi.mocked(isStaleFrame).mockReturnValueOnce(true).mockReturnValue(false);
+    await expect(capturePage(h.deps)).resolves.toEqual({ width: 1600, height: 5002 });
+    const moves = h.commands.filter((c) => c.action === "move");
+    expect(moves[1]).toEqual(moves[2]);
+  });
+  it("does not count a quiet wait before the loading indicator appears as stalled loading", async () => {
+    const h = harness();
+    const page = h.deps.page;
+    let waits = 0;
+    vi.stubGlobal("performance", { now: () => waits * 10_000 });
+    h.deps.page = vi.fn(async (command) => {
+      if (command.action === "move" && command.final) waits++;
+      return {
+        ...(await page(command)),
+        loading: waits === 3,
+        bottomReady: waits >= 4,
+      };
+    });
+    await expect(capturePage({ ...h.deps, loadingTimeoutMs: 20_000 })).resolves.toEqual({
+      width: 1600,
+      height: 5002,
+    });
+  });
+  it("reports a stalled loading bottom and restores the page", async () => {
+    const h = harness();
+    const page = h.deps.page;
+    h.deps.page = vi.fn(async (command) => ({
+      ...(await page(command)),
+      loading: true,
+      bottomReady: false,
+    }));
+    await expect(capturePage({ ...h.deps, loadingTimeoutMs: 0 })).rejects.toMatchObject({
+      reason: "loading_stalled",
+    });
+    expect(h.commands.at(-1)).toEqual({ action: "finish" });
   });
 });

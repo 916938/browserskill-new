@@ -11,8 +11,14 @@ export async function openScreenshotSource(
   allowDebugger = true,
   // Agent requests can reuse their session's debugger instead of attaching a
   // second owner. Popup captures keep the standalone attachment below.
-  fallback?: () => Promise<{ capture(): Promise<string>; close(): Promise<void> }>,
+  ownedSource?: () => Promise<{ capture(): Promise<string>; close(): Promise<void> }>,
 ) {
+  // Agent captures already own a debugger. Renderer screenshots avoid stale
+  // window-surface pixels after programmatic scrolling on some Windows builds.
+  if (allowDebugger && ownedSource) {
+    await checkTab();
+    return ownedSource();
+  }
   let lastShot = Date.now();
   try {
     // A short probe keeps ordinary captures free of debugger attachments, while
@@ -33,7 +39,6 @@ export async function openScreenshotSource(
     if (!allowDebugger) throw new ScreenshotError("unavailable");
   }
   await checkTab();
-  if (fallback) return fallback();
   const target = { tabId };
   const attaching = chrome.debugger.attach(target, "1.3");
   try {

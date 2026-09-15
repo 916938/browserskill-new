@@ -179,3 +179,35 @@ describe("full-page screenshot overlay cleanup", () => {
     await deps.exports.dispose();
   });
 });
+
+describe("full-page scope and diagnostics", () => {
+  it("acknowledges the selected range and prefers renderer screenshots", async () => {
+    const { manager, deps } = await setupCapture();
+    expect(
+      await handleFullPageScreenshot(manager, { session_id: "one", scope: "current" }, deps),
+    ).toMatchObject({ scope: "current" });
+    expect(vi.mocked(capturePage).mock.calls.at(-1)?.[0]).toMatchObject({
+      scope: "current",
+      loadingTimeoutMs: 30000,
+    });
+    await deps.exports.dispose();
+  });
+  it.each([
+    "page_hidden",
+    "watchdog_timeout",
+    "stale_frame",
+    "loading_stalled",
+  ] as const)("preserves %s and partial progress without exporting", async (reason) => {
+    const { manager, deps } = await setupCapture();
+    const { ScreenshotError } = await import("@/long-screenshot/types");
+    vi.mocked(capturePage).mockImplementationOnce(async (d) => {
+      d.progress("capturing", 50, 3);
+      throw new ScreenshotError("interrupted", reason);
+    });
+    expect(await handleFullPageScreenshot(manager, { session_id: "one" }, deps)).toMatchObject({
+      data: { reason, frames: 3, progress: 50 },
+    });
+    expect(exportPng).not.toHaveBeenCalled();
+    expect(deps.exports.discard).toHaveBeenCalledOnce();
+  });
+});

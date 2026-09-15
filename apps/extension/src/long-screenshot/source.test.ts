@@ -92,3 +92,26 @@ describe("screenshot backends", () => {
     await vi.waitFor(() => expect(detach).toHaveBeenCalledExactlyOnceWith({ tabId: 4 }));
   });
 });
+
+describe("agent screenshot source", () => {
+  it("uses the owned renderer source even when surface readback succeeds with stale pixels", async () => {
+    const surface = vi.fn(async () => "stale");
+    vi.stubGlobal("chrome", { tabs: { captureVisibleTab: surface } });
+    const capture = vi.fn(async () => "current");
+    const close = vi.fn(async () => {});
+    const check = vi.fn(async () => {});
+    const source = await openScreenshotSource(
+      1,
+      2,
+      new AbortController().signal,
+      check,
+      true,
+      async () => ({ capture, close }),
+    );
+    expect(await source.capture()).toBe("current");
+    expect(surface).not.toHaveBeenCalled();
+    expect(check).toHaveBeenCalledOnce();
+    await source.close();
+    expect(close).toHaveBeenCalledOnce();
+  });
+});

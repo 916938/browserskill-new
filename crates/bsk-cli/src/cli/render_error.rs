@@ -58,6 +58,12 @@ pub mod reason {
     pub const CDP_EXTENSION_ACCESS_DENIED: &str = "cdp_extension_access_denied";
     pub const BORROW_CONFLICT: &str = "borrow_conflict";
     pub const SCREENSHOT_CAPTURE_FAILED: &str = "screenshot_capture_failed";
+    pub const SCREENSHOT_USER_CANCELLED: &str = "user_cancelled";
+    pub const SCREENSHOT_PAGE_HIDDEN: &str = "page_hidden";
+    pub const SCREENSHOT_NAVIGATION: &str = "navigation";
+    pub const SCREENSHOT_WATCHDOG_TIMEOUT: &str = "watchdog_timeout";
+    pub const SCREENSHOT_STALE_FRAME: &str = "stale_frame";
+    pub const SCREENSHOT_LOADING_STALLED: &str = "loading_stalled";
     pub const FILE_INPUT_PROBE_FAILED: &str = "file_input_probe_failed";
     pub const FILE_INPUT_NOT_ACTIVATED: &str = "file_input_not_activated";
     pub const SET_FILE_INPUT_FAILED: &str = "set_file_input_failed";
@@ -403,6 +409,40 @@ pub fn info_for_error(code: ErrorCode, data: Option<&serde_json::Value>) -> Rend
             ),
             exit_code: base.exit_code,
         },
+        (ErrorCode::Cancelled, reason::SCREENSHOT_USER_CANCELLED) => RenderInfo {
+            summary: "full-page screenshot cancelled by user input",
+            hint: Some("respect the interruption; do not automatically retry"),
+            exit_code: 2,
+        },
+        (ErrorCode::CdpFailed, reason::SCREENSHOT_PAGE_HIDDEN) => RenderInfo {
+            summary: "screenshot page became hidden",
+            hint: Some("keep the capture tab visible before starting another screenshot"),
+            exit_code: 3,
+        },
+        (ErrorCode::CdpFailed, reason::SCREENSHOT_NAVIGATION) => RenderInfo {
+            summary: "screenshot page navigated",
+            hint: Some("inspect the current page before starting another screenshot"),
+            exit_code: 3,
+        },
+        (ErrorCode::Timeout, reason::SCREENSHOT_WATCHDOG_TIMEOUT) => RenderInfo {
+            summary: "screenshot lost contact with the page",
+            hint: Some(
+                "check that the browser is responsive; increasing the total deadline does not repair page communication",
+            ),
+            exit_code: 4,
+        },
+        (ErrorCode::CdpFailed, reason::SCREENSHOT_STALE_FRAME) => RenderInfo {
+            summary: "screenshot pixels did not update after scrolling",
+            hint: Some("keep the capture window visible; do not stitch repeated viewport images"),
+            exit_code: 3,
+        },
+        (ErrorCode::Timeout, reason::SCREENSHOT_LOADING_STALLED) => RenderInfo {
+            summary: "page loading stalled at the bottom",
+            hint: Some(
+                "use --full-page --scope current only if the currently loaded document range satisfies the request",
+            ),
+            exit_code: 4,
+        },
         (ErrorCode::CdpFailed, reason::SCREENSHOT_CAPTURE_FAILED) => RenderInfo {
             summary: "the browser could not capture the tab image",
             hint: Some(
@@ -672,6 +712,25 @@ mod tests {
             info.hint
         );
         // Still the browser/CDP failure bucket.
+        assert_eq!(info.exit_code, 3);
+    }
+
+    #[test]
+    fn full_page_recovery_distinguishes_stalled_loading_from_user_input() {
+        let stalled = serde_json::json!({ "reason": reason::SCREENSHOT_LOADING_STALLED });
+        let info = info_for_error(ErrorCode::Timeout, Some(&stalled));
+        assert!(info.hint.unwrap().contains("--scope current"));
+        assert!(!info.hint.unwrap().contains("increase"));
+        assert_eq!(info.exit_code, 4);
+
+        let cancelled = serde_json::json!({ "reason": reason::SCREENSHOT_USER_CANCELLED });
+        let info = info_for_error(ErrorCode::Cancelled, Some(&cancelled));
+        assert!(info.hint.unwrap().contains("do not automatically retry"));
+        assert_eq!(info.exit_code, 2);
+
+        let hidden = serde_json::json!({ "reason": reason::SCREENSHOT_PAGE_HIDDEN });
+        let info = info_for_error(ErrorCode::CdpFailed, Some(&hidden));
+        assert!(info.hint.unwrap().contains("visible"));
         assert_eq!(info.exit_code, 3);
     }
 
