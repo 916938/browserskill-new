@@ -90,6 +90,30 @@ describe("ToolDispatcher", () => {
     dispatcher.stop();
   });
 
+  it.each([
+    "tool.upload",
+    "tool.download",
+  ])("rejects %s for remote sessions before file handling", async (method) => {
+    const { transport, sent, deliver } = fakeTransport();
+    const sessions = new SessionManager({
+      remote: () => true,
+      agentWindow: {
+        create: vi.fn(async () => 4242),
+        remove: vi.fn(),
+        ensureActiveTab: vi.fn(async () => 1),
+      },
+    });
+    await sessions.start("remote");
+    const cdp = { send: vi.fn() } as unknown as TestDispatcherCdp;
+    const dispatcher = new ToolDispatcher({ transport, sessions, cdp });
+    dispatcher.start();
+    deliver(makeRequest(method, { session_id: "remote" }));
+    await vi.waitFor(() => expect(sent).toHaveLength(1));
+    expect(sent[0]).toMatchObject({ error: { code: "unsupported" } });
+    expect(cdp.send).not.toHaveBeenCalled();
+    dispatcher.stop();
+  });
+
   it("uses the configured recording runtime for start and stop", async () => {
     const { transport, sent, deliver } = fakeTransport();
     const sessions = new SessionManager({

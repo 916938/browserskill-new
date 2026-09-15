@@ -44,6 +44,7 @@ pub(crate) const DAEMON_REPLACEMENT_WAIT_ENV: &str = "BSK_DAEMON_REPLACES_PID";
 /// Concrete daemon configuration resolved from CLI flags / defaults.
 #[derive(Debug, Clone)]
 pub struct DaemonConfig {
+    pub server: Option<super::remote::ServerConfig>,
     pub ws_port: u16,
     pub session_idle: Duration,
     pub daemon_idle: Duration,
@@ -66,6 +67,7 @@ impl DaemonConfig {
     /// a daemon via [`super::run`].
     pub fn new(port: u16) -> Self {
         Self {
+            server: None,
             ws_port: port,
             session_idle: Duration::from_secs(60 * 5),
             daemon_idle: Duration::from_secs(60 * 30),
@@ -81,6 +83,12 @@ impl DaemonConfig {
         self
     }
 
+    pub fn listen_ip(&self) -> IpAddr {
+        self.server
+            .as_ref()
+            .map_or(IpAddr::V4(Ipv4Addr::LOCALHOST), |server| server.listen)
+    }
+
     /// Override the liveness reaper's silence threshold and scan cadence.
     /// Primarily for tests that need the reaper to act within
     /// sub-second windows instead of the production 60s/15s defaults.
@@ -94,6 +102,7 @@ impl DaemonConfig {
 impl From<&StartArgs> for DaemonConfig {
     fn from(args: &StartArgs) -> Self {
         Self {
+            server: None,
             ws_port: args.resolved_port(),
             session_idle: args.resolved_session_idle(),
             daemon_idle: args.resolved_daemon_idle(),
@@ -107,9 +116,10 @@ impl From<&StartArgs> for DaemonConfig {
 
 /// `bsk daemon start` entrypoint.
 pub fn run_start(args: StartArgs) -> Result<()> {
-    let cfg = DaemonConfig::from(&args);
+    let mut cfg = DaemonConfig::from(&args);
+    cfg.server = args.server_config()?;
 
-    if args.foreground {
+    if args.foreground || cfg.server.is_some() {
         return run_foreground(cfg);
     }
 
@@ -279,7 +289,7 @@ pub fn run_foreground(cfg: DaemonConfig) -> Result<()> {
         let restart_notify = Arc::new(tokio::sync::Notify::new());
         let update_check_task =
             spawn_update_check_task(Arc::clone(&state), Arc::clone(&restart_notify));
-        let ws_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), cfg.ws_port);
+        let ws_addr = SocketAddr::new(cfg.listen_ip(), cfg.ws_port);
         let ws_handle = ws::WsServer::new(Arc::clone(&state))
             .bind(ws_addr)
             .await
@@ -390,6 +400,9 @@ pub fn run_foreground(cfg: DaemonConfig) -> Result<()> {
             let state = Arc::clone(&state);
             let daemon_idle = cfg.daemon_idle;
             tokio::spawn(async move {
+                if state.config.server.is_some() {
+                    return std::future::pending::<Option<()>>().await;
+                }
                 let tick = (daemon_idle / 4).max(Duration::from_millis(250));
                 let mut ticker = tokio::time::interval(tick);
                 ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -594,6 +607,11 @@ pub(crate) fn spawn_update_check_task(
     use crate::cli::update;
 
     tokio::spawn(async move {
+        // Server processes are supervised by the deployment. Do not replace
+        // them with an automatically spawned local-mode daemon.
+        if state.config.server.is_some() {
+            return;
+        }
         let cache_path = match paths::update_check_path() {
             Ok(path) => path,
             Err(err) => {
@@ -654,7 +672,7 @@ pub(crate) fn spawn_update_check_task(
                             update::self_install_candidate(
                                 candidate,
                                 target,
-                                &restart_start_args(&state.config),
+                                &restart_start_args(&state.config)?,
                             )
                         },
                     )
@@ -699,8 +717,9 @@ pub(crate) fn spawn_update_check_task(
                     // `exe_path` is always Some here: the install only
                     // runs when it was captured.
                     if let Some(exe) = &exe_path {
-                        let args = restart_start_args(&state.config);
-                        match spawn_detached_at(exe, &args, Some(std::process::id())) {
+                        match restart_start_args(&state.config).and_then(|args| {
+                            spawn_detached_at(exe, &args, Some(std::process::id()))
+                        }) {
                             Ok(()) => {
                                 info!(
                                     pid = std::process::id(),
@@ -723,13 +742,18 @@ pub(crate) fn spawn_update_check_task(
 
 /// Rebuild the `StartArgs` for the replacement daemon from the running
 /// config so the respawn keeps the same port and idle timeouts.
-fn restart_start_args(cfg: &DaemonConfig) -> StartArgs {
-    StartArgs {
+fn restart_start_args(cfg: &DaemonConfig) -> Result<StartArgs> {
+    anyhow::ensure!(
+        cfg.server.is_none(),
+        "server restart is managed by the deployment supervisor"
+    );
+    Ok(StartArgs {
         port: Some(cfg.ws_port),
         foreground: false,
         session_idle: Some(cfg.session_idle),
         daemon_idle: Some(cfg.daemon_idle),
-    }
+        ..Default::default()
+    })
 }
 
 #[derive(Debug)]
@@ -1118,11 +1142,24 @@ mod tests {
             daemon_idle: Duration::from_secs(22),
             ..DaemonConfig::new(0)
         };
-        let args = restart_start_args(&cfg);
+        let args = restart_start_args(&cfg).unwrap();
         assert_eq!(args.port, Some(1234));
         assert!(!args.foreground);
         assert_eq!(args.session_idle, Some(Duration::from_secs(11)));
         assert_eq!(args.daemon_idle, Some(Duration::from_secs(22)));
+    }
+
+    #[test]
+    fn automatic_restart_rejects_server_configuration() {
+        let mut cfg = DaemonConfig::new(0);
+        cfg.server = StartArgs {
+            mode: crate::cli::daemon::DaemonMode::Server,
+            public_url: Some("wss://browser.example/extension".into()),
+            ..Default::default()
+        }
+        .server_config()
+        .unwrap();
+        assert!(restart_start_args(&cfg).is_err());
     }
 
     #[test]

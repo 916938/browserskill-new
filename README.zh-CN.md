@@ -193,6 +193,8 @@ Daemon 也会为自身继承的旧环境设置记录说明。原先只依靠这�
 新版扩展始终按保存的开关处理它收到的请求。旧 CLI 可能在连接 Daemon 前就因 `BSK_REQUEST_HELP=off` 本地返回；
 混用版本时保留这类历史行为，只升级扩展无法改变旧可执行文件的行为。
 
+在服务器运行 Agent，通过内置鉴权服务与本地浏览器配对，也可选择兼容的第三方网关。详见[远程浏览器连接](docs/remote-extension-connection.md)。
+
 ## DeepSeek Harness 插件
 
 在用 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（`dsh`）？BrowserSkill 提供了官方 dsh 插件，已发布到 npm：[`@wxg-prc-cpg/browser-skill-dsh-plugin`](https://www.npmjs.com/package/@wxg-prc-cpg/browser-skill-dsh-plugin)。它为 Agent 提供原生 `browser_*` 工具，由插件代为调用 `bsk`，并在 Web UI 中实时展示浏览器会话。

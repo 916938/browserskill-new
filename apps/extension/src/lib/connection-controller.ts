@@ -148,7 +148,12 @@ export class ConnectionController {
 
   /** Apply only the latest configuration, after the old sessions are cleaned up. */
   reconfigureTransport(key: string, apply: () => void): Promise<void> {
-    if (key === this.configurationKey) return this.transition ?? Promise.resolve();
+    if (key === this.configurationKey) {
+      // Credentials may rotate while the same device is still waiting for
+      // startup or cleanup. Apply the latest snapshot without another teardown.
+      if (this.pendingConfiguration) this.pendingConfiguration = apply;
+      return this.transition ?? Promise.resolve();
+    }
     this.configurationKey = key;
     this.pendingConfiguration = apply;
     if (!this.ready) return Promise.resolve();

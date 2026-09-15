@@ -7,7 +7,11 @@ import {
   OVERLAY_AGENT_OVERLAY_RESET,
   type OverlayAgentOverlayResetMessage,
 } from "@/lib/overlay-bridge";
-import type { SessionContext, SessionManager } from "@/session-manager/manager";
+import {
+  isAgentControlledTab,
+  type SessionContext,
+  type SessionManager,
+} from "@/session-manager/manager";
 import type { RpcError } from "@/transport/types";
 import { rpcError } from "./errors";
 import { type CdpRunner, isRpcError, lookupSession } from "./shared";
@@ -475,6 +479,12 @@ async function authoriseAgentTab(
   if (typeof tab.id !== "number" || typeof tab.windowId !== "number") {
     return { code: "not_found", message: `tab ${tabId} not found` };
   }
+  if (ctx.remote && !isAgentControlledTab(ctx, tabId)) {
+    return {
+      code: "permission_denied",
+      message: `${toolName}: borrow this tab before controlling it remotely`,
+    };
+  }
   const otherBorrower = manager.findBorrowingSession(tabId, ctx.sessionId);
   if (otherBorrower) {
     return rpcError(
@@ -639,7 +649,10 @@ async function validateBorrowTarget(
   if (tab.windowId === ctx.agentWindowId) {
     return {
       code: "invalid_params",
-      message: `tab_borrow: tab ${tabId} already lives in the Agent Window`,
+      message:
+        ctx.remote && !isAgentControlledTab(ctx, tabId)
+          ? `tab_borrow: tab ${tabId} is not authorized and already lives in the Agent Window; move it to a regular browser window, then borrow it`
+          : `tab_borrow: tab ${tabId} already lives in the Agent Window`,
     };
   }
   for (const s of manager.list()) {

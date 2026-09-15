@@ -2,6 +2,8 @@ import { AGENT_WINDOW_HOME, type AgentWindowApi, chromeAgentWindowApi } from "./
 import { RefStore } from "./ref-store";
 
 export interface SessionContext {
+  /** Remote connections retain dedicated windows, with explicit page ownership. */
+  remote?: boolean;
   sessionId: string;
   agentWindowId: number;
   refStore: RefStore;
@@ -32,6 +34,7 @@ export interface BorrowReservation {
 }
 
 export interface SessionManagerOptions {
+  remote?: () => boolean;
   agentWindow?: AgentWindowApi;
   now?: () => number;
 }
@@ -89,6 +92,7 @@ function throwIfSessionStartAborted(signal: AbortSignal | undefined): void {
  * so vitest never touches a real `chrome.windows` object.
  */
 export class SessionManager {
+  private readonly remote: () => boolean;
   private readonly sessions = new Map<string, SessionContext>();
   private readonly windowIndex = new Map<number, string>();
   private readonly borrowReservations = new Map<number, string>();
@@ -97,6 +101,7 @@ export class SessionManager {
   private readonly now: () => number;
 
   constructor(options: SessionManagerOptions = {}) {
+    this.remote = options.remote ?? (() => false);
     this.agentWindow = options.agentWindow ?? chromeAgentWindowApi;
     this.now = options.now ?? Date.now;
   }
@@ -224,6 +229,7 @@ export class SessionManager {
       throwIfSessionStartAborted(opts.signal);
 
       const ctx: SessionContext = {
+        ...(this.remote() ? { remote: true } : {}),
         sessionId,
         agentWindowId: windowId,
         refStore: new RefStore(),

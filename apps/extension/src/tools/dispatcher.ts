@@ -74,6 +74,7 @@ import {
   handleSnapshot,
 } from "./observation";
 import {
+  clearRecordingForSession,
   handleRecordAwait,
   handleRecordStart,
   handleRecordStop,
@@ -337,6 +338,19 @@ export class ToolDispatcher {
   }
 
   private async invoke(req: RequestFrame, signal: AbortSignal): Promise<unknown | RpcError> {
+    const sessionId = (req.params as { session_id?: string } | undefined)?.session_id;
+    // Also enforce this for gateways backed by a local-mode daemon, where the
+    // standalone server's early IPC rejection does not apply.
+    if (
+      sessionId &&
+      this.sessions.get(sessionId)?.remote &&
+      (req.method === "tool.upload" || req.method === "tool.download")
+    ) {
+      return {
+        code: "unsupported",
+        message: "Remote connections do not support upload or download",
+      };
+    }
     switch (req.method) {
       case "tool.session_start":
         return handleSessionStart(this.sessions, req.params as SessionStartParams, {
@@ -389,7 +403,10 @@ export class ToolDispatcher {
         return handleTabReturn(this.sessions, req.params as TabReturnParams, {
           signal,
           cdp: this.cdp,
-          beforeReturn: (sessionId, tabId) => this.releaseHoverLatch(sessionId, tabId),
+          beforeReturn: async (sessionId, tabId) => {
+            if (this.sessions.get(sessionId)?.remote) clearRecordingForSession(sessionId);
+            await this.releaseHoverLatch(sessionId, tabId);
+          },
         });
       case "tool.window_resize":
         return handleWindowResize(

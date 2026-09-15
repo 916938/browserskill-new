@@ -343,6 +343,16 @@ async fn handle_tool_dispatch(
             });
         }
     };
+    // Reject before allocating local transfer resources. The extension also
+    // enforces this for third-party gateways backed by a local-mode daemon.
+    if state.config.server.is_some() && matches!(method, Method::ToolUpload | Method::ToolDownload)
+    {
+        return ResponseBody::Err(RpcError {
+            code: ErrorCode::Unsupported,
+            message: "upload and download are not supported for remote browsers".into(),
+            data: None,
+        });
+    }
     // Pre-flight: if the user has clicked the agent-window mask's
     // stop button, every session carries a one-shot "pending
     // interrupt" marker. The marker is consumed by the next method

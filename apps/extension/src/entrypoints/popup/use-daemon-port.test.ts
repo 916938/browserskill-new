@@ -119,7 +119,7 @@ describe("useDaemonPort", () => {
     const hook = renderHook(() => useDaemonPort());
     await load();
     act(() => hook.result.current.setDraft(""));
-    let saving!: Promise<void>;
+    let saving!: Promise<boolean>;
     act(() => {
       saving = hook.result.current.commit();
     });
@@ -143,7 +143,7 @@ describe("useDaemonPort", () => {
     const hook = renderHook(() => useDaemonPort());
     await load();
     act(() => hook.result.current.setDraft("53300"));
-    let saving!: Promise<void>;
+    let saving!: Promise<boolean>;
     act(() => {
       saving = hook.result.current.commit();
     });
@@ -186,7 +186,7 @@ describe("useDaemonPort", () => {
     const hook = renderHook(() => useDaemonPort());
     await load();
     act(() => hook.result.current.setDraft("53300"));
-    let saving!: Promise<void>;
+    let saving!: Promise<boolean>;
     act(() => {
       saving = hook.result.current.commit();
     });

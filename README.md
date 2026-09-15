@@ -227,6 +227,8 @@ settings above. New extensions always enforce their saved settings on requests t
 An older CLI may exit locally for `BSK_REQUEST_HELP=off` before contacting the daemon; mixed-version
 installations retain such legacy behavior, which updating only the extension cannot change.
 
+Run an Agent on a server and pair it with your local browser using the built-in authentication service, or a compatible gateway. See [remote browser connections](docs/remote-extension-connection.md).
+
 ## DeepSeek Harness plugin
 
 Using [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`dsh`)?

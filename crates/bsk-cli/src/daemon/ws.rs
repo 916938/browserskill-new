@@ -42,7 +42,7 @@ use super::state::{
 /// depth gap for now because pairing happens through the popup, but
 /// a side-loaded extension on the same machine currently passes the
 /// gate.
-fn origin_allowed(origin: &str, allow_any: bool) -> bool {
+pub(super) fn origin_allowed(origin: &str, allow_any: bool) -> bool {
     if allow_any {
         return true;
     }
@@ -66,6 +66,9 @@ impl WsServer {
     }
 
     pub async fn bind(self, addr: SocketAddr) -> anyhow::Result<WsHandle> {
+        if self.state.config.server.is_some() {
+            return super::remote::bind(self.state, addr).await;
+        }
         let listener = TcpListener::bind(addr)
             .await
             .with_context(|| format!("bind WS server on {addr}"))?;
@@ -159,7 +162,7 @@ async fn handle_connection(
 
     let origin = captured_origin.lock().unwrap().clone().unwrap_or_default();
     debug!(?peer, %origin, "ws connection upgraded");
-    drive_connection(state, ws).await
+    drive_connection(state, ws, None).await
 }
 
 /// Hard cap on how long the daemon will wait for a freshly-upgraded
@@ -169,15 +172,24 @@ async fn handle_connection(
 /// socket FD indefinitely (review M4/M5 round 3 I-R3-1).
 const HANDSHAKE_FIRST_FRAME_TIMEOUT: Duration = Duration::from_secs(5);
 
-async fn drive_connection(
+pub(super) async fn drive_connection<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(
     state: Arc<DaemonState>,
-    ws: WebSocketStream<TcpStream>,
+    ws: WebSocketStream<S>,
+    authorization: Option<super::remote::ConnectionAuthorization>,
 ) -> anyhow::Result<()> {
     let (mut writer, mut reader) = ws.split();
 
     // The first frame MUST be `system.handshake` per §4.2. Bound the
     // wait so a stalled client cannot park resources forever.
-    let first = match tokio::time::timeout(HANDSHAKE_FIRST_FRAME_TIMEOUT, reader.next()).await {
+    let first = if let Some(auth) = authorization.as_ref() {
+        tokio::select! {
+            first = tokio::time::timeout(HANDSHAKE_FIRST_FRAME_TIMEOUT, reader.next()) => first,
+            _ = auth.revoked() => return Err(anyhow!("device authorization ended before handshake")),
+        }
+    } else {
+        tokio::time::timeout(HANDSHAKE_FIRST_FRAME_TIMEOUT, reader.next()).await
+    };
+    let first = match first {
         Ok(Some(Ok(msg))) => msg,
         Ok(Some(Err(err))) => return Err(err.into()),
         Ok(None) => return Ok(()),
@@ -289,7 +301,15 @@ async fn drive_connection(
     // can be told apart from the previous BrowserClient — the old
     // socket's cleanup path uses `remove_if_generation_matches` to
     // avoid clobbering the newer entry (review M4/M5 round 2 #1).
-    let browser_id = BrowserId(params.instance_id.clone());
+    if let Some(auth) = authorization.as_ref() {
+        if !auth.authorized().await {
+            return Err(anyhow!("device authorization ended during handshake"));
+        }
+    }
+    let browser_id = BrowserId(authorization.as_ref().map_or_else(
+        || params.instance_id.clone(),
+        |auth| auth.device.browser_id.clone(),
+    ));
     // A fresh socket represents a fresh extension control plane. The
     // extension tears down its local sessions before reconnecting, so any
     // daemon-side sessions left under the same instance id are stale. Purge
@@ -353,17 +373,17 @@ async fn drive_connection(
         id: request.id.clone(),
         body: ResponseBody::Ok(result),
     };
-    writer
-        .send(Message::Text(serde_json::to_string(&resp)?))
-        .await?;
-
     // Pump loop: outbound frames from sink → ws; inbound from ws → resolve.
     let pump_state = Arc::clone(&state);
     let pump_browser = Arc::clone(&client);
-    let result_outcome: anyhow::Result<()> = async {
+    let pump = async {
+        writer
+            .send(Message::Text(serde_json::to_string(&resp)?))
+            .await?;
         loop {
             tokio::select! {
                 outbound = rx.recv() => {
+                    if authorization.as_ref().is_some_and(|auth| !auth.active()) { break; }
                     match outbound {
                         Some(frame) => {
                             let json = serde_json::to_string(&frame)?;
@@ -373,6 +393,7 @@ async fn drive_connection(
                     }
                 }
                 msg = reader.next() => {
+                    if authorization.as_ref().is_some_and(|auth| !auth.active()) { break; }
                     match msg {
                         Some(Ok(Message::Text(t))) => {
                             // Any inbound frame — tool response, event, or the
@@ -401,8 +422,20 @@ async fn drive_connection(
             }
         }
         Ok(())
+    };
+    // Revocation must also interrupt a blocked socket write or slow inbound
+    // handler, not just an idle iteration of the message pump.
+    let (result_outcome, revoked): (anyhow::Result<()>, bool) = tokio::select! {
+        result = pump => (result, false),
+        _ = async {
+            if let Some(auth) = authorization.as_ref() { auth.revoked().await; }
+            else { std::future::pending::<()>().await; }
+        } => (Ok(()), true),
+    };
+    if revoked {
+        let _ =
+            tokio::time::timeout(Duration::from_secs(1), writer.send(Message::Close(None))).await;
     }
-    .await;
 
     // Cleanup: drop browser + purge its sessions, but only if the
     // registry still holds *this* generation. If a reconnect already
