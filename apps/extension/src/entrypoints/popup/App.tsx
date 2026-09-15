@@ -4,19 +4,17 @@ import { RiArrowLeftLine, RiArrowRightSLine, RiCheckLine, RiFileCopyLine } from 
 import { type ChangeEvent, useEffect, useState } from "react";
 import { AuditPanel } from "@/components/audit-panel";
 import { compareProtocol } from "@/lib/semver";
-import { resolveDaemonWsUrl } from "@/transport/daemon-endpoint";
 import { PROTOCOL_VERSION } from "@/transport/handshake";
 import functionIconUrl from "../../../assets/function.svg";
+import { ConnectionSettings } from "./connection-settings";
 import { ConnectionStatusIndicator } from "./connection-status-indicator";
 import { POPUP_FEATURES, type PopupView } from "./features";
 import { InteractionSettings } from "./interaction-settings";
 import { LongScreenshot } from "./long-screenshot";
-import { RemoteConnection } from "./remote-connection";
 import { SettingInfo } from "./setting-info";
 import { Switch } from "./switch";
 import { type PopupStatusState, useConnectionState } from "./use-connection-state";
 import { useControlHintsHidden } from "./use-control-hints-hidden";
-import { useDaemonPort } from "./use-daemon-port";
 
 const STATE_LABEL_KEYS = {
   disconnected: "popup.stateLabel.disconnected",
@@ -40,21 +38,9 @@ function getLogoSrc() {
 }
 
 export function App() {
-  const [remoteConfigured, setRemoteConfigured] = useState(false);
   const { t } = useTranslation("extension");
   const { snapshot, statusState, setConnectionEnabled } = useConnectionState();
   const [controlHintsHidden, setControlHintsHidden] = useControlHintsHidden();
-  const {
-    savedPort: daemonPort,
-    draft: daemonPortDraft,
-    setDraft: setDaemonPortDraft,
-    commit: commitDaemonPort,
-    invalid: daemonPortInvalid,
-    loaded: daemonPortLoaded,
-    saving: daemonPortSaving,
-    dirty: daemonPortDirty,
-    error: daemonPortError,
-  } = useDaemonPort();
   const [view, setView] = useState<PopupView>("main");
   const [copiedInstanceId, setCopiedInstanceId] = useState(false);
   const [purposeDraft, setPurposeDraft] = useState("");
@@ -226,14 +212,6 @@ export function App() {
                 />
               </div>
             </div>
-            {isDisconnected && !snapshot.lastError && (
-              <p
-                className="mt-2 text-xs leading-snug text-muted-foreground"
-                data-slot="popup-daemon-unreachable"
-              >
-                {t("popup.daemonUnreachable")}
-              </p>
-            )}
             {isSkewed && (
               <p
                 className="mt-2 text-xs leading-snug text-muted-foreground"
@@ -250,6 +228,10 @@ export function App() {
                 )}
               </p>
             )}
+            <ConnectionSettings
+              connectionEnabled={snapshot.connectionEnabled}
+              disconnected={isDisconnected && !snapshot.lastError}
+            />
           </section>
 
           <section
@@ -278,85 +260,6 @@ export function App() {
           </section>
 
           <InteractionSettings />
-
-          <RemoteConnection onRemoteChange={setRemoteConfigured} />
-
-          <section
-            className="rounded-xl border border-border/80 bg-card/60 px-3 py-2.5"
-            data-slot="popup-daemon-port-card"
-            hidden={remoteConfigured}
-          >
-            <div className="relative flex items-center justify-between gap-2">
-              <span className="flex min-w-0 items-center gap-1">
-                <Label
-                  htmlFor="bh-daemon-port"
-                  className="truncate text-sm font-medium leading-normal"
-                >
-                  {t("popup.daemonPortLabel")}
-                </Label>
-                <SettingInfo
-                  label={t("popup.daemonPortInfoLabel")}
-                  data-slot="popup-daemon-port-info"
-                >
-                  {t("popup.daemonPortHint")}
-                </SettingInfo>
-              </span>
-              <Input
-                id="bh-daemon-port"
-                type="text"
-                inputMode="numeric"
-                value={daemonPortDraft}
-                onChange={(event: ChangeEvent<HTMLInputElement>) =>
-                  setDaemonPortDraft(event.target.value)
-                }
-                disabled={!daemonPortLoaded || daemonPortSaving}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    event.preventDefault();
-                    void commitDaemonPort();
-                  }
-                }}
-                className="mt-0 h-7.5 w-19 shrink-0 rounded-md px-2 py-0 text-center text-sm leading-none shadow-none"
-                aria-invalid={daemonPortInvalid || undefined}
-                data-slot="popup-daemon-port-input"
-              />
-            </div>
-            <div className="mt-2 flex items-center justify-between gap-2">
-              <code
-                className="min-w-0 break-all text-[11px] text-muted-foreground"
-                data-slot="popup-daemon-address"
-              >
-                {daemonPort === null ? "—" : resolveDaemonWsUrl(daemonPort)}
-              </code>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="h-7 shrink-0 px-2 text-xs"
-                disabled={!daemonPortLoaded || daemonPortSaving || !daemonPortDirty}
-                onClick={() => void commitDaemonPort()}
-              >
-                {t(daemonPortSaving ? "popup.daemonPortSaving" : "popup.daemonPortSave")}
-              </Button>
-            </div>
-            {daemonPortError && (
-              <p role="alert" className="mt-1.5 text-[11px] leading-snug text-destructive">
-                {t(
-                  daemonPortError === "read"
-                    ? "popup.daemonPortReadFailed"
-                    : "popup.daemonPortWriteFailed",
-                )}
-              </p>
-            )}
-            {daemonPortInvalid && (
-              <p
-                className="mt-1.5 text-[11px] leading-snug text-destructive"
-                data-slot="popup-daemon-port-error"
-              >
-                {t("popup.daemonPortInvalid")}
-              </p>
-            )}
-          </section>
 
           {snapshot.lastError && (
             <div
