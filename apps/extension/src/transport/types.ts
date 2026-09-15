@@ -50,6 +50,12 @@ export type RpcErrorReason =
   | "confirmation_ui_unavailable"
   | "borrow_outcome_unknown"
   | "screenshot_capture_failed"
+  | "user_cancelled"
+  | "page_hidden"
+  | "navigation"
+  | "watchdog_timeout"
+  | "stale_frame"
+  | "loading_stalled"
   | "file_input_probe_failed"
   | "file_input_not_activated"
   | "set_file_input_failed"
@@ -344,11 +350,13 @@ export interface ScreenshotResult {
 }
 
 export interface ScreenshotFullPageParams {
+  scope?: "follow" | "current";
   session_id: string;
   tab_id?: number;
   timeout_ms?: number;
 }
 export interface ScreenshotFullPageResult {
+  scope?: "follow" | "current";
   capture_id: string;
   width: number;
   height: number;

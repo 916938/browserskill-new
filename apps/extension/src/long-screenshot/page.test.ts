@@ -92,7 +92,7 @@ describe("page capture cleanup", () => {
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", cancelable: true }));
     await rejected;
     await send({ action: "finish" });
-    expect(cancel).toHaveBeenCalledExactlyOnceWith("one");
+    expect(cancel).toHaveBeenCalledExactlyOnceWith("one", "user_cancelled");
     expect(document.querySelector("header")!.style.position).toBe("sticky");
     expect(window.scrollY).toBe(350);
   });
@@ -100,7 +100,7 @@ describe("page capture cleanup", () => {
   it("restores automatically when the background disappears", async () => {
     await send({ action: "begin", label: "Capture", cancelLabel: "Cancel" });
     await vi.advanceTimersByTimeAsync(15_001);
-    expect(cancel).toHaveBeenCalledExactlyOnceWith("one");
+    expect(cancel).toHaveBeenCalledExactlyOnceWith("one", "watchdog_timeout");
     expect(window.scrollY).toBe(350);
     await expect(send({ action: "inspect" })).rejects.toBeDefined();
   });
@@ -207,5 +207,59 @@ describe("page capture cleanup", () => {
     await vi.advanceTimersByTimeAsync(2000);
     await first;
     expect(await send({ action: "inspect" })).toMatchObject({ bottomReady: true });
+  });
+  it("caps begin metrics even when preparation changes the document height", async () => {
+    let reads = 0;
+    Object.defineProperty(document.documentElement, "scrollHeight", {
+      configurable: true,
+      get: () => (reads++ === 0 ? 2400 : 3400),
+    });
+    const begin = await send({
+      action: "begin",
+      scope: "current",
+      label: "Capture",
+      cancelLabel: "Cancel",
+    });
+    expect(document.documentElement.scrollHeight).toBe(3400);
+    expect(begin.height).toBe(2400);
+    expect((await send({ action: "inspect" })).height).toBe(begin.height);
+  });
+  it("captures the initial range despite appended height and a persistent loader", async () => {
+    const loader = document.createElement("span");
+    loader.textContent = "加载中...";
+    document.body.append(loader);
+    vi.spyOn(loader, "getBoundingClientRect").mockReturnValue({
+      top: 500,
+      bottom: 530,
+      width: 100,
+      height: 30,
+    } as DOMRect);
+    const initial = await send({
+      action: "begin",
+      label: "Capture",
+      cancelLabel: "Cancel",
+      scope: "current",
+    });
+    Object.defineProperty(document.documentElement, "scrollHeight", {
+      configurable: true,
+      value: initial.height + 1000,
+    });
+    const move = send({ action: "move", y: initial.height - 600, capture: true, final: true });
+    await vi.advanceTimersByTimeAsync(2500);
+    await move;
+    expect(await send({ action: "inspect" })).toMatchObject({
+      height: initial.height,
+      bottomReady: true,
+      loading: true,
+    });
+    await send({ action: "finish" });
+    expect(loader.textContent).toBe("加载中...");
+  });
+  it("distinguishes hiding the page from cancelling by user input", async () => {
+    await send({ action: "begin", label: "Capture", cancelLabel: "Cancel" });
+    const hidden = vi.spyOn(document, "hidden", "get").mockReturnValue(true);
+    document.dispatchEvent(new Event("visibilitychange"));
+    expect(cancel).toHaveBeenCalledExactlyOnceWith("one", "page_hidden");
+    hidden.mockRestore();
   });
 });

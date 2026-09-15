@@ -1,9 +1,17 @@
-import { type CaptureError, type PageMetrics, type PageRequest, ScreenshotError } from "./types";
+import {
+  type CaptureCancelReason,
+  type CaptureError,
+  type CaptureScope,
+  type PageMetrics,
+  type PageRequest,
+  ScreenshotError,
+} from "./types";
 
-export function createPageCapture(onCancel: (id: string) => void) {
+export function createPageCapture(onCancel: (id: string, reason: CaptureCancelReason) => void) {
   let task: ReturnType<typeof prepare> | undefined;
 
-  function prepare(id: string, label: string, cancelLabel: string) {
+  function prepare(id: string, label: string, cancelLabel: string, scope: CaptureScope = "follow") {
+    const limit = scope === "current" ? measure().height : Infinity;
     const controller = new AbortController();
     const original = { x: window.scrollX, y: window.scrollY };
     const changes: (() => void)[] = [];
@@ -167,7 +175,7 @@ export function createPageCapture(onCancel: (id: string) => void) {
       window.removeEventListener("keydown", keydown, true);
       window.removeEventListener("wheel", interaction, true);
       window.removeEventListener("touchstart", interaction, true);
-      window.removeEventListener("pagehide", cancel);
+      window.removeEventListener("pagehide", navigated);
       document.removeEventListener("visibilitychange", visibilityChanged);
       host.remove();
       for (const restore of changes.reverse()) restore();
@@ -178,9 +186,10 @@ export function createPageCapture(onCancel: (id: string) => void) {
       style.remove();
     }
 
-    function cancel() {
+    function cancel(reason: CaptureCancelReason = "user_cancelled") {
+      controller.abort(new ScreenshotError("interrupted", reason));
       finish();
-      onCancel(id);
+      onCancel(id, reason);
     }
     function interaction() {
       if (!paused) cancel();
@@ -200,18 +209,19 @@ export function createPageCapture(onCancel: (id: string) => void) {
       }
     }
     function visibilityChanged() {
-      if (document.hidden) cancel();
+      if (document.hidden) cancel("page_hidden");
     }
-    button.addEventListener("click", cancel);
+    const navigated = () => cancel("navigation");
+    button.addEventListener("click", () => cancel());
     window.addEventListener("keydown", keydown, true);
     window.addEventListener("wheel", interaction, { capture: true, passive: true });
     window.addEventListener("touchstart", interaction, { capture: true, passive: true });
-    window.addEventListener("pagehide", cancel);
+    window.addEventListener("pagehide", navigated);
     document.addEventListener("visibilitychange", visibilityChanged);
 
     function touch() {
       clearTimeout(watchdog);
-      watchdog = setTimeout(cancel, 15_000);
+      watchdog = setTimeout(() => cancel("watchdog_timeout"), 15_000);
     }
     touch();
 
@@ -220,7 +230,7 @@ export function createPageCapture(onCancel: (id: string) => void) {
         controller.signal.throwIfAborted();
         const abort = () => {
           clearTimeout(timer);
-          reject(new ScreenshotError("interrupted"));
+          reject(controller.signal.reason ?? new ScreenshotError("interrupted"));
         };
         const timer = setTimeout(() => {
           controller.signal.removeEventListener("abort", abort);
@@ -229,8 +239,13 @@ export function createPageCapture(onCancel: (id: string) => void) {
         controller.signal.addEventListener("abort", abort, { once: true });
       });
 
-    function inspect(): PageMetrics {
+    function measureRange(): PageMetrics {
       const metrics = measure();
+      return { ...metrics, height: Math.min(metrics.height, limit) };
+    }
+
+    function inspect(): PageMetrics {
+      const metrics = measureRange();
       const atBottom = metrics.y + metrics.viewportHeight >= metrics.height - 0.5;
       const now = performance.now();
       if (!atBottom || metrics.height !== lastHeight) bottomSince = now;
@@ -276,9 +291,10 @@ export function createPageCapture(onCancel: (id: string) => void) {
         tailStart,
         // A clock or live widget can mutate forever without moving any rows.
         // Bound that quiet wait; an actual loading indicator still keeps waiting.
+        loading: busy,
         bottomReady:
           atBottom &&
-          !busy &&
+          (scope === "current" || !busy) &&
           now - bottomSince >= 1500 &&
           (now - lastMutation >= 600 || now - bottomSince >= 5000),
       };
@@ -343,6 +359,7 @@ export function createPageCapture(onCancel: (id: string) => void) {
       id,
       finish,
       move,
+      measure: measureRange,
       inspect,
       touch,
       signal: controller.signal,
@@ -379,8 +396,8 @@ export function createPageCapture(onCancel: (id: string) => void) {
       if (request.action === "probe") return measure();
       if (request.action === "begin") {
         if (task && !task.signal.aborted) throw new ScreenshotError("busy");
-        task = prepare(request.id, request.label, request.cancelLabel);
-        return measure();
+        task = prepare(request.id, request.label, request.cancelLabel, request.scope);
+        return task.measure();
       }
       if (!task || task.id !== request.id) throw new ScreenshotError("interrupted");
       if (request.action === "finish") {

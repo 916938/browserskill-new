@@ -165,6 +165,7 @@ On an unrecoverable failure, report the blocker and stop the owned session.
 bsk screenshot --session <id> --out viewport.png
 bsk screenshot --session <id> --ref @e3 --out element.png --json
 bsk screenshot --session <id> --full-page --out page.png
+bsk screenshot --session <id> --full-page --scope current --out loaded.png
 ```
 
 Screenshots return a local PNG path; view the image to interpret it. `--out`
@@ -172,6 +173,10 @@ replaces an existing file; omitting it uses a temporary path. `--json` includes
 dimensions and byte size. `--ref` and `--full-page` cannot be combined.
 
 Full-page mode scrolls an ordinary webpage and restores its position/styles.
+The default `--scope follow` follows appended content. Use `--scope current` when
+capturing the currently loaded range is requested: it stops at the initial document
+height, even if a loading indicator remains. Later content below that boundary is
+excluded; report this range rather than claiming all feed entries were loaded.
 Use a selected, session-controlled tab and stable viewport; `--tab-id` targets a
 tab without selecting it. Internal browser pages, the Web Store, nested scrolling
 panels and virtualized lists are unsupported. Capture/encoding defaults to 2m;
@@ -179,7 +184,12 @@ panels and virtualized lists are unsupported. Capture/encoding defaults to 2m;
 capture plus transfer. Respect cancellation; do not blindly retry endless pages
 or substitute a viewport image when an older extension rejects full-page capture.
 Use matching CLI/extension builds. Ctrl-C cancels; failed full-page captures save
-no partial image.
+no partial image. A `loading_stalled` error means the bottom kept a loading
+indicator without height growth for 30s; do not simply increase the deadline.
+Choose `current` only when that range satisfies the request. Keep the capture tab
+visible: `page_hidden` is an environment interruption, while `user_cancelled`
+means user input stopped capture. For other failures follow the returned reason
+and hint; do not work around them by editing the page or stitching screenshots.
 
 For `@eN canvas [visual:screenshot]`, observe returns text, not pixels. Screenshot
 that ref when its contents matter; never infer Canvas controls or names from

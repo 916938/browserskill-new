@@ -315,6 +315,33 @@ describe.skipIf(!process.env.BSK_LONG_SCREENSHOT_CHROME || !process.env.BSK_LONG
     );
 
     it(
+      "captures the current range when the loading indicator never clears",
+      () =>
+        withAgent(async (h) => {
+          const original = await h.restored();
+          await h.onPage(
+            `document.body.insertAdjacentHTML('beforeend', '<span style="position:absolute;top:2500px;left:500px">加载中...</span>')`,
+          );
+          const out = path.join(h.directory, "current.png");
+          const reply = await h.ok([
+            "screenshot",
+            "--session",
+            h.session,
+            "--full-page",
+            "--scope",
+            "current",
+            "--out",
+            out,
+          ]);
+          expect(reply.scope).toBe("current");
+          verifyPng(await readFile(out), 2634, 1);
+          expect(await h.restored()).toEqual(original);
+          expect(await h.scratch()).toEqual([]);
+        }),
+      120_000,
+    );
+
+    it(
       "restores the page on timeout and Ctrl-C without replacing an existing output",
       () =>
         withAgent(async (h) => {
