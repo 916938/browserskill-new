@@ -73,6 +73,7 @@ BrowserSkill 由两个本地运行组件组成：`bsk` CLI/daemon 和浏览器�
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Tencent/BrowserSkill/main/install.sh | sh
+export PATH="${BSK_INSTALL_DIR:-$HOME/.local/bin}:$PATH"
 ```
 
 **Windows**（PowerShell，安装到 `~/.local/bin`）：
@@ -81,7 +82,10 @@ curl -fsSL https://raw.githubusercontent.com/Tencent/BrowserSkill/main/install.s
 irm https://raw.githubusercontent.com/Tencent/BrowserSkill/main/install.ps1 | iex
 ```
 
-验证二进制：
+上面的 export 让当前 Unix shell 能找到 CLI。正在运行的 Agent 可能需要在每次 Shell
+调用中设置同样的 PATH，或使用安装后二进制的绝对路径。如果 Agent 安装后仍沿用旧 PATH，请重启 Agent。
+
+在实际使用工具的终端或 Agent 环境中验证二进制：
 
 ```bash
 bsk --version
@@ -123,6 +127,10 @@ bsk install-skill
 
 用 <kbd>Space</kbd> 选择需要安装的 Agent harness，然后按 <kbd>Enter</kbd> 安装 skill。运行 `bsk install-skill --list` 可查看 internal 变体及安装路径。
 
+非交互安装时显式指定目标 harness，例如 `bsk install-skill --harness cursor --json`。
+即使未检测到该 harness，也可显式选择。单独使用 `--yes` 会安装到所有检测到的 harness，
+一个也未检测到时会报错。
+
 安装自定义指令可运行 `bsk install-skill --harness cursor --source ./SKILL.md`。
 显式指定 `--source` 的安装始终视为自定义，即使内容与内置 skill 相同。
 已有安装默认跳过，添加 `--force` 才会覆盖。
@@ -143,13 +151,50 @@ daemon 启动、`session start` 和 `doctor` 会检查已安装的 skill：只�
 
 其他支持 Shell 的 Agent harness 也可使用 BrowserSkill，但需手动将 [`skill/SKILL.md`](skill/SKILL.md) 复制到对应 skills 目录下的 `browser-skill/SKILL.md`。DeepSeek Harness 走独立插件，见 [DeepSeek Harness 插件](#deepseek-harness-插件)。
 
+#### 4. 验证连接
+
+运行 `bsk doctor` 并按提示处理，打开扩展弹窗确认已连接。测试浏览器操作前，说明警告并解决失败项。
+未安装任何 skill 时，doctor 仍可能通过（该项为 `N/A`）；skill 是否被发现需要单独验证。
+
 </details>
 
-启动一个新的 Agent 会话，写一条需要使用浏览器的 prompt，例如：
+启动一个新的 Agent 会话，确认 harness 中可用 `browser-skill`，再让它打开
+`https://example.com` 并总结页面。对于支持斜杠命令调用 skill 的 harness，例如：
 
 ```text
 /browser-skill open example.com and summarize what is on the page.
 ```
+
+首次使用验证应成功读取页面，并停止本次 BrowserSkill session。
+如果找不到 skill，先检查目标 harness 和安装路径，再重试。
+
+### 升级
+
+默认本地配置下，先结束正在执行的浏览器任务，再更新：
+
+```sh
+bsk update --yes
+```
+
+如果 Windows 提示更新已暂存（staged），请等待替换完成后再检查 `bsk --version`。
+
+该命令安装新版本时，会以默认启动配置重启正在运行的 daemon。
+如果通过安装脚本替换了二进制，则在任务结束后运行 `bsk daemon restart`，重启已有 daemon。
+
+对于自定义端口、宿主管理的沙盒 daemon 或远程服务器，先在所属宿主环境或进程管理器中停止 daemon，
+运行 `bsk update --yes --no-restart-daemon`，再以原有参数和 `BSK_HOME` 在那里启动。
+维护期间，在 Agent 命令中设置 `BSK_AUTO_START=0`；详见[沙盒](docs/sandboxed-agents.md)和
+[远程连接](docs/remote-extension-connection.md)配置说明。
+
+通过浏览器商店更新扩展；开发时加载的解压版本需要重新构建并重新加载。
+商店版本可能晚于 CLI 上线。使用 `bsk --version` 和 `bsk status` 核对 CLI、daemon 和扩展版本，
+再运行 `bsk doctor`。长截图等新功能需要匹配的版本。
+[DSH 插件需要单独更新](#deepseek-harness-插件)，并重启对应 profile。
+受管理的 CLI skill 会在 daemon 启动、`session start` 或 `doctor` 时同步；本地编辑和自定义 skill 会保留。
+启动新的 Agent 会话以加载更新后的指令。
+
+**升级到 0.3.0：** `--unattended`、`tab borrow --no-confirm` 和 `BSK_REQUEST_HELP=off`
+不再跳过确认或关闭人工协助。请在扩展中选择下文说明的对应设置。版本变化见[更新日志](CHANGELOG.md)。
 
 ### 自动化设置与无人值守
 

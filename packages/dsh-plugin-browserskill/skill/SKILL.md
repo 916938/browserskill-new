@@ -67,13 +67,12 @@ waits when no navigation is expected. After any page change, discard old refs an
 
 ## Respect the Agent Window boundary
 
-Use `browser_tabs` to list returned tab ids before selecting, closing, borrowing, or returning tabs.
-Borrow a user tab only for the immediate task, and return it as soon as that step is complete. Never
-invent a tab id or keep a personal tab borrowed across unrelated work.
+Use `browser_tabs` to list ids before acting; never guess. Borrow only for the immediate task and
+return promptly. Never bypass Automation settings or repeat denied/expired borrows; inspect unknown
+outcomes. Browser settings govern requests; update all components since old CLIs/daemons may end help locally.
 
-The extension enforces its Automation settings on received requests; old CLIs/daemons may end help locally.
-Update all components for full support.
-Do not change settings to bypass a prompt. Never repeat denied or expired borrows; inspect unknown outcomes.
+Remote content reads/actions require task-created or borrowed tabs; popups gain no control.
+An unowned tab inside the Agent Window needs the user to move it to a user window before borrowing.
 
 ## Ask the human when needed
 

@@ -177,6 +177,12 @@ its existing result. Do not repeat pending requests, denied requests, or confirm
 or switch to another browser tool to bypass them. If `reason` is `borrow_outcome_unknown`, inspect
 tab and session state before continuing; the tab may already have moved.
 
+Remote content reads and actions require task-created or borrowed tabs. Page-opened tabs
+(including OAuth popups) are not automatically controlled. An unowned tab inside the Agent Window
+must be moved to a user window by the user before it can be borrowed. Remote upload/download
+return `unsupported`; screenshots remain available. See the
+[remote connection guide](https://github.com/Tencent/BrowserSkill/blob/main/docs/remote-extension-connection.md#browser-permissions-and-task-lifetime).
+
 ## Ask the human when needed
 
 When human help is enabled (the default), use `bsk request-help` for login, captcha, OTP, payment
