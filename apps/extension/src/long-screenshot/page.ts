@@ -239,9 +239,13 @@ export function createPageCapture(onCancel: (id: string, reason: CaptureCancelRe
         controller.signal.addEventListener("abort", abort, { once: true });
       });
 
+    function measureRange(): PageMetrics {
+      const metrics = measure();
+      return { ...metrics, height: Math.min(metrics.height, limit) };
+    }
+
     function inspect(): PageMetrics {
-      const measured = measure();
-      const metrics = { ...measured, height: Math.min(measured.height, limit) };
+      const metrics = measureRange();
       const atBottom = metrics.y + metrics.viewportHeight >= metrics.height - 0.5;
       const now = performance.now();
       if (!atBottom || metrics.height !== lastHeight) bottomSince = now;
@@ -355,6 +359,7 @@ export function createPageCapture(onCancel: (id: string, reason: CaptureCancelRe
       id,
       finish,
       move,
+      measure: measureRange,
       inspect,
       touch,
       signal: controller.signal,
@@ -392,7 +397,7 @@ export function createPageCapture(onCancel: (id: string, reason: CaptureCancelRe
       if (request.action === "begin") {
         if (task && !task.signal.aborted) throw new ScreenshotError("busy");
         task = prepare(request.id, request.label, request.cancelLabel, request.scope);
-        return measure();
+        return task.measure();
       }
       if (!task || task.id !== request.id) throw new ScreenshotError("interrupted");
       if (request.action === "finish") {

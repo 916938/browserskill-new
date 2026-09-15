@@ -58,7 +58,7 @@ describe.skipIf(!process.env.BSK_LONG_SCREENSHOT_RENDERER)(
         globalThis.nextShot = null;
         globalThis.captureTrace = [];
         globalThis.runCapture = () => {
-          capturePage({scope:${JSON.stringify(current ? "current" : "follow")},signal:abort.signal,label:'Capturing',cancelLabel:'Cancel',progress:()=>{},
+          capturePage({checkFreshness:true,scope:${JSON.stringify(current ? "current" : "follow")},signal:abort.signal,label:'Capturing',cancelLabel:'Cancel',progress:()=>{},
             write:(...args)=>writer.write(...args),
             page:async command=>{const metrics=await page.handle({type:'bsk/long-screenshot-page',id:'pixel-test',...command});
               captureTrace.push({command,metrics});if(captureTrace.length>8)captureTrace.shift();return metrics;},

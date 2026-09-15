@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { capturePage } from "@/long-screenshot/capture";
 import { ScreenshotExports } from "@/long-screenshot/exports";
 import { exportPng } from "@/long-screenshot/png";
+import { openScreenshotSource } from "@/long-screenshot/source";
 import { SessionManager } from "@/session-manager/manager";
 import { handleFullPageScreenshot } from "../screenshot-full-page";
 
@@ -10,7 +11,7 @@ vi.mock("@/long-screenshot/page-client", () => ({
 }));
 vi.mock("@/long-screenshot/capture", () => ({ capturePage: vi.fn(async () => {}) }));
 vi.mock("@/long-screenshot/source", () => ({
-  openScreenshotSource: async () => ({ capture: vi.fn(), close: async () => {} }),
+  openScreenshotSource: vi.fn(async () => ({ capture: vi.fn(), close: async () => {} })),
 }));
 vi.mock("@/long-screenshot/tiles", () => ({
   TileWriter: class {
@@ -181,14 +182,20 @@ describe("full-page screenshot overlay cleanup", () => {
 });
 
 describe("full-page scope and diagnostics", () => {
-  it("acknowledges the selected range and prefers renderer screenshots", async () => {
+  it("acknowledges the selected range and forwards source-specific validation", async () => {
     const { manager, deps } = await setupCapture();
+    vi.mocked(openScreenshotSource).mockResolvedValueOnce({
+      capture: vi.fn(),
+      close: async () => {},
+      checkFreshness: true,
+    });
     expect(
       await handleFullPageScreenshot(manager, { session_id: "one", scope: "current" }, deps),
     ).toMatchObject({ scope: "current" });
     expect(vi.mocked(capturePage).mock.calls.at(-1)?.[0]).toMatchObject({
       scope: "current",
       loadingTimeoutMs: 30000,
+      checkFreshness: true,
     });
     await deps.exports.dispose();
   });

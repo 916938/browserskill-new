@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { capturePage, sameLayout, sliceForFrame } from "./capture";
-import { isStaleFrame } from "./frame-freshness";
+import { frameSignature, isStaleFrame } from "./frame-freshness";
 import { type PageCommand, type PageMetrics, ScreenshotError } from "./types";
 
 vi.mock("./frame-freshness", () => ({
@@ -23,6 +23,7 @@ const metrics: PageMetrics = {
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.mocked(isStaleFrame).mockReset();
+  vi.mocked(frameSignature).mockClear();
 });
 
 describe("long screenshot stitching", () => {
@@ -80,6 +81,7 @@ function harness() {
     screenshot,
     write: draw,
     signal: controller.signal,
+    checkFreshness: true,
     progress: vi.fn(),
     label: "Capture",
     cancelLabel: "Cancel",
@@ -201,6 +203,36 @@ describe("capture lifecycle", () => {
 });
 
 describe("capture recovery", () => {
+  it("keeps frame validation opt-in for existing callers", async () => {
+    const h = harness();
+    vi.mocked(isStaleFrame).mockReturnValue(true);
+    const { checkFreshness: _, ...deps } = h.deps;
+    await expect(capturePage(deps)).resolves.toEqual({ width: 1600, height: 5002 });
+    expect(frameSignature).not.toHaveBeenCalled();
+    expect(isStaleFrame).not.toHaveBeenCalled();
+  });
+  it.each([
+    { mismatches: [2, 3], stale: 1 },
+    { mismatches: [4], stale: 2 },
+  ])("does not combine layout mismatches $mismatches with $stale stale exposures", async ({
+    mismatches,
+    stale,
+  }) => {
+    const h = harness();
+    const page = h.deps.page;
+    let inspections = 0;
+    h.deps.page = vi.fn(async (command) => {
+      const metrics = await page(command);
+      if (command.action === "inspect" && mismatches.includes(++inspections))
+        return { ...metrics, x: metrics.x + 1 };
+      return metrics;
+    });
+    for (let i = 0; i < stale; i++) vi.mocked(isStaleFrame).mockReturnValueOnce(true);
+    vi.mocked(isStaleFrame).mockReturnValue(false);
+    await expect(capturePage(h.deps)).resolves.toEqual({ width: 1600, height: 5002 });
+    expect(h.commands.at(-1)).toEqual({ action: "finish" });
+  });
+
   it("never writes a stale frame and stops after three exposures", async () => {
     const h = harness();
     vi.mocked(isStaleFrame).mockReturnValue(true);

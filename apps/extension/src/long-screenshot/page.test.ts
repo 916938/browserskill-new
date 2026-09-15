@@ -208,6 +208,22 @@ describe("page capture cleanup", () => {
     await first;
     expect(await send({ action: "inspect" })).toMatchObject({ bottomReady: true });
   });
+  it("caps begin metrics even when preparation changes the document height", async () => {
+    let reads = 0;
+    Object.defineProperty(document.documentElement, "scrollHeight", {
+      configurable: true,
+      get: () => (reads++ === 0 ? 2400 : 3400),
+    });
+    const begin = await send({
+      action: "begin",
+      scope: "current",
+      label: "Capture",
+      cancelLabel: "Cancel",
+    });
+    expect(document.documentElement.scrollHeight).toBe(3400);
+    expect(begin.height).toBe(2400);
+    expect((await send({ action: "inspect" })).height).toBe(begin.height);
+  });
   it("captures the initial range despite appended height and a persistent loader", async () => {
     const loader = document.createElement("span");
     loader.textContent = "加载中...";

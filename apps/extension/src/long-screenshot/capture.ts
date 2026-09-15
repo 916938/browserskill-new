@@ -58,6 +58,7 @@ export interface CaptureDeps {
   finished?(): boolean;
   scope?: CaptureScope;
   loadingTimeoutMs?: number;
+  checkFreshness?: boolean;
   label: string;
   cancelLabel: string;
 }
@@ -90,7 +91,8 @@ export async function capturePage(deps: CaptureDeps) {
     let repairThrough = 0;
     deps.prepared?.();
     let y = 0;
-    let failures = 0;
+    let layoutFailures = 0;
+    let staleFailures = 0;
     let final = false;
     while (true) {
       await checkpoint();
@@ -137,9 +139,11 @@ export async function capturePage(deps: CaptureDeps) {
         const after = await page({ action: "inspect" });
         if (final && after.bottomReady === false) continue;
         if (!sameLayout(metrics, after)) {
-          if (++failures >= 3) throw new ScreenshotError("changed");
+          staleFailures = 0;
+          if (++layoutFailures >= 3) throw new ScreenshotError("changed");
           continue;
         }
+        layoutFailures = 0;
         if (!frames) {
           scale = bitmap.width / metrics.innerWidth;
           width = Math.round(metrics.viewportWidth * scale);
@@ -149,8 +153,9 @@ export async function capturePage(deps: CaptureDeps) {
           Math.abs(bitmap.height - metrics.innerHeight * scale) > 1
         )
           throw new ScreenshotError("changed");
-        const pixels = frameSignature(bitmap);
+        const pixels = deps.checkFreshness ? frameSignature(bitmap) : undefined;
         if (
+          pixels &&
           previousFrame &&
           isStaleFrame(
             previousFrame.pixels,
@@ -158,10 +163,10 @@ export async function capturePage(deps: CaptureDeps) {
             Math.round((metrics.y - previousFrame.y) * scale),
           )
         ) {
-          if (++failures >= 3) throw new ScreenshotError("captureFailed", "stale_frame");
+          if (++staleFailures >= 3) throw new ScreenshotError("captureFailed", "stale_frame");
           continue;
         }
-        failures = 0;
+        staleFailures = 0;
         const slice = sliceForFrame(metrics, covered, scale);
         if (slice.sourceY < 0 || slice.sourceY + slice.height > bitmap.height || slice.height < 0)
           throw new ScreenshotError("changed");
@@ -170,7 +175,7 @@ export async function capturePage(deps: CaptureDeps) {
           covered = slice.end;
           frames++;
         }
-        previousFrame = { y: metrics.y, pixels };
+        if (pixels) previousFrame = { y: metrics.y, pixels };
         progress("capturing", Math.min(99, Math.round((covered / metrics.height) * 100)), frames);
       } finally {
         bitmap.close();

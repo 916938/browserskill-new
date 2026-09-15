@@ -46,12 +46,17 @@ row remains visible. Success means the selected range was captured, not that the
 website finished loading. JSON results include the acknowledged `scope`; the CLI
 refuses to save a `current` request if an older extension does not acknowledge it.
 
-Agent captures use their session's renderer screenshot source to avoid stale
-window-surface pixels after script-driven scrolling. Automatic capture checks
-small frame signatures against the measured displacement and retries a clearly
-stale frame twice before failing with `stale_frame`. Blank or ambiguous content
-alone does not trigger this error. Screenshot backends never switch midway through
-an image; the existing popup backend selection is unchanged.
+On Windows, Agent captures prefer their session's renderer screenshot source to
+avoid stale window-surface pixels seen after script-driven scrolling on some builds.
+Those captures also check compact frame signatures against the measured displacement
+and retry a clearly stale frame twice before failing with `stale_frame`. Blank or
+ambiguous content alone does not trigger this error. Layout and stale-frame retries
+have separate consecutive-failure counters.
+
+On other platforms, Agent captures retain a working window-surface source and fall
+back to their session renderer only if the initial probe fails. Popup captures keep
+their existing backend selection and do not enable the Agent freshness check.
+Screenshot backends never switch midway through an image.
 
 In Agent `follow` mode, 30 seconds at an unchanged bottom with a rendered loading
 indicator produces `loading_stalled`, rather than waiting until the total deadline.

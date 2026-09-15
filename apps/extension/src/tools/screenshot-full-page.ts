@@ -208,6 +208,7 @@ export async function handleFullPageScreenshot(
           write: (...args) => writer.write(...args, controller.signal),
           scope: params.scope,
           loadingTimeoutMs: 30_000,
+          checkFreshness: source.checkFreshness,
           progress: (_phase, value, count) => {
             progress = value;
             frames = count;
