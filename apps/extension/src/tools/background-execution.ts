@@ -59,8 +59,16 @@ export async function prepareBackgroundExecution(
     : resolveTargetTab(manager, ctx, params.tab_id, tabs));
   if (isRpcError(target)) return target;
   request.params = { ...params, tab_id: target.tabId };
+  // Navigation owns preparation: an inaccessible source document must still
+  // be able to leave through browser navigation before CDP becomes available.
+  if (
+    ["tool.navigate", "tool.reload", "tool.navigate_back", "tool.navigate_forward"].includes(
+      request.method,
+    )
+  )
+    return;
   if (!isAgentControlledTab(ctx, target.tabId) || target.windowId !== ctx.agentWindowId) return;
-  // Preserve existing browser-internal navigation recovery; these are not web pages.
+  // Other page tools cannot establish execution on browser-internal documents.
   if (cdpBlockedUrlReason(target.url)) return;
   if (signal.aborted) return { code: "cancelled", message: "Background execution setup cancelled" };
   try {

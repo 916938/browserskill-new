@@ -526,7 +526,9 @@ export class ToolDispatcher {
             handleNavigate(
               this.sessions,
               req.params as NavigateParams,
-              this.cdp ? { cdp: this.cdp, tabsApi: chromeTabsApi, signal } : undefined,
+              this.cdp
+                ? { cdp: this.cdp, tabsApi: chromeTabsApi, signal, backgroundExecution: true }
+                : undefined,
             ),
           signal,
         );
@@ -537,7 +539,9 @@ export class ToolDispatcher {
             handleNavigateBack(
               this.sessions,
               req.params as NavigateBackParams,
-              this.cdp ? { cdp: this.cdp, tabsApi: chromeTabsApi, signal } : undefined,
+              this.cdp
+                ? { cdp: this.cdp, tabsApi: chromeTabsApi, signal, backgroundExecution: true }
+                : undefined,
             ),
           signal,
         );
@@ -548,7 +552,9 @@ export class ToolDispatcher {
             handleNavigateForward(
               this.sessions,
               req.params as NavigateForwardParams,
-              this.cdp ? { cdp: this.cdp, tabsApi: chromeTabsApi, signal } : undefined,
+              this.cdp
+                ? { cdp: this.cdp, tabsApi: chromeTabsApi, signal, backgroundExecution: true }
+                : undefined,
             ),
           signal,
         );
@@ -559,7 +565,9 @@ export class ToolDispatcher {
             handleReload(
               this.sessions,
               req.params as ReloadParams,
-              this.cdp ? { cdp: this.cdp, tabsApi: chromeTabsApi, signal } : undefined,
+              this.cdp
+                ? { cdp: this.cdp, tabsApi: chromeTabsApi, signal, backgroundExecution: true }
+                : undefined,
             ),
           signal,
         );

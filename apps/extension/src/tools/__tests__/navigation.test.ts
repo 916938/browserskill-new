@@ -644,3 +644,69 @@ describe("handleReload", () => {
     expect(reloadCall?.params).toEqual({ ignoreCache: true });
   });
 });
+
+it.each([
+  "load",
+  "networkidle",
+] as const)("follows client document succession for %s instead of the initial loader", async (phase) => {
+  const manager = new SessionManager({ agentWindow: fakeAgentWindow([100]) });
+  await manager.start("aa11");
+  const fake = makeFakeCdp();
+  let settled = false;
+  const work = handleNavigate(
+    manager,
+    { session_id: "aa11", url: "https://example.com/", wait_until: phase },
+    { cdp: fake.cdp, tabsApi: fake.tabsApi },
+  ).then((result) => {
+    settled = true;
+    return result;
+  });
+  await vi.waitFor(() => expect(fake.sent.some((s) => s.method === "Page.navigate")).toBe(true));
+  fake.fireFrameNavigated();
+  for (const listener of [...fake.listeners])
+    listener({ tabId: 4 }, "Page.frameRequestedNavigation", {
+      frameId: "frame-1",
+      disposition: "currentTab",
+    });
+  fake.fireLifecycle(phase === "load" ? "load" : "networkIdle");
+  await Promise.resolve();
+  expect(settled).toBe(false);
+  fake.fireFrameNavigated("frame-1", "second-loader");
+  fake.fireLifecycle(phase === "load" ? "load" : "networkIdle", "frame-1", "loader-after");
+  await Promise.resolve();
+  expect(settled).toBe(false);
+  fake.fireLifecycle(phase === "load" ? "load" : "networkIdle", "frame-1", "second-loader");
+  expect(await work).toMatchObject({ reached: phase });
+  expect(fake.listeners).toHaveLength(0);
+});
+
+it("does not overwrite a successor observed before Page.navigate resolves with its initial loader", async () => {
+  const manager = new SessionManager({ agentWindow: fakeAgentWindow([100]) });
+  await manager.start("aa11");
+  const fake = makeFakeCdp();
+  const send = fake.cdp.send.bind(fake.cdp);
+  fake.cdp.send = (async (tabId, method, params) => {
+    const result = await send(tabId, method, params);
+    if (method === "Page.navigate") {
+      fake.fireFrameNavigated();
+      for (const listener of [...fake.listeners])
+        listener({ tabId: 4 }, "Page.frameRequestedNavigation", {
+          frameId: "frame-1",
+          disposition: "currentTab",
+        });
+      fake.fireLifecycle("load");
+      expect(fake.listeners.length).toBeGreaterThan(0);
+      fake.fireFrameNavigated("frame-1", "second-loader");
+      fake.fireLifecycle("load", "frame-1", "second-loader");
+    }
+    return result;
+  }) as CdpRunner["send"];
+  expect(
+    await handleNavigate(
+      manager,
+      { session_id: "aa11", url: "https://example.com/", timeout_ms: 100 },
+      { cdp: fake.cdp, tabsApi: fake.tabsApi },
+    ),
+  ).toMatchObject({ reached: "load" });
+  expect(fake.listeners).toHaveLength(0);
+});

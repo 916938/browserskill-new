@@ -35,7 +35,6 @@ describe("background execution request boundary", () => {
     "tool.snapshot",
     "tool.observe",
     "tool.click",
-    "tool.navigate",
     "tool.wait_for_navigation",
   ])("prepares an explicit inactive controlled target before %s", async (method) => {
     const f = await fixture();
@@ -46,6 +45,29 @@ describe("background execution request boundary", () => {
     ).toBeUndefined();
     expect(f.cdp.acquireBackgroundExecution).toHaveBeenCalledWith("agent", 7);
     expect(f.tabs.query).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "tool.navigate",
+    "tool.reload",
+    "tool.navigate_back",
+    "tool.navigate_forward",
+  ])("pins %s but delegates preparation to the navigation handler", async (method) => {
+    const f = await fixture();
+    f.ctx.agentCreatedTabs.add(7);
+    f.cdp.acquireBackgroundExecution.mockRejectedValue(new Error("access denied"));
+    const request = { id: "r", method, params: { session_id: "agent", tab_id: 7 } };
+    expect(
+      await prepareBackgroundExecution(
+        f.manager,
+        request,
+        f.cdp,
+        f.tabs,
+        new AbortController().signal,
+      ),
+    ).toBeUndefined();
+    expect(request.params.tab_id).toBe(7);
+    expect(f.cdp.acquireBackgroundExecution).not.toHaveBeenCalled();
   });
 
   it("does not infer control from same-window passive access", async () => {
