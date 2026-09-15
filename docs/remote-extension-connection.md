@@ -58,7 +58,7 @@ bsk daemon revoke DEVICE_ID
 bsk daemon revoke --all
 ```
 
-`devices` includes device and browser IDs, label and expiration, never credentials. `revoke --all` also invalidates unused pairing links. Revocation closes existing connections as well as rejecting new ones. The server checks grants before processing messages and polls idle connections once per second. Actions already performed on a page cannot be undone by revocation.
+`devices` includes device and browser IDs, label and expiration, never credentials. `revoke --all` also invalidates unused pairing links. Revocation closes existing connections as well as rejecting new ones. Active and idle connections check persisted grants on a one-second polling interval; message handling only checks in-memory cancellation state. Disk checks run outside the asynchronous executor and read atomically published snapshots without acquiring the writer lock. A failed grant read closes the connection. Authorization writes wait at most 500 ms for the writer lock; contention returns a retryable HTTP 503 instead of invalidating a valid connection. Revocation normally takes effect on the next check, subject to scheduling and storage latency; actions already performed on a page cannot be undone.
 
 Defaults are configurable at server startup:
 
@@ -67,8 +67,14 @@ Defaults are configurable at server startup:
 | `--pairing-ttl` | `5m` | One-use pairing lifetime, at most one hour |
 | `--device-ttl` | `90d` | Device lifetime from pairing or successful renewal, at most 366 days |
 | `--renew-after` | `30d` | Time before the extension should renew; must be less than device lifetime |
+| `--max-connections` | `64` | Online browser capacity, between 1 and 1000; existing devices can replace their connections at capacity |
+| `--authorize-rate-limit` | `60` | Pairing/renewal requests per minute per peer IP, between 1 and 60000 |
 
-The extension checks for renewal on startup and periodically while running. If it remains offline past expiration, create a new pairing link. A renewal rotates the credential; its pending replacement is persisted before the request so a lost response can be retried after a service-worker or server restart. Changing lifetime flags affects subsequent exchanges, not grants already issued.
+Browser connections use separate capacity from pairing and renewal requests. A new browser exceeding the configured capacity receives HTTP 503 with `Retry-After`. The server also bounds concurrent TCP/TLS/HTTP setup to 64 connections; overload at that earlier stage drops new connections and emits a rate-limited warning. Ordinary HTTP responses close their connections so idle keep-alive clients cannot retain setup capacity.
+
+Authorization exchanges return HTTP 429 with `Retry-After` when rate-limited. The server retains at most 1024 peer counters; additional peers share a bounded overflow allowance instead of evicting existing counters. A global budget of 16 times the configured per-peer rate limits total exchange requests. These limits bound work, but do not guarantee availability during a sustained distributed attack.
+
+The extension checks for renewal on startup and periodically while a remote connection is selected. Local mode has no renewal alarm. The popup shows the authorization expiry and reports renewal failures or a need to pair again. Temporary failures preserve the current credential and retry no more than once per minute. If it remains offline past expiration, create a new pairing link. A renewal rotates the credential; its pending replacement is persisted before the request so a lost response can be retried after a service-worker or server restart, even if the old locally recorded expiry has passed. The popup distinguishes that unconfirmed renewal from a known expired grant. Changing lifetime flags affects subsequent exchanges, not grants already issued.
 
 ## TLS reverse proxy
 
@@ -80,6 +86,8 @@ bsk daemon start --mode server --listen 127.0.0.1 --port 52800 \
 ```
 
 Forward both `/extension` and `/extension/authorize` to `127.0.0.1:52800`, preserving the path and WebSocket upgrade headers. Preserve `Origin`, `Authorization` and `Sec-WebSocket-Protocol`. Never log authorization headers, WebSocket subprotocol values or request bodies. Do not pass credentials in query strings. The built-in server remains responsible for authentication; proxy-injected user headers do not bypass it.
+
+Behind a reverse proxy, the server sees the proxy's IP, so its per-peer authorization rate is shared by the proxied clients. Configure per-client rate limits at the proxy and size `--authorize-rate-limit` for the expected aggregate traffic. The server does not trust `X-Forwarded-For` or other client-IP headers.
 
 Without native TLS, the listener must be on loopback. Plain `ws://` public URLs are allowed only for loopback development. Non-loopback browser connections require WSS. Changing the configured public URL requires revoking existing grants and generating new pairing links.
 
@@ -102,11 +110,13 @@ Pair only with a server you trust to operate your browser. A paired server can c
 
 Remote content reads, screenshots, recording and page operations require a tab explicitly created or borrowed by the task. Listing tab titles and URLs remains available to select a tab to borrow. A user tab moved or opened inside an Agent Window does not by itself become authorized. Borrowing uses the existing browser-controlled confirmation preference; remote request flags cannot change that preference. After a borrowed tab is returned, remote content access ends. Returning a tab during remote recording cancels that recording before releasing the tab.
 
+This also applies to tabs or windows opened by a page through `target="_blank"`, `window.open`, or an OAuth flow. An opener relationship does not grant control. If such a tab is already inside the Agent Window, it cannot be borrowed in place: the browser user must first move it to a regular browser window, then the Agent can use the ordinary borrow flow. Tabs explicitly created through `bsk tab create` are controlled immediately. Automatic popup authorization is outside this version's scope.
+
 Disconnecting cancels task work, returns borrowed tabs and closes task-created tabs. User-created tabs survive cleanup. Failed returns preserve the window and must be resolved before reconnecting. Reconnection starts new tasks; commands and sessions are never replayed. Failed remote authentication does not select a local connection automatically.
 
 Remote upload and download are unsupported in this version and return the `unsupported` error. Existing local file transfer behavior is unchanged. Screenshots and other existing RPC content results remain supported. There is no gateway preview or focus side protocol, background task tab group, or alternative window model.
 
-Device credentials live in extension-origin IndexedDB; only a non-secret revision is published in ordinary extension settings. The standalone server persists hashed credentials with private file permissions and atomic writes. Treat the whole browser profile and `BSK_HOME` as trusted local data. Protect TLS private keys separately.
+Device credentials live in extension-origin IndexedDB; ordinary extension settings contain only the selected connection mode and a non-secret revision. Fresh local profiles and explicitly selected local mode do not read that credential database. If remote storage fails, the popup reports the error and the extension does not fall back automatically. Explicitly selecting the local connection can recover startup even when the credential database is unavailable. Legacy remote settings still migrate before ordinary settings access is restored. The standalone server persists hashed credentials with private file permissions and atomic writes. Treat the whole browser profile and `BSK_HOME` as trusted local data. Protect TLS private keys separately.
 
 ## Validation
 
@@ -122,4 +132,4 @@ BSK_REMOTE_CHROME=/absolute/path/to/chrome-for-testing \
   pnpm --filter @browser-skill/extension test src/transport/__tests__/remote-connection.browser.test.ts
 ```
 
-The remote server integration tests cover credential exchange, rotation retries, stable device routing, replacement connections, revocation and native TLS. TLS fixtures contain a test-only private key and must never be used for deployment.
+The remote server integration tests cover credential exchange, rotation retries, stable device routing, replacement connections, revocation, connection capacity, file-lock contention and native TLS. Unit tests additionally cover rate-limit saturation, unavailable extension storage, local recovery, renewal retry frequency and popup authorization states. TLS fixtures contain a test-only private key and must never be used for deployment.

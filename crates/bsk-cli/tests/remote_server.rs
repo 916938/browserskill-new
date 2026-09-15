@@ -1,5 +1,7 @@
 //! Standalone server tests use child processes and private homes, never the installed daemon.
-use bsk::daemon::remote::authorization::{AuthorizationResponse, AuthorizationStore};
+use bsk::daemon::remote::authorization::{
+    AuthorizationRequest, AuthorizationResponse, AuthorizationStore,
+};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
 use std::{
@@ -27,6 +29,9 @@ impl Drop for Server {
 }
 impl Server {
     async fn start(tls: bool) -> Self {
+        Self::with_args(tls, &[]).await
+    }
+    async fn with_args(tls: bool, args: &[&str]) -> Self {
         let home = tempfile::tempdir().unwrap();
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
@@ -47,6 +52,7 @@ impl Server {
             "--public-url",
             &url,
         ]);
+        command.args(args);
         if tls {
             let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/remote-tls");
             command
@@ -85,6 +91,19 @@ impl Server {
             String::from_utf8_lossy(&output.stderr)
         );
         String::from_utf8(output.stdout).unwrap().trim().into()
+    }
+    fn logs(&self) -> String {
+        std::fs::read_dir(self.home.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("daemon.log")
+            })
+            .filter_map(|entry| std::fs::read_to_string(entry.path()).ok())
+            .collect()
     }
     fn url(&self) -> String {
         format!(
@@ -139,6 +158,194 @@ impl Server {
         );
         request
     }
+}
+
+#[tokio::test]
+async fn browser_capacity_does_not_block_renewal_or_replacement() {
+    let server = Server::with_args(false, &["--max-connections", "1"]).await;
+    let first = "a".repeat(43);
+    let second = "b".repeat(43);
+    for token in [&first, &second] {
+        let link = server.command(&["daemon", "pair"]);
+        assert_eq!(
+            server
+                .exchange(link.rsplit_once('#').unwrap().1, "pair", token)
+                .await
+                .status(),
+            200
+        );
+    }
+    let (mut ws, _) = tokio_tungstenite::connect_async(server.request(&first, ORIGIN))
+        .await
+        .unwrap();
+    // An authenticated socket stalled before the native handshake must also
+    // be replaceable, without retaining a second device capacity slot.
+    let (mut stalled, _) = tokio_tungstenite::connect_async(server.request(&first, ORIGIN))
+        .await
+        .unwrap();
+    closed(&mut ws).await;
+    let (mut ws, _) = tokio_tungstenite::connect_async(server.request(&first, ORIGIN))
+        .await
+        .unwrap();
+    closed(&mut stalled).await;
+    handshake(&mut ws, "first").await;
+    let error = tokio_tungstenite::connect_async(server.request(&second, ORIGIN))
+        .await
+        .unwrap_err();
+    let tokio_tungstenite::tungstenite::Error::Http(response) = error else {
+        panic!("expected an HTTP capacity response");
+    };
+    assert_eq!(response.status(), 503);
+    assert_eq!(response.headers()["retry-after"], "5");
+    let renewed = "c".repeat(43);
+    assert_eq!(
+        server.exchange(&first, "renew", &renewed).await.status(),
+        200
+    );
+    let (mut replacement, _) = tokio_tungstenite::connect_async(server.request(&renewed, ORIGIN))
+        .await
+        .unwrap();
+    handshake(&mut replacement, "replacement").await;
+    closed(&mut ws).await;
+    let store = AuthorizationStore::at_home(server.home.path());
+    server.command(&[
+        "daemon",
+        "revoke",
+        &store.authenticate(&renewed).unwrap().device_id,
+    ]);
+    closed(&mut replacement).await;
+    let (mut ws, _) = tokio_tungstenite::connect_async(server.request(&second, ORIGIN))
+        .await
+        .unwrap();
+    handshake(&mut ws, "second").await;
+}
+
+#[tokio::test]
+async fn authorization_file_contention_does_not_block_socket_messages() {
+    use fs2::FileExt;
+    let server = Server::start(false).await;
+    let link = server.command(&["daemon", "pair"]);
+    let token = "d".repeat(43);
+    assert_eq!(
+        server
+            .exchange(link.rsplit_once('#').unwrap().1, "pair", &token)
+            .await
+            .status(),
+        200
+    );
+    let (mut ws, _) = tokio_tungstenite::connect_async(server.request(&token, ORIGIN))
+        .await
+        .unwrap();
+    handshake(&mut ws, "contention").await;
+    let lock = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(server.home.path().join("remote-authorization.lock"))
+        .unwrap();
+    lock.lock_exclusive().unwrap();
+    ws.send(Message::Ping(vec![1, 2, 3])).await.unwrap();
+    let message = tokio::time::timeout(Duration::from_millis(300), ws.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert_eq!(message, Message::Pong(vec![1, 2, 3]));
+    // Pending durable writes must not revoke an otherwise valid snapshot.
+    // Exchanges fail promptly as retryable service errors, not invalid credentials.
+    for _ in 0..2 {
+        let response = server.exchange(&token, "renew", &"e".repeat(43)).await;
+        assert_eq!(response.status(), 503);
+        assert_eq!(response.headers()["retry-after"], "1");
+        ws.send(Message::Ping(vec![4])).await.unwrap();
+        let message = tokio::time::timeout(Duration::from_millis(300), ws.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert_eq!(message, Message::Pong(vec![4]));
+    }
+    drop(lock);
+    server.command(&["daemon", "revoke", "--all"]);
+    closed(&mut ws).await;
+}
+
+#[tokio::test]
+async fn sixty_four_online_browsers_leave_http_exchange_capacity_available() {
+    let server = Server::start(false).await;
+    let store = AuthorizationStore::at_home(server.home.path());
+    let mut sockets = Vec::new();
+    for id in 1..=64 {
+        let token = format!("{id:043}");
+        let link = store.pair().unwrap();
+        store
+            .exchange(
+                link.rsplit_once('#').unwrap().1,
+                AuthorizationRequest {
+                    action: "pair".into(),
+                    next_token: token.clone(),
+                    label: "Capacity test".into(),
+                },
+            )
+            .unwrap();
+        let (mut socket, _) = tokio_tungstenite::connect_async(server.request(&token, ORIGIN))
+            .await
+            .unwrap();
+        handshake(&mut socket, "capacity").await;
+        sockets.push(socket);
+    }
+    assert_eq!(
+        server
+            .exchange(&format!("{:043}", 1), "renew", &"z".repeat(43))
+            .await
+            .status(),
+        200
+    );
+    let link = server.command(&["daemon", "pair"]);
+    assert_eq!(
+        server
+            .exchange(link.rsplit_once('#').unwrap().1, "pair", &"y".repeat(43))
+            .await
+            .status(),
+        200
+    );
+    let result = tokio_tungstenite::connect_async(server.request(&"y".repeat(43), ORIGIN)).await;
+    let Err(tokio_tungstenite::tungstenite::Error::Http(response)) = result else {
+        let diagnostics = server
+            .logs()
+            .lines()
+            .filter(|line| line.contains("WARN") || line.contains("disconnected"))
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+            .join("\n");
+        panic!("expected an HTTP capacity response; server diagnostics:\n{diagnostics}");
+    };
+    assert_eq!(response.status(), 503);
+}
+
+#[tokio::test]
+async fn configured_peer_rate_limit_returns_retry_after_and_ignores_forwarded_addresses() {
+    let server = Server::with_args(false, &["--authorize-rate-limit", "1"]).await;
+    let link = server.command(&["daemon", "pair"]);
+    let token = "p".repeat(43);
+    assert_eq!(
+        server
+            .exchange(link.rsplit_once('#').unwrap().1, "pair", &token)
+            .await
+            .status(),
+        200
+    );
+    let response = server
+        .client()
+        .post(server.http_url())
+        .header("x-forwarded-for", "203.0.113.1")
+        .bearer_auth(&token)
+        .header("content-type", "application/json")
+        .body(json!({"action": "renew", "next_token": "q".repeat(43)}).to_string())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 429);
+    assert_eq!(response.headers()["retry-after"], "60");
 }
 fn cli(home: &Path) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_bsk"));

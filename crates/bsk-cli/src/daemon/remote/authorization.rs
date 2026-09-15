@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail, ensure};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
@@ -104,6 +105,11 @@ impl AuthorizationStore {
     }
 
     fn transaction<T>(&self, write: bool, work: impl FnOnce(&mut State) -> Result<T>) -> Result<T> {
+        // Writers publish complete snapshots using atomic replacement. Readers
+        // can safely open either snapshot without contending with durable writes.
+        if !write {
+            return work(&mut self.read_state()?);
+        }
         let parent = self
             .path
             .parent()
@@ -119,8 +125,37 @@ impl AuthorizationStore {
             use std::os::unix::fs::PermissionsExt;
             lock.set_permissions(fs::Permissions::from_mode(0o600))?;
         }
-        lock.lock_exclusive()?;
-        let mut state: State = match fs::read(&self.path) {
+        // All callers, including blocking tasks cancelled by a disconnected
+        // client, must eventually release their thread rather than wait forever.
+        let deadline = Instant::now() + Duration::from_millis(500);
+        loop {
+            match FileExt::try_lock_exclusive(&lock) {
+                Ok(()) => break,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    if Instant::now() >= deadline {
+                        return Err(error).context("authorization store is busy");
+                    }
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(error) => return Err(error.into()),
+            }
+        }
+        let mut state = self.read_state()?;
+        let result = work(&mut state)?;
+        state.version = 1;
+        let mut file = tempfile::NamedTempFile::new_in(parent)?;
+        serde_json::to_writer(file.as_file_mut(), &state)?;
+        file.as_file_mut().flush()?;
+        file.as_file().sync_all()?;
+        file.persist(&self.path).map_err(|err| err.error)?;
+        if let Ok(directory) = fs::File::open(parent) {
+            let _ = directory.sync_all();
+        }
+        Ok(result)
+    }
+
+    fn read_state(&self) -> Result<State> {
+        let state: State = match fs::read(&self.path) {
             Ok(bytes) => serde_json::from_slice(&bytes).context("invalid authorization store")?,
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => State::default(),
             Err(err) => return Err(err.into()),
@@ -129,19 +164,7 @@ impl AuthorizationStore {
             state.version <= 1,
             "unsupported authorization store version"
         );
-        let result = work(&mut state)?;
-        if write {
-            state.version = 1;
-            let mut file = tempfile::NamedTempFile::new_in(parent)?;
-            serde_json::to_writer(file.as_file_mut(), &state)?;
-            file.as_file_mut().flush()?;
-            file.as_file().sync_all()?;
-            file.persist(&self.path).map_err(|err| err.error)?;
-            if let Ok(directory) = fs::File::open(parent) {
-                let _ = directory.sync_all();
-            }
-        }
-        Ok(result)
+        Ok(state)
     }
 
     pub fn configure(&self, config: &ServerConfig) -> Result<()> {
@@ -326,7 +349,10 @@ impl AuthorizationStore {
                 .get(device_id)
                 .is_some_and(|device| device.expires_at > now()))
         })
-        .unwrap_or(false)
+        .unwrap_or_else(|error| {
+            tracing::warn!(%error, "could not check persisted browser authorization");
+            false
+        })
     }
 }
 
@@ -347,6 +373,8 @@ mod tests {
                 pairing_ttl: Duration::from_secs(300),
                 device_ttl: Duration::from_secs(90 * 86400),
                 renew_after: Duration::from_secs(30 * 86400),
+                max_connections: 64,
+                authorize_rate_limit: 60,
             })
             .unwrap();
         (home, store)

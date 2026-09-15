@@ -440,12 +440,13 @@ describe("control hints toggle", () => {
       runtime: { lastError: undefined },
       storage: {
         local: {
-          get: (keys: string | string[], cb: (items: Record<string, unknown>) => void) => {
+          get: (keys: string | string[], cb?: (items: Record<string, unknown>) => void) => {
             const items: Record<string, unknown> = {};
             for (const k of Array.isArray(keys) ? keys : [keys]) {
               if (k in store) items[k] = store[k];
             }
-            cb(items);
+            cb?.(items);
+            return Promise.resolve(items);
           },
           set: (items: Record<string, unknown>, cb?: () => void) => {
             Object.assign(store, items);
@@ -537,12 +538,13 @@ describe("daemon port input", () => {
       runtime: { lastError: undefined },
       storage: {
         local: {
-          get: (keys: string | string[], cb: (items: Record<string, unknown>) => void) => {
+          get: (keys: string | string[], cb?: (items: Record<string, unknown>) => void) => {
             const items: Record<string, unknown> = {};
             for (const k of Array.isArray(keys) ? keys : [keys]) {
               if (k in store) items[k] = store[k];
             }
-            cb(items);
+            cb?.(items);
+            return Promise.resolve(items);
           },
           set: (items: Record<string, unknown>, cb?: () => void) => {
             Object.assign(store, items);

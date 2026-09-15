@@ -181,7 +181,15 @@ pub(super) async fn drive_connection<S: tokio::io::AsyncRead + tokio::io::AsyncW
 
     // The first frame MUST be `system.handshake` per §4.2. Bound the
     // wait so a stalled client cannot park resources forever.
-    let first = match tokio::time::timeout(HANDSHAKE_FIRST_FRAME_TIMEOUT, reader.next()).await {
+    let first = if let Some(auth) = authorization.as_ref() {
+        tokio::select! {
+            first = tokio::time::timeout(HANDSHAKE_FIRST_FRAME_TIMEOUT, reader.next()) => first,
+            _ = auth.revoked() => return Err(anyhow!("device authorization ended before handshake")),
+        }
+    } else {
+        tokio::time::timeout(HANDSHAKE_FIRST_FRAME_TIMEOUT, reader.next()).await
+    };
+    let first = match first {
         Ok(Some(Ok(msg))) => msg,
         Ok(Some(Err(err))) => return Err(err.into()),
         Ok(None) => return Ok(()),
@@ -293,8 +301,10 @@ pub(super) async fn drive_connection<S: tokio::io::AsyncRead + tokio::io::AsyncW
     // can be told apart from the previous BrowserClient — the old
     // socket's cleanup path uses `remove_if_generation_matches` to
     // avoid clobbering the newer entry (review M4/M5 round 2 #1).
-    if authorization.as_ref().is_some_and(|auth| !auth.valid()) {
-        return Err(anyhow!("device authorization ended during handshake"));
+    if let Some(auth) = authorization.as_ref() {
+        if !auth.authorized().await {
+            return Err(anyhow!("device authorization ended during handshake"));
+        }
     }
     let browser_id = BrowserId(authorization.as_ref().map_or_else(
         || params.instance_id.clone(),
@@ -373,7 +383,7 @@ pub(super) async fn drive_connection<S: tokio::io::AsyncRead + tokio::io::AsyncW
         loop {
             tokio::select! {
                 outbound = rx.recv() => {
-                    if authorization.as_ref().is_some_and(|auth| !auth.valid()) { break; }
+                    if authorization.as_ref().is_some_and(|auth| !auth.active()) { break; }
                     match outbound {
                         Some(frame) => {
                             let json = serde_json::to_string(&frame)?;
@@ -383,7 +393,7 @@ pub(super) async fn drive_connection<S: tokio::io::AsyncRead + tokio::io::AsyncW
                     }
                 }
                 msg = reader.next() => {
-                    if authorization.as_ref().is_some_and(|auth| !auth.valid()) { break; }
+                    if authorization.as_ref().is_some_and(|auth| !auth.active()) { break; }
                     match msg {
                         Some(Ok(Message::Text(t))) => {
                             // Any inbound frame — tool response, event, or the

@@ -3,10 +3,11 @@ export interface RemoteEndpoint {
   url: string;
   token: string;
   deviceId?: string;
-  serviceName?: string;
   expiresAt?: string;
   renewAfter?: string;
   pendingToken?: string;
+  renewalAttemptAt?: string;
+  renewalFailure?: "unavailable" | "rejected";
 }
 
 export const REMOTE_ENDPOINT_KEY = "bsk_remote_endpoint";
@@ -52,17 +53,33 @@ export function readRemoteEndpoint(value: unknown): RemoteEndpoint | null {
     endpoint.expiresAt = extra.expiresAt;
     endpoint.renewAfter = extra.renewAfter;
   }
-  if (typeof extra.serviceName === "string") endpoint.serviceName = extra.serviceName.slice(0, 48);
   if (extra.pendingToken !== undefined) {
     if (typeof extra.pendingToken !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(extra.pendingToken))
       throw new Error("Invalid pending device credential");
     endpoint.pendingToken = extra.pendingToken;
   }
+  if (
+    typeof extra.renewalAttemptAt === "string" &&
+    Number.isFinite(Date.parse(extra.renewalAttemptAt))
+  )
+    endpoint.renewalAttemptAt = extra.renewalAttemptAt;
+  if (extra.renewalFailure === "unavailable" || extra.renewalFailure === "rejected")
+    endpoint.renewalFailure = extra.renewalFailure;
   return endpoint;
+}
+
+export function remoteAuthorizationStatus(endpoint: RemoteEndpoint, now = Date.now()) {
+  if (endpoint.renewalFailure === "rejected") return "rejected";
+  if (endpoint.expiresAt && Date.parse(endpoint.expiresAt) <= now)
+    return endpoint.pendingToken ? "unconfirmed" : "expired";
+  if (endpoint.renewalFailure) return "unavailable";
+  return endpoint.pendingToken ? "renewing" : "active";
 }
 
 export function remoteSocket(url: string, endpoint: RemoteEndpoint | null): WebSocket {
   if (endpoint && endpoint.url !== url) throw new Error("Remote endpoint changed");
+  if (endpoint && remoteAuthorizationStatus(endpoint) === "expired")
+    throw new Error("Browser authorization has expired; pair again");
   return endpoint
     ? new WebSocket(url, [REMOTE_AUTH_PROTOCOL_PREFIX + endpoint.token])
     : new WebSocket(url);

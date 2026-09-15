@@ -339,6 +339,8 @@ export class ToolDispatcher {
 
   private async invoke(req: RequestFrame, signal: AbortSignal): Promise<unknown | RpcError> {
     const sessionId = (req.params as { session_id?: string } | undefined)?.session_id;
+    // Also enforce this for gateways backed by a local-mode daemon, where the
+    // standalone server's early IPC rejection does not apply.
     if (
       sessionId &&
       this.sessions.get(sessionId)?.remote &&

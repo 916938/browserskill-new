@@ -6,6 +6,7 @@ vi.mock("@/transport/remote-storage", () => ({
   initializeRemoteStorage: async () => {},
   readRemoteConnection: vi.fn(),
   REMOTE_CONNECTION_REVISION: "revision",
+  REMOTE_CONNECTION_MODE: "mode",
 }));
 let changed: (values: unknown, area: string) => void;
 beforeEach(() => {
@@ -48,14 +49,28 @@ it("disposal prevents pending reads from configuring a connection", async () => 
   const callback = vi.fn();
   const watch = watchDaemonConnection(callback);
   watch.dispose();
-  await watch.ready;
+  await Promise.resolve();
   expect(callback).not.toHaveBeenCalled();
 });
 it("corrupt remote storage fails closed instead of selecting localhost", async () => {
   vi.mocked(readRemoteConnection).mockRejectedValue(new Error("invalid storage"));
   const callback = vi.fn();
-  const watch = watchDaemonConnection(callback);
-  await expect(watch.ready).rejects.toThrow("invalid storage");
+  const error = vi.fn();
+  const watch = watchDaemonConnection(callback, error);
+  await vi.waitFor(() => expect(error).toHaveBeenCalledOnce());
   expect(callback).not.toHaveBeenCalled();
+  watch.dispose();
+});
+it("an explicit local selection can recover startup after a failed remote read", async () => {
+  vi.mocked(readRemoteConnection).mockRejectedValueOnce(new Error("invalid storage"));
+  const callback = vi.fn();
+  const error = vi.fn();
+  const watch = watchDaemonConnection(callback, error);
+  await vi.waitFor(() => expect(error).toHaveBeenCalledOnce());
+  expect(callback).not.toHaveBeenCalled();
+  vi.mocked(readRemoteConnection).mockResolvedValue(null);
+  changed({ mode: {} }, "local");
+  await watch.ready;
+  expect(callback).toHaveBeenCalledWith("ws://127.0.0.1:1234", null);
   watch.dispose();
 });

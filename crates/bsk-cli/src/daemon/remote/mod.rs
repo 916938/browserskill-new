@@ -1,6 +1,7 @@
 //! Optional authenticated extension endpoint. Automation still uses local IPC.
 
 pub mod authorization;
+mod rate_limit;
 mod server;
 
 use std::net::IpAddr;
@@ -22,11 +23,21 @@ pub struct ServerConfig {
     pub pairing_ttl: Duration,
     pub device_ttl: Duration,
     pub renew_after: Duration,
+    pub max_connections: usize,
+    pub authorize_rate_limit: u32,
 }
 
 impl ServerConfig {
     pub fn validate(&self) -> Result<()> {
         validate_endpoint(&self.public_url)?;
+        ensure!(
+            (1..=1000).contains(&self.max_connections),
+            "--max-connections must be between 1 and 1000"
+        );
+        ensure!(
+            (1..=60_000).contains(&self.authorize_rate_limit),
+            "--authorize-rate-limit must be between 1 and 60000"
+        );
         ensure!(
             [self.pairing_ttl, self.device_ttl, self.renew_after]
                 .iter()

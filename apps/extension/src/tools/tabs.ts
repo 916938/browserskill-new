@@ -649,7 +649,10 @@ async function validateBorrowTarget(
   if (tab.windowId === ctx.agentWindowId) {
     return {
       code: "invalid_params",
-      message: `tab_borrow: tab ${tabId} already lives in the Agent Window`,
+      message:
+        ctx.remote && !isAgentControlledTab(ctx, tabId)
+          ? `tab_borrow: tab ${tabId} is not authorized and already lives in the Agent Window; move it to a regular browser window, then borrow it`
+          : `tab_borrow: tab ${tabId} already lives in the Agent Window`,
     };
   }
   for (const s of manager.list()) {

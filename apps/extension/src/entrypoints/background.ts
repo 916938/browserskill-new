@@ -57,9 +57,14 @@ import { WSTransport } from "@/transport/ws-transport";
 export default defineBackground(() => {
   const controller = new ConnectionController();
   let remoteEndpoint: RemoteEndpoint | null = null;
+  let connectionPreferenceValid = false;
+  let requestedConnection: { key: string; remote: boolean } | null = null;
   const transport = new WSTransport({
     url: __BSK_DAEMON_WS_URL__,
-    webSocketFactory: (url) => remoteSocket(url, remoteEndpoint),
+    webSocketFactory: (url) => {
+      if (!connectionPreferenceValid) throw new Error("Connection settings are unavailable");
+      return remoteSocket(url, remoteEndpoint);
+    },
   });
   const sessions = new SessionManager({ remote: () => remoteEndpoint !== null });
   attachLongScreenshot({
@@ -77,22 +82,39 @@ export default defineBackground(() => {
   let overlayGeneration = 0;
   const controlModes = new Map<string, OverlayMode>();
 
-  const remoteAuthorization = watchRemoteAuthorization();
-  const daemonPort = watchDaemonConnection((url, remote) => {
-    remoteAuthorization.changed();
-    if (
-      remote?.deviceId &&
-      remoteEndpoint?.deviceId === remote.deviceId &&
-      remoteEndpoint.url === remote.url
-    ) {
-      remoteEndpoint = remote;
-      return;
-    }
-    void controller.reconfigureTransport(JSON.stringify([url, remote]), () => {
-      remoteEndpoint = remote;
-      transport.setUrl(url);
-    });
-  });
+  watchRemoteAuthorization();
+  const daemonPort = watchDaemonConnection(
+    (url, remote) => {
+      const key = JSON.stringify([remote ? "remote" : "local", url, remote?.deviceId ?? null]);
+      const sameRequest = requestedConnection?.key === key;
+      requestedConnection = { key, remote: remote !== null };
+      if (
+        sameRequest &&
+        connectionPreferenceValid &&
+        remote?.deviceId &&
+        remoteEndpoint?.deviceId === remote.deviceId &&
+        remoteEndpoint.url === remote.url
+      ) {
+        remoteEndpoint = remote;
+        return;
+      }
+      // Connection identity is public metadata. Credential rotation updates the
+      // socket factory above without ending the current device's tasks.
+      void controller.reconfigureTransport(key, () => {
+        connectionPreferenceValid = true;
+        remoteEndpoint = remote;
+        transport.setUrl(url);
+      });
+    },
+    () => {
+      console.error("[connection] invalid connection preference");
+      if (remoteEndpoint || requestedConnection?.remote) {
+        requestedConnection = null;
+        connectionPreferenceValid = false;
+        void controller.reconfigureTransport("unavailable", () => {});
+      }
+    },
+  );
   let preferenceWrites = Promise.resolve();
 
   function setControlMode(sessionId: string, mode: OverlayMode): void {

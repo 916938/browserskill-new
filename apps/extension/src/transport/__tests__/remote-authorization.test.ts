@@ -1,19 +1,23 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   activateRemoteEndpoint,
   renewRemoteAuthorization,
   updateRemoteConnection,
+  watchRemoteAuthorization,
 } from "../remote-authorization";
 import { REMOTE_ENDPOINT_KEY, type RemoteEndpoint } from "../remote-endpoint";
 
 let values: Record<string, unknown>;
 vi.mock("../remote-storage", () => ({
   initializeRemoteStorage: async () => {},
+  REMOTE_CONNECTION_REVISION: "revision",
+  REMOTE_CONNECTION_MODE: "mode",
   readRemoteConnection: async () => values["bsk_remote_endpoint"],
   writeRemoteConnection: async (endpoint: unknown) => {
     values["bsk_remote_endpoint"] = structuredClone(endpoint);
   },
 }));
+let changes: (changes: Record<string, unknown>, area: string) => void;
 const endpoint: RemoteEndpoint = {
   url: "wss://gateway.example/api/v1/local-browser/extension",
   token: "a".repeat(43),
@@ -31,9 +35,23 @@ const response = () =>
     { status: 200 },
   );
 beforeEach(() => {
+  vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-09-14T00:00:00Z"));
   values = { [REMOTE_ENDPOINT_KEY]: { ...endpoint } };
   vi.stubGlobal("chrome", {
+    runtime: { onMessage: { addListener: vi.fn() } },
+    alarms: {
+      get: vi.fn(async () => undefined),
+      create: vi.fn(async () => {}),
+      clear: vi.fn(async () => true),
+      onAlarm: { addListener: vi.fn(), removeListener: vi.fn() },
+    },
     storage: {
+      onChanged: {
+        addListener: vi.fn((listener) => {
+          changes = listener;
+        }),
+        removeListener: vi.fn(),
+      },
       local: {
         get: vi.fn(async () => ({ ...values })),
         set: vi.fn(async (next) => {
@@ -46,6 +64,10 @@ beforeEach(() => {
     "fetch",
     vi.fn(async () => response()),
   );
+});
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 describe("durable remote authorization", () => {
   it("exchanges a pairing link over HTTPS without putting credentials in the URL", async () => {
@@ -67,9 +89,14 @@ describe("durable remote authorization", () => {
     const pending = values[REMOTE_ENDPOINT_KEY] as RemoteEndpoint;
     expect(pending.token).toBe(endpoint.token);
     expect(pending.pendingToken).toHaveLength(43);
+    expect(pending.renewalFailure).toBe("unavailable");
+    await renewRemoteAuthorization();
+    expect(fetch).toHaveBeenCalledOnce();
+    vi.mocked(Date.now).mockReturnValue(Date.now() + 60_000);
     await renewRemoteAuthorization();
     expect((values[REMOTE_ENDPOINT_KEY] as RemoteEndpoint).token).toBe(pending.pendingToken);
     expect((values[REMOTE_ENDPOINT_KEY] as RemoteEndpoint).pendingToken).toBeUndefined();
+    expect((values[REMOTE_ENDPOINT_KEY] as RemoteEndpoint).renewalFailure).toBeUndefined();
     expect(JSON.parse(String(vi.mocked(fetch).mock.calls[0][1]?.body)).next_token).toBe(
       JSON.parse(String(vi.mocked(fetch).mock.calls[1][1]?.body)).next_token,
     );
@@ -92,6 +119,30 @@ describe("durable remote authorization", () => {
     await renewRemoteAuthorization();
     expect(fetch).not.toHaveBeenCalled();
   });
+  it("reports an authorization rejection without discarding a retry candidate", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(new Response(null, { status: 401 }));
+    await expect(renewRemoteAuthorization()).rejects.toThrow("rejected");
+    const stored = values[REMOTE_ENDPOINT_KEY] as RemoteEndpoint;
+    expect(stored.renewalFailure).toBe("rejected");
+    expect(stored.token).toBe(endpoint.token);
+    expect(stored.pendingToken).toHaveLength(43);
+  });
+  it("does not start a fresh rotation for an expired authorization", async () => {
+    values[REMOTE_ENDPOINT_KEY] = { ...endpoint, expiresAt: "2020-01-01T00:00:00Z" };
+    await renewRemoteAuthorization();
+    expect(fetch).not.toHaveBeenCalled();
+    expect((values[REMOTE_ENDPOINT_KEY] as RemoteEndpoint).pendingToken).toBeUndefined();
+  });
+  it("can confirm a lost rotation response after the previous local expiry", async () => {
+    values[REMOTE_ENDPOINT_KEY] = {
+      ...endpoint,
+      expiresAt: "2020-01-01T00:00:00Z",
+      pendingToken: "b".repeat(43),
+    };
+    await renewRemoteAuthorization();
+    expect((values[REMOTE_ENDPOINT_KEY] as RemoteEndpoint).token).toBe("b".repeat(43));
+    expect((values[REMOTE_ENDPOINT_KEY] as RemoteEndpoint).pendingToken).toBeUndefined();
+  });
   it("serializes disconnect with rotation so an old response cannot restore credentials", async () => {
     let resolve!: (value: Response) => void;
     vi.mocked(fetch).mockImplementationOnce(
@@ -108,4 +159,19 @@ describe("durable remote authorization", () => {
     await disconnecting;
     expect(values[REMOTE_ENDPOINT_KEY]).toBeNull();
   });
+});
+
+it("only schedules renewal alarms while a remote connection is selected", async () => {
+  values[REMOTE_ENDPOINT_KEY] = null;
+  const watcher = watchRemoteAuthorization();
+  await vi.waitFor(() => expect(chrome.alarms.clear).toHaveBeenCalled());
+  expect(chrome.alarms.create).not.toHaveBeenCalled();
+  values[REMOTE_ENDPOINT_KEY] = { ...endpoint, renewAfter: "2099-01-01T00:00:00Z" };
+  changes({ revision: {} }, "local");
+  await vi.waitFor(() => expect(chrome.alarms.create).toHaveBeenCalledOnce());
+  expect(fetch).not.toHaveBeenCalled();
+  values[REMOTE_ENDPOINT_KEY] = null;
+  changes({ revision: {} }, "local");
+  await vi.waitFor(() => expect(chrome.alarms.clear).toHaveBeenCalledTimes(2));
+  watcher.dispose();
 });

@@ -343,6 +343,8 @@ async fn handle_tool_dispatch(
             });
         }
     };
+    // Reject before allocating local transfer resources. The extension also
+    // enforces this for third-party gateways backed by a local-mode daemon.
     if state.config.server.is_some() && matches!(method, Method::ToolUpload | Method::ToolDownload)
     {
         return ResponseBody::Err(RpcError {

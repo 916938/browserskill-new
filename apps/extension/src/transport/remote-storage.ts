@@ -2,6 +2,7 @@ import { REMOTE_ENDPOINT_KEY, type RemoteEndpoint, readRemoteEndpoint } from "./
 
 /** Only this non-secret revision is exposed through chrome.storage.local. */
 export const REMOTE_CONNECTION_REVISION = "bsk_remote_connection_revision";
+export const REMOTE_CONNECTION_MODE = "bsk_connection_mode";
 const DATABASE = "bsk-remote-authorization";
 const STORE = "connection";
 const MIGRATING = "bsk_remote_storage_migrating";
@@ -41,13 +42,48 @@ async function storedEndpoint(write?: { value: RemoteEndpoint | null }): Promise
 }
 
 export async function readRemoteConnection(): Promise<RemoteEndpoint | null> {
-  return readRemoteEndpoint(await storedEndpoint());
+  await initializeRemoteStorage();
+  const values = await chrome.storage.local.get([
+    REMOTE_CONNECTION_MODE,
+    REMOTE_CONNECTION_REVISION,
+  ]);
+  const mode = values[REMOTE_CONNECTION_MODE];
+  // Fresh local profiles never open the credential database. A legacy revision
+  // without a mode may contain a remote grant and must still fail closed.
+  if (mode === "local" || (mode === undefined && values[REMOTE_CONNECTION_REVISION] === undefined))
+    return null;
+  if (mode !== undefined && mode !== "remote") throw new Error("Invalid connection mode");
+  const endpoint = readRemoteEndpoint(await storedEndpoint());
+  if (mode === "remote" && !endpoint) throw new Error("Remote authorization is missing");
+  return endpoint;
 }
 
 export async function writeRemoteConnection(endpoint: RemoteEndpoint | null): Promise<void> {
   const validated = readRemoteEndpoint(endpoint);
-  await storedEndpoint({ value: validated });
-  await chrome.storage.local.set({ [REMOTE_CONNECTION_REVISION]: crypto.randomUUID() });
+  if (validated) {
+    // Publish a switch only after its credential is durable. A failed write
+    // leaves the previous mode selected, including a healthy local connection.
+    await storedEndpoint({ value: validated });
+    await chrome.storage.local.set({
+      [REMOTE_CONNECTION_MODE]: "remote",
+      [REMOTE_CONNECTION_REVISION]: crypto.randomUUID(),
+    });
+  } else {
+    // Explicitly selecting local must work even when IndexedDB is unavailable.
+    // Remove any legacy secret before restoring ordinary preference access.
+    const legacy = await chrome.storage.local.get([REMOTE_ENDPOINT_KEY, MIGRATING]);
+    if (legacy[REMOTE_ENDPOINT_KEY] !== undefined || legacy[MIGRATING]) {
+      await chrome.storage.local.remove(REMOTE_ENDPOINT_KEY);
+      await chrome.storage.local.setAccessLevel({ accessLevel: "TRUSTED_AND_UNTRUSTED_CONTEXTS" });
+      await chrome.storage.local.remove(MIGRATING);
+    }
+    await chrome.storage.local.set({
+      [REMOTE_CONNECTION_MODE]: "local",
+      [REMOTE_CONNECTION_REVISION]: crypto.randomUUID(),
+    });
+    // A stale private record cannot become active while local mode is selected.
+    await storedEndpoint({ value: null }).catch(() => {});
+  }
 }
 
 let initialization: Promise<void> | undefined;

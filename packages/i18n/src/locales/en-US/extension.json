@@ -85,7 +85,16 @@
     "remotePairing": "Pairing link",
     "remoteHint": "Paste a pairing link from a trusted server. Saving switches connections and ends existing sessions. The server can operate Agent Windows; borrowing existing tabs still requires your confirmation.",
     "remoteSave": "Connect",
-    "remoteError": "Could not save. Check the pairing link and storage access."
+    "remoteError": "Could not save. Check the pairing link and storage access.",
+    "remoteNeedsAttention": "Needs attention",
+    "remoteUnknown": "Connection settings unavailable",
+    "remoteStorageError": "Could not read connection settings. BrowserSkill will retry. You can explicitly select the local daemon to recover.",
+    "remoteExpires": "Authorization expires: {{date}}",
+    "remoteRenewing": "Renewing browser authorization…",
+    "remoteRenewalFailed": "Renewal could not reach the service or complete successfully. BrowserSkill will retry; the current authorization remains usable until it expires.",
+    "remoteRejected": "The server rejected authorization. Check the server or use a new pairing link.",
+    "remoteExpired": "Authorization has expired. Use a new pairing link to reconnect.",
+    "remoteUnconfirmed": "The last confirmed authorization has expired, but a renewal may have succeeded. BrowserSkill is retrying the pending renewal; check the server if this continues."
   },
   "controlOverlay": {
     "status": "Agent controlling",

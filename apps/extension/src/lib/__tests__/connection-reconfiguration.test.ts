@@ -85,6 +85,38 @@ afterEach(() => {
 });
 
 describe("connection reconfiguration with WSTransport", () => {
+  it("applies the latest credentials when the same device changes during startup", async () => {
+    const s = setup();
+    const applied: string[] = [];
+    await s.controller.reconfigureTransport("device", () => {
+      applied.push("old");
+    });
+    await s.controller.reconfigureTransport("device", () => {
+      applied.push("renewed");
+    });
+    await s.attach();
+    expect(applied).toEqual(["renewed"]);
+    expect(s.sockets).toHaveLength(1);
+  });
+
+  it("coalesces a pending credential rotation without repeating cleanup", async () => {
+    const gate = deferred();
+    const s = setup(vi.fn(() => gate.promise));
+    await s.attach();
+    s.sockets[0].open();
+    const applied: string[] = [];
+    const first = s.controller.reconfigureTransport("device", () => {
+      applied.push("old");
+    });
+    await flush();
+    const latest = s.controller.reconfigureTransport("device", () => {
+      applied.push("renewed");
+    });
+    gate.resolve();
+    await Promise.all([first, latest]);
+    expect(applied).toEqual(["renewed"]);
+    expect(s.cleanup).toHaveBeenCalledOnce();
+  });
   it("finishes initialization even when the first socket never opens", async () => {
     const s = setup();
     s.controller.requestConnect();

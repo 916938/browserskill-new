@@ -672,7 +672,7 @@ pub(crate) fn spawn_update_check_task(
                             update::self_install_candidate(
                                 candidate,
                                 target,
-                                &restart_start_args(&state.config),
+                                &restart_start_args(&state.config)?,
                             )
                         },
                     )
@@ -717,8 +717,9 @@ pub(crate) fn spawn_update_check_task(
                     // `exe_path` is always Some here: the install only
                     // runs when it was captured.
                     if let Some(exe) = &exe_path {
-                        let args = restart_start_args(&state.config);
-                        match spawn_detached_at(exe, &args, Some(std::process::id())) {
+                        match restart_start_args(&state.config).and_then(|args| {
+                            spawn_detached_at(exe, &args, Some(std::process::id()))
+                        }) {
                             Ok(()) => {
                                 info!(
                                     pid = std::process::id(),
@@ -741,14 +742,18 @@ pub(crate) fn spawn_update_check_task(
 
 /// Rebuild the `StartArgs` for the replacement daemon from the running
 /// config so the respawn keeps the same port and idle timeouts.
-fn restart_start_args(cfg: &DaemonConfig) -> StartArgs {
-    StartArgs {
+fn restart_start_args(cfg: &DaemonConfig) -> Result<StartArgs> {
+    anyhow::ensure!(
+        cfg.server.is_none(),
+        "server restart is managed by the deployment supervisor"
+    );
+    Ok(StartArgs {
         port: Some(cfg.ws_port),
         foreground: false,
         session_idle: Some(cfg.session_idle),
         daemon_idle: Some(cfg.daemon_idle),
         ..Default::default()
-    }
+    })
 }
 
 #[derive(Debug)]
@@ -1137,11 +1142,24 @@ mod tests {
             daemon_idle: Duration::from_secs(22),
             ..DaemonConfig::new(0)
         };
-        let args = restart_start_args(&cfg);
+        let args = restart_start_args(&cfg).unwrap();
         assert_eq!(args.port, Some(1234));
         assert!(!args.foreground);
         assert_eq!(args.session_idle, Some(Duration::from_secs(11)));
         assert_eq!(args.daemon_idle, Some(Duration::from_secs(22)));
+    }
+
+    #[test]
+    fn automatic_restart_rejects_server_configuration() {
+        let mut cfg = DaemonConfig::new(0);
+        cfg.server = StartArgs {
+            mode: crate::cli::daemon::DaemonMode::Server,
+            public_url: Some("wss://browser.example/extension".into()),
+            ..Default::default()
+        }
+        .server_config()
+        .unwrap();
+        assert!(restart_start_args(&cfg).is_err());
     }
 
     #[test]

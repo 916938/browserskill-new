@@ -1,8 +1,12 @@
 import { useTranslation } from "@browser-skill/i18n/react";
 import { Button, Input, Label } from "@browser-skill/ui";
 import { useEffect, useState } from "react";
-import { parseRemoteEndpoint } from "@/transport/remote-endpoint";
-import { REMOTE_CONNECTION_REVISION, readRemoteConnection } from "@/transport/remote-storage";
+import { parseRemoteEndpoint, remoteAuthorizationStatus } from "@/transport/remote-endpoint";
+import {
+  REMOTE_CONNECTION_MODE,
+  REMOTE_CONNECTION_REVISION,
+  readRemoteConnection,
+} from "@/transport/remote-storage";
 
 export function RemoteConnection({
   onRemoteChange,
@@ -14,39 +18,61 @@ export function RemoteConnection({
   const [server, setServer] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState(false);
+  const [error, setError] = useState<"storage" | "pairing" | null>(null);
+  const [authorization, setAuthorization] = useState<{
+    expiresAt?: string;
+    status: ReturnType<typeof remoteAuthorizationStatus>;
+  } | null>(null);
   useEffect(() => {
     let alive = true;
     let revision = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const read = async () => {
       const current = ++revision;
-      const remote = await readRemoteConnection();
-      if (!alive || current !== revision) return;
-      setServer(remote?.url ?? null);
-      onRemoteChange?.(remote !== null);
-      setReady(true);
+      try {
+        const remote = await readRemoteConnection();
+        if (!alive || current !== revision) return;
+        setServer(remote?.url ?? null);
+        setAuthorization(
+          remote
+            ? { expiresAt: remote.expiresAt, status: remoteAuthorizationStatus(remote) }
+            : null,
+        );
+        setError(null);
+        onRemoteChange?.(remote !== null);
+        setReady(true);
+        clearTimeout(timer);
+        if (remote) timer = setTimeout(() => void read(), 30_000);
+      } catch {
+        if (!alive || current !== revision) return;
+        setError("storage");
+        // Unknown remote state must not be presented as a healthy local connection.
+        onRemoteChange?.(true);
+        setReady(true);
+        clearTimeout(timer);
+        timer = setTimeout(() => void read(), 30_000);
+      }
     };
     const changed = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {
-      if (area === "local" && changes[REMOTE_CONNECTION_REVISION])
-        void read().catch(() => alive && setError(true));
+      if (
+        area === "local" &&
+        (changes[REMOTE_CONNECTION_REVISION] || changes[REMOTE_CONNECTION_MODE])
+      )
+        void read();
     };
     if (typeof chrome === "undefined" || !chrome.storage?.local) return;
     chrome.storage.onChanged.addListener(changed);
-    void read().catch(() => {
-      if (alive) {
-        setError(true);
-        setReady(true);
-      }
-    });
+    void read();
     return () => {
       alive = false;
+      clearTimeout(timer);
       chrome.storage.onChanged.removeListener(changed);
     };
   }, [onRemoteChange]);
   async function save(disconnect = false) {
     if (busy) return;
     setBusy(true);
-    setError(false);
+    setError(null);
     try {
       const reply = (await chrome.runtime.sendMessage({
         kind: "bsk-remote-authorization",
@@ -54,15 +80,30 @@ export function RemoteConnection({
       })) as { url: string | null; error?: string };
       if (reply.error) throw new Error(reply.error);
       setServer(reply.url);
+      if (!reply.url) setAuthorization(null);
       onRemoteChange?.(reply.url !== null);
       setDraft("");
     } catch {
-      setError(true);
+      setError("pairing");
     } finally {
       setBusy(false);
     }
   }
   let destination = server;
+  const statusKey = authorization
+    ? (
+        {
+          active: null,
+          renewing: "remoteRenewing",
+          unavailable: "remoteRenewalFailed",
+          rejected: "remoteRejected",
+          expired: "remoteExpired",
+          unconfirmed: "remoteUnconfirmed",
+        } as const
+      )[authorization.status]
+    : null;
+  const needsAttention =
+    error || (authorization && !["active", "renewing"].includes(authorization.status));
   try {
     if (draft.trim()) destination = parseRemoteEndpoint(draft).url;
   } catch {
@@ -70,11 +111,26 @@ export function RemoteConnection({
   }
   return (
     <details className="rounded-xl border border-border/80 bg-card/60 px-3 py-2.5">
-      <summary className="cursor-pointer text-sm font-medium">{t("popup.remoteTitle")}</summary>
+      <summary className="cursor-pointer text-sm font-medium">
+        {t("popup.remoteTitle")}
+        {needsAttention && (
+          <span className="ml-2 text-destructive">{t("popup.remoteNeedsAttention")}</span>
+        )}
+      </summary>
       <div className="mt-3 space-y-2">
         <p className="break-all text-xs text-muted-foreground">
-          {destination ?? t("popup.remoteLocal")}
+          {destination ?? t(error === "storage" ? "popup.remoteUnknown" : "popup.remoteLocal")}
         </p>
+        {authorization?.expiresAt && (
+          <p className="text-xs text-muted-foreground">
+            {t("popup.remoteExpires", { date: new Date(authorization.expiresAt).toLocaleString() })}
+          </p>
+        )}
+        {statusKey && (
+          <p role="status" className="text-xs text-muted-foreground">
+            {t(`popup.${statusKey}`)}
+          </p>
+        )}
         <Label htmlFor="remote-pairing">{t("popup.remotePairing")}</Label>
         <Input
           id="remote-pairing"
@@ -100,7 +156,7 @@ export function RemoteConnection({
         </div>
         {error && (
           <p role="alert" className="text-xs text-destructive">
-            {t("popup.remoteError")}
+            {t(error === "storage" ? "popup.remoteStorageError" : "popup.remoteError")}
           </p>
         )}
       </div>

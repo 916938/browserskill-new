@@ -71,6 +71,12 @@ pub struct StartArgs {
     /// Renew device grants after this interval, default 30d.
     #[arg(long, value_parser = parse_duration)]
     pub renew_after: Option<Duration>,
+    /// Maximum online remote browsers, default 64. Pairing and renewal use separate capacity.
+    #[arg(long)]
+    pub max_connections: Option<usize>,
+    /// Authorization requests per minute per peer IP, default 60 (shared behind a proxy).
+    #[arg(long)]
+    pub authorize_rate_limit: Option<u32>,
     /// Override the WebSocket port (default 52800).
     #[arg(long, value_name = "PORT")]
     pub port: Option<u16>,
@@ -98,7 +104,9 @@ impl StartArgs {
                     && self.tls_key.is_none()
                     && self.pairing_ttl.is_none()
                     && self.device_ttl.is_none()
-                    && self.renew_after.is_none(),
+                    && self.renew_after.is_none()
+                    && self.max_connections.is_none()
+                    && self.authorize_rate_limit.is_none(),
                 "remote endpoint flags require --mode server"
             );
             return Ok(None);
@@ -119,6 +127,8 @@ impl StartArgs {
             pairing_ttl: self.pairing_ttl.unwrap_or(Duration::from_secs(300)),
             device_ttl: self.device_ttl.unwrap_or(Duration::from_secs(90 * 86400)),
             renew_after: self.renew_after.unwrap_or(Duration::from_secs(30 * 86400)),
+            max_connections: self.max_connections.unwrap_or(64),
+            authorize_rate_limit: self.authorize_rate_limit.unwrap_or(60),
         };
         config.validate()?;
         Ok(Some(config))
@@ -234,6 +244,8 @@ mod tests {
         assert!(config.listen.is_loopback());
         assert_eq!(config.pairing_ttl, Duration::from_secs(300));
         assert_eq!(config.device_ttl, Duration::from_secs(90 * 86400));
+        assert_eq!(config.max_connections, 64);
+        assert_eq!(config.authorize_rate_limit, 60);
         args.listen = Some("0.0.0.0".parse().unwrap());
         assert!(args.server_config().is_err());
         args.tls_cert = Some("cert.pem".into());
@@ -260,6 +272,30 @@ mod tests {
         args.pairing_ttl = Some(Duration::from_millis(1500));
         assert!(args.server_config().is_err());
         assert!(parse_duration("18446744073709551615d").is_err());
+    }
+
+    #[test]
+    fn server_resource_limits_are_bounded_and_server_only() {
+        let mut args = StartArgs {
+            mode: DaemonMode::Server,
+            public_url: Some("wss://browser.example/extension".into()),
+            ..Default::default()
+        };
+        for limit in [0, 1001] {
+            args.max_connections = Some(limit);
+            assert!(args.server_config().is_err());
+        }
+        args.max_connections = Some(128);
+        for limit in [0, 60_001] {
+            args.authorize_rate_limit = Some(limit);
+            assert!(args.server_config().is_err());
+        }
+        args.authorize_rate_limit = Some(600);
+        let config = args.server_config().unwrap().unwrap();
+        assert_eq!(config.max_connections, 128);
+        assert_eq!(config.authorize_rate_limit, 600);
+        args.mode = DaemonMode::Local;
+        assert!(args.server_config().is_err());
     }
 
     #[test]

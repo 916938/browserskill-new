@@ -85,7 +85,16 @@
     "remotePairing": "配对链接",
     "remoteHint": "粘贴可信服务器提供的配对链接。保存后会切换连接并结束现有任务。服务器可操作 Agent Window；借用已有标签页仍需你确认。",
     "remoteSave": "连接",
-    "remoteError": "保存失败，请检查配对链接及存储权限。"
+    "remoteError": "保存失败，请检查配对链接及存储权限。",
+    "remoteNeedsAttention": "需要关注",
+    "remoteUnknown": "无法读取连接设置",
+    "remoteStorageError": "无法读取连接设置，系统会自动重试。你也可以主动选择本地连接以恢复使用。",
+    "remoteExpires": "授权到期时间：{{date}}",
+    "remoteRenewing": "正在续期浏览器授权…",
+    "remoteRenewalFailed": "续期暂未成功，可能是网络或服务异常。系统会自动重试，现有授权在到期前仍可使用。",
+    "remoteRejected": "服务器拒绝了授权。请检查服务端状态，或使用新的配对链接。",
+    "remoteExpired": "授权已过期，请使用新的配对链接重新连接。",
+    "remoteUnconfirmed": "上次确认的授权已到期，但此前续期可能已成功。系统正在重试待确认的续期；若持续出现，请检查服务端状态。"
   },
   "controlOverlay": {
     "status": "Agent 正在控制",

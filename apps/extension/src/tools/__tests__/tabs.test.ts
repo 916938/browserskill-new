@@ -297,6 +297,33 @@ describe("handleTabCreate", () => {
 });
 
 describe("handleTabClose", () => {
+  it("does not infer remote popup ownership from its opener and explains how to borrow it", async () => {
+    const sm = new SessionManager({ agentWindow: fakeAgentWindow([100]), remote: () => true });
+    const ctx = await sm.start("aa11");
+    const state: FakeTabState = {
+      tabs: new Map([[5, { id: 5, windowId: 100, openerTabId: 1 } as chrome.tabs.Tab]]),
+      nextTabId: 50,
+      windowsClosed: new Set(),
+    };
+    const { api, spies } = makeTabMutationApi(state);
+    expect(
+      await handleTabClose(sm, { session_id: "aa11", tab_id: 5 }, { tabs: api }),
+    ).toMatchObject({ code: "permission_denied" });
+    const approval = vi.fn(async () => true);
+    expect(
+      await handleTabBorrow(
+        sm,
+        { session_id: "aa11", tab_id: 5 },
+        { tabs: api, approveBorrow: approval },
+      ),
+    ).toMatchObject({
+      code: "invalid_params",
+      message: expect.stringContaining("regular browser window"),
+    });
+    expect(ctx.agentCreatedTabs.has(5)).toBe(false);
+    expect(spies.remove).not.toHaveBeenCalled();
+    expect(approval).not.toHaveBeenCalled();
+  });
   it("removes a tab inside the Agent Window", async () => {
     const sm = new SessionManager({ agentWindow: fakeAgentWindow([100]) });
     await sm.start("aa11");
