@@ -5,120 +5,108 @@ description: Browser automation through six injected domain tools.
 
 # browser-skill for DeepSeek Harness
 
-Drive the user's logged-in Chromium in an Agent Window. User-window tabs remain protected unless
-explicitly borrowed.
-
-Use the loaded `action` schemas for `browser_session`, `browser_page`, `browser_inspect`,
-`browser_interact`, `browser_tabs`, and `browser_assist`; do not guess parameters.
-All browser work must use the injected tools directly to preserve ownership, cancellation,
-attachments, observation UI, and cleanup. Do not invoke another process to control the browser.
+All browser work must use the injected tools directly, in an Agent Window with existing logins.
+Do not control the browser through another process. Use the loaded action schemas for parameters.
 
 ## Mandatory workflow
 
-Every task owns a bounded plugin session:
+1. Define success. Start a session and retain `sessionId`. For a new page:
+
+   ```text
+   browser_session({ action: "start" })
+   browser_page({ action: "navigate", session: "<id>", url: "https://example.com" })
+   browser_inspect({ action: "observe", session: "<id>" })
+   ```
+
+2. For an existing user tab, borrow it instead. Replace example IDs/refs with actual
+   results. Pass `session` when more than one exists; never use foreign IDs.
+3. Observe after page changes; check ambiguous results once. Stop acting when success
+   is visible. On success or failure, call
+   `browser_session({ action: "stop", session: "<id>" })` unless keeping the session
+   open is part of the user's request. Stopping returns borrowed tabs, leaving them
+   open in the user's window.
+
+## Read and interact
+
+Prefer `observe` for text/refs; use `snapshot` for static accessibility, `html` for
+exact markup, and `screenshot` for visuals. Console/network are bounded read-only
+diagnostics; follow sequence cursors. Wait only for expected navigation.
+
+To fill an observed field `@e3`:
 
 ```text
-browser_session({ action: "start", ... })
-... use the returned sessionId for browser work ...
-browser_session({ action: "stop", session: sessionId })
+browser_interact({ action: "fill", session: "<id>", target: "@e3", value: "text" })
 ```
 
-Pass the session when more than one exists; never guess or use another program's id. Stop on
-success and failure unless asked to keep it open. Stopping also returns borrowed tabs.
+Refs invalidate after navigation; large DOM changes may stale them too. Observe again.
+Prefer refs for frames/shadow roots; selectors search the main document. Use observe
+for ordinary controls, including before acting on HTML or screenshot findings.
+Select options by value, not visible label.
 
-## Work toward one observable goal
+- Hover markers like `[hover first: Shoes | Bags]` list labels, not refs. Hover the
+  trigger, observe, then use the item's ref. Click the trigger only if its action is wanted.
+- `scroll-to` returns ancestor-clipped bounds in top-level viewport CSS pixels.
+  Partial visibility suffices; hidden/fully clipped targets fail. It does not test occlusion.
+- `wheel` uses signed `deltaX`/`deltaY`, at least one nonzero. Optional `target` is
+  scrolled into view first; otherwise it uses the viewport centre. It reports input,
+  not scrolling success: observe afterwards. Focus/blur change focus states.
 
-- Derive a concrete success condition from the user's request.
-- Observe, act, and check ambiguous results once.
-- Stop acting once success is visible.
-- With help enabled, request help for human-only steps or after two attempts make no progress.
-  With help disabled, use the autonomous handling rules below.
+## Borrowing and human help
 
-## Observe, act, observe
+Use `browser_tabs` to list IDs before acting. Borrow for the immediate step and
+return promptly. Browser Automation settings
+govern confirmation and help; never change them to bypass a prompt or repeat
+pending/denied/expired borrows. Inspect unknown outcomes; follow version-error hints.
+Remote reads/actions require task-created or borrowed tabs; popups gain no control.
+An unowned tab inside the Agent Window needs a user move to a user window before borrowing.
 
-Use `browser_inspect` action `observe` as the primary semantic page view. It returns roles, states,
-text, and `@eN` refs. Prefer fresh refs over raw selectors. Refs invalidate after navigation and may
-also become stale after large DOM changes, so observe again before the next interaction.
+With help enabled, use `browser_assist` action `request-help` for login, CAPTCHA,
+OTP, payment confirmation, consent, or after two attempts without progress. Supply
+a precise prompt and fresh targets; completion criteria need a stable success signal.
+Resume only on `continued` / `completed`, then observe. Cancellation/timeout blocks
+the step; do not repeat the request. Navigation alone is not success.
+`browser_assist` also resizes windows or emulates a device for one tab.
 
-Use `browser_interact` for click, hover, scroll-to, focus, blur, fill, select, press and wheel.
-`scroll-to` reveals a target and returns its visible border-box bounds in top-level viewport CSS
-pixels, clipped by ancestors. Partial visibility suffices; hidden/fully clipped targets fail.
-This does not test occlusion. Use refs for iframe/shadow-root targets; selectors search the main document.
+With help disabled, do not request help or re-enable it. `disabled` confirms no human
+action or new permission. Re-observe; use existing logins, authorized inputs and
+viable alternatives within task/host rules. Vision models may try graphical
+verification where authorized. Phone-only QR scans, face verification, missing SMS
+codes or image-only tasks for text-only models may remain blocked. Report missing
+inputs/capabilities or exhausted alternatives; continue independent work. Never repeat
+unknown effects or switch backends to bypass limits. Borrow confirmation still applies.
 
-`wheel` takes signed `deltaX`/`deltaY` (one nonzero). Optional `target` is scrolled into view first;
-otherwise input lands at the viewport centre. Results echo input, not completed scrolling; observe afterwards.
+## Recover
 
-`focus`/`blur` enter or leave focus-triggered states. Hover-only surfaces appear as
-`@e1 button "Products" [hover first: Shoes | Bags]`. Items are labels, not refs:
-hover the trigger, observe, then use the revealed item's ref. Click the trigger only if its action is wanted.
+- Stale ref: observe, then retry the intended action once.
+- Unknown tab/session: list owned resources or start a session; never guess IDs.
+- Timeout/unknown effect: inspect before retrying; the action may have happened.
+- Unconfirmed fill: read the field. Formatting may satisfy the goal; correct only a
+  remaining difference instead of blindly refilling or requesting help.
+- Other errors: follow the hint; on unrecoverable failure, report and stop the owned session.
 
-Escalate reading only as needed:
-
-1. `observe` for normal understanding and interaction refs.
-2. `snapshot` when a stricter static accessibility tree is more useful.
-3. `html` for exact markup or hidden metadata that semantic views cannot provide.
-4. `screenshot` for layout, styling, canvas, images, or requested visual evidence.
-
-Do not start with raw HTML or screenshots merely to discover ordinary controls. When interaction is
-needed, obtain a fresh observation before acting on screenshot or HTML findings.
-
-Use `browser_page` for purposeful navigation, history, reload, or a lifecycle wait. Avoid speculative
-waits when no navigation is expected. After any page change, discard old refs and observe again.
-
-## Respect the Agent Window boundary
-
-Use `browser_tabs` to list ids before acting; never guess. Borrow only for the immediate task and
-return promptly. Never bypass Automation settings or repeat denied/expired borrows; inspect unknown
-outcomes. Browser settings govern requests; update all components since old CLIs/daemons may end help locally.
-
-Remote content reads/actions require task-created or borrowed tabs; popups gain no control.
-An unowned tab inside the Agent Window needs the user to move it to a user window before borrowing.
-
-## Ask the human when needed
-
-With human help enabled, use `browser_assist` action `request-help` for login, captcha, OTP,
-payment confirmation, consent, or other human steps. Give a precise prompt and fresh targets;
-use completion criteria only for a stable success signal. Resume on continuation or completion;
-cancellation and timeout block the step. Observe again before using refs.
-
-With help disabled, task/host rules and borrow confirmation still apply; no new permission is granted.
-`disabled` confirms no human action: re-observe, use existing login state and authorized
-inputs, and continue. Where task/host rules allow, models with vision may attempt graphical
-verification using screenshots and supported interactions. Phone-only QR scans, face verification,
-unavailable SMS codes, and image-only CAPTCHAs for text-only models may remain blocked. Try viable
-alternatives and verify results; block only for missing inputs/capability or exhausted options.
-Do not repeat unknown effects, request help again, or switch backends. Continue independent work.
-
-`browser_assist` also resizes the Agent Window or emulates a device for one tab.
-
-## Debug and recover without wandering
-
-Use `browser_inspect` console or network actions only for relevant, bounded, read-only diagnostics.
-Continue from returned sequence cursors instead of rereading the same buffer.
-
-- Stale ref: observe again and retry the intended action once.
-- Unknown tab: list tabs instead of guessing.
-- Unknown session: list owned sessions or start one; never try foreign ids.
-- Timeout: inspect current state before deciding whether one longer purposeful wait is useful.
-- Fill result unconfirmed: observe the field first; the page may have formatted the value. Continue
-  if the visible result satisfies the user's intent. Otherwise correct the remaining difference;
-  do not blindly repeat fill or immediately request human help. For other fill errors, follow the
-  returned hint and inspect current state before retrying.
-- Unrecoverable failure: report the blocker and stop the owned session.
-
-Arbitrary page-script evaluation and interaction recording are intentionally unsupported. Do not
-invent tools or route around those limits.
+Arbitrary page-script evaluation and interaction recording are intentionally unsupported.
+Do not invent tools or bypass these limits.
 
 ## Canvas and continuation
 
-[visual:screenshot] means screenshot that ref first; names are optional, not inferred from
-nearby controls. If needed images cannot be understood, ask to switch models and use semantics.
-Click via browser_interact(action=click,target=ref,captureId=...,imageX=...,imageY=...), using
-ORIGINAL PNG pixels. Captures are single-use, last two minutes, and expire on ref replacement
-or a new screenshot of that ref. captureUnavailable means view only; observe and screenshot
-again. Counts 1/2 and buttons/modifiers work, not Canvas fill/IME/drag/hover. Repainting is allowed:
-verify results; use DOM refs for revealed controls. Inspect before retrying effect_state=unknown.
+`@eN canvas [visual:screenshot]` is text, not an image. Screenshot the ref when needed; never infer
+Canvas names/controls from nearby labels. If images cannot be understood, ask for
+an image-capable model and continue with available semantics.
 
-No default token cap. With maxTokens, follow nextCursor via observe(cursor=...); each page can
-contain many Canvas refs and replaces previous refs. This reads the same observation without
-recapture or depth changes. New observe/snapshot or DOM identity changes invalidate continuation.
+```text
+browser_inspect({ action: "screenshot", session: "<id>", ref: "@e3" })
+browser_interact({ action: "click", session: "<id>", target: "@e3", captureId: "<capture-id>", imageX: 100, imageY: 50 })
+```
+
+Use the returned captureId and a point actually seen in ORIGINAL PNG pixels, not
+resized display/viewport coordinates. Captures are single-use, last 2m, and expire
+on ref replacement or a newer screenshot of that ref. `captureUnavailable` means
+view-only: observe and screenshot again before clicking. Counts 1/2 and buttons/
+modifiers work; Canvas fill/IME/drag/hover/HTML do not. Repainting is allowed; verify
+results and use DOM refs for revealed controls. Inspect `effect_state=unknown`
+before retrying with a new capture.
+
+No default token cap. With `maxTokens`, follow `nextCursor` using observe's `cursor`
+for remaining content. Each page replaces refs: use them before continuing, never
+reuse old ones. Continuation reads the same capture without refresh/depth changes;
+new observe/snapshot or changed page identity invalidates it.
