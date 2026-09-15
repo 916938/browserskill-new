@@ -200,9 +200,13 @@ try {
     Install-Binary $source $blockedTarget
     Assert-Equal (Get-FileHash -LiteralPath $blockedTarget).Hash (Get-FileHash -LiteralPath $source).Hash
 
-    # A remaining lock must fail without truncation or staging debris.
-    $lock = [IO.File]::Open($target, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::None)
-    try { Assert-Fails { Install-Binary $source $target } } finally { $lock.Dispose() }
+    # Permit background readers while denying writes/deletion needed for replacement.
+    # Keep a compatible reader open so the fixture also covers this sharing conflict.
+    $reader = [IO.File]::Open($target, [IO.FileMode]::Open, [IO.FileAccess]::Read, ([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete))
+    try {
+        $lock = [IO.File]::Open($target, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+        try { Assert-Fails { Install-Binary $source $target } } finally { $lock.Dispose() }
+    } finally { $reader.Dispose() }
     Assert-Equal (Get-FileHash -LiteralPath $target).Hash $before
     if (@(Get-ChildItem -LiteralPath $targetDir -Filter "*.install-*").Count) { throw "staging files leaked" }
 
