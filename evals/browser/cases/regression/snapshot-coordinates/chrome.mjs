@@ -13,6 +13,7 @@ export async function withChrome(
     extensionPath,
     headless = true,
     softwareRendering = false,
+    startupTimeout = 15_000,
     onEvent,
   },
   run,
@@ -57,7 +58,7 @@ export async function withChrome(
       let output = "";
       const timeout = setTimeout(
         () => reject(new Error(`Chrome startup timed out: ${output}`)),
-        15_000,
+        startupTimeout,
       );
       const fail = (error) => {
         clearTimeout(timeout);

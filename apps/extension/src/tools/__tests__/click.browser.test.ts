@@ -46,6 +46,8 @@ describe.skipIf(!process.env.BSK_CLICK_CHROME)("real browser click readiness", (
           executable: process.env.BSK_CLICK_CHROME,
           deviceScale: 1.5,
           zoom: 1,
+          // A standalone CI job starts Chrome cold, before frontend work warms the runner.
+          startupTimeout: 30_000,
           onEvent: (event: CdpEvent) => onEvent?.(event),
         },
         async (send: Send) => {
