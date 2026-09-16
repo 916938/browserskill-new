@@ -1,0 +1,21 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "BrowserCloseParams",
+  "description": "`browser.close` request payload.",
+  "type": "object",
+  "required": [
+    "browser_id",
+    "confirm"
+  ],
+  "properties": {
+    "browser_id": {
+      "description": "Exact `instance_id` reported by `bsk browsers`. Smart labels and prefixes are never accepted here: closing the wrong browser is unrecoverable.",
+      "type": "string"
+    },
+    "confirm": {
+      "description": "Must be `true`. Kept on the wire (not just on the CLI) so a non-CLI peer cannot quit a browser without acknowledging it.",
+      "type": "boolean"
+    }
+  },
+  "additionalProperties": false
+}

@@ -45,6 +45,10 @@ pub enum Method {
 
     #[serde(rename = "browser.list")]
     BrowserList,
+    /// Stop every session of a connected browser and close all of its
+    /// windows, which makes the browser process exit.
+    #[serde(rename = "browser.close")]
+    BrowserClose,
     #[serde(rename = "browser.tabs.list")]
     BrowserTabsList,
     #[serde(rename = "browser.tabs.select")]
@@ -200,6 +204,7 @@ impl Method {
             // Browser/page mutations — gated by pending-interrupt.
             Method::BrowserTabsCreate
             | Method::BrowserTabsSelect
+            | Method::BrowserClose
             | Method::ToolTabCreate
             | Method::ToolTabClose
             | Method::ToolTabBorrow

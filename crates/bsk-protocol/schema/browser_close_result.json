@@ -1,0 +1,39 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "BrowserCloseResult",
+  "description": "`browser.close` response payload.",
+  "type": "object",
+  "required": [
+    "browser_id",
+    "closed",
+    "disconnected",
+    "sessions_stopped",
+    "windows_closed"
+  ],
+  "properties": {
+    "browser_id": {
+      "description": "Echo of the requested `instance_id`.",
+      "type": "string"
+    },
+    "closed": {
+      "description": "`true` when every window of the instance was closed (or the connection dropped, see [`Self::disconnected`]). The browser process is expected to exit.",
+      "type": "boolean"
+    },
+    "disconnected": {
+      "description": "`true` when the extension's reply never arrived because its WebSocket dropped — i.e. the browser went away while closing. The daemon reports success in that case; `windows_closed` may then under-report.",
+      "type": "boolean"
+    },
+    "sessions_stopped": {
+      "description": "Sessions that were stopped so their Agent Windows did not leak.",
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0.0
+    },
+    "windows_closed": {
+      "description": "Windows the extension closed before replying.",
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0.0
+    }
+  }
+}

@@ -1,5 +1,6 @@
 //! browser-skill wire protocol — frames, methods, tool payloads, handshake.
 
+pub mod browser;
 pub mod browser_tabs;
 pub mod cancel;
 pub mod error;
@@ -9,6 +10,7 @@ pub mod system;
 pub mod template;
 pub mod tools;
 
+pub use browser::{BrowserCloseParams, BrowserCloseResult};
 pub use cancel::{CancelParams, CancelResult};
 pub use error::{DecodeError, ErrorCode, RpcError};
 pub use frame::{EventFrame, EventKind, Frame, RequestFrame, ResponseBody, ResponseFrame, RpcId};
