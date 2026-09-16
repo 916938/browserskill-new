@@ -5,6 +5,7 @@ including detached daemons. Linux WorkBuddy users reported this with its
 bubblewrap-based Bash sandbox in [issue #214](https://github.com/Tencent/BrowserSkill/issues/214).
 In such an environment, keep the daemon in a persistent host execution context
 and run browser commands inside the sandbox over shared local IPC.
+The same setup applies to Windows agents whose shell tasks terminate child processes.
 
 Ordinary local use still auto-starts the daemon. No sandbox detection, service
 installation or global change to home-directory resolution is required.
@@ -31,18 +32,31 @@ the process's global `HOME`.
 
 ## 2. Start the daemon in the owning host environment
 
-From the user's normal host terminal, outside the per-command sandbox:
+If the agent host provides a persistent background-task facility, let that task
+own the foreground daemon outside the per-command sandbox:
+
+```bash
+BSK_HOME=/absolute/shared/bsk bsk daemon start --foreground
+```
+
+For Windows hosts using PowerShell, set the chosen shared directory in that task
+before starting the daemon. Replace `C:\path\to\shared\bsk` with the actual path:
+
+```powershell
+$env:BSK_HOME = 'C:\path\to\shared\bsk'
+bsk daemon start --foreground
+```
+
+Keep the host task running across subsequent browser commands. `--foreground`
+keeps the daemon attached to that task; it does not make an ordinary short-lived
+shell persistent. If no persistent task facility is available, the user can
+instead start the daemon from a normal host terminal:
 
 ```bash
 BSK_HOME=/absolute/shared/bsk bsk daemon start
 ```
 
-If the agent host provides a persistent background-task facility, let that task
-own the foreground daemon instead:
-
-```bash
-BSK_HOME=/absolute/shared/bsk bsk daemon start --foreground
-```
+In PowerShell, set `BSK_HOME` as above and run `bsk daemon start`.
 
 Use the host's approved mechanism for that launch to run outside the sandbox.
 CodeBuddy's [tool reference](https://www.codebuddy.ai/docs/cli/tools-reference)
@@ -71,6 +85,16 @@ BSK_HOME=/absolute/shared/bsk BSK_AUTO_START=0 bsk doctor
 BSK_HOME=/absolute/shared/bsk BSK_AUTO_START=0 bsk session start
 ```
 
+In PowerShell, set the same directory and disable implicit startup in every
+shell invocation, or configure both variables persistently in the agent host:
+
+```powershell
+$env:BSK_HOME = 'C:\path\to\shared\bsk'
+$env:BSK_AUTO_START = '0'
+bsk doctor
+bsk session start
+```
+
 Retain the session ID. In a separate shell invocation, replace `SESSION_ID`:
 
 ```bash
@@ -78,6 +102,9 @@ BSK_HOME=/absolute/shared/bsk BSK_AUTO_START=0 bsk navigate https://example.com 
 BSK_HOME=/absolute/shared/bsk BSK_AUTO_START=0 bsk snapshot --session SESSION_ID
 BSK_HOME=/absolute/shared/bsk BSK_AUTO_START=0 bsk session stop SESSION_ID
 ```
+
+In PowerShell, repeat the two environment assignments before the same `bsk`
+commands; do not use the Unix `NAME=value command` syntax.
 
 `BSK_AUTO_START=0` disables **implicit** startup by browser commands and doctor.
 It still connects to a working daemon. When discovery is missing or no endpoint
