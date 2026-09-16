@@ -7,6 +7,8 @@ Starting from 0.2.0, CLI / Extension / DSH Plugin share the same version number.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-16
+
 ### Added
 
 - [Remote browser connections](docs/remote-extension-connection.md) with a built-in
