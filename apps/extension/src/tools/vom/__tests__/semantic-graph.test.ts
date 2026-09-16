@@ -41,6 +41,66 @@ function document(
 }
 
 describe("semantic VOM graph", () => {
+  it.each([
+    { ax: "true", live: false, ignored: false, aria: "false", expected: true },
+    { ax: "false", live: true, ignored: false, aria: "true", expected: false },
+    { ax: "mixed", live: true, ignored: false, aria: "true", expected: "mixed" },
+    { ax: "true", live: false, ignored: true, aria: "true", expected: false },
+    { ax: undefined, live: false, ignored: false, aria: "true", expected: false },
+    { ax: undefined, live: undefined, ignored: false, aria: "mixed", expected: "mixed" },
+    { ax: undefined, live: undefined, ignored: false, aria: undefined, expected: undefined },
+  ])("resolves checked state without confusing value/default attributes: %j", ({
+    ax,
+    live,
+    ignored,
+    aria,
+    expected,
+  }) => {
+    const control = {
+      ...dom(2, 1, live === undefined ? "div" : "input", {
+        role: "checkbox",
+        type: "checkbox",
+        checked: "",
+        "aria-label": "Subscribe",
+        ...(aria !== undefined ? { "aria-checked": aria } : {}),
+      }),
+      formValue: "on",
+      ...(live !== undefined ? { checked: live } : {}),
+    };
+    const scene = buildSemanticVomScene({
+      viewport: { width: 800, height: 600 },
+      rootFrameId: "main",
+      documents: [
+        document(
+          "main",
+          [
+            {
+              nodeId: "root",
+              backendDOMNodeId: 1,
+              role: { type: "role", value: "RootWebArea" },
+              childIds: ["check"],
+            },
+            {
+              nodeId: "check",
+              parentId: "root",
+              backendDOMNodeId: 2,
+              ignored,
+              role: { type: "role", value: "checkbox" },
+              name: { type: "computedString", value: "Subscribe" },
+              ...(ax !== undefined
+                ? { properties: [{ name: "checked", value: { value: ax } }] }
+                : {}),
+            },
+          ],
+          [dom(1, null, "body"), control],
+        ),
+      ],
+    });
+    const resolved = scene.nodes.find((n) => n.backendNodeId === 2)!;
+    expect(resolved.checked).toBe(expected);
+    expect(resolved.value).toBe("on");
+  });
+
   it("preserves backend-less AX structure without making it referenceable", () => {
     const scene = buildSemanticVomScene({
       viewport: { width: 800, height: 600 },

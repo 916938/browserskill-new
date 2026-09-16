@@ -310,7 +310,7 @@ describe.skipIf(!process.env.BSK_WHEEL_CHROME)("real browser wheel", () => {
       expect(await h.wheel({ selector: "#probe", delta_y: 100 }, abort.signal)).toMatchObject({
         code: "cancelled",
       });
-      expect(h.calls.map((c) => c.method)).toEqual(["DOM.getDocument"]);
+      expect(h.calls.map((c) => c.method)).toEqual(["Runtime.evaluate", "DOM.getDocument"]);
       expect(await h.evaluate("({y:scrollY,count:window.wheels.length})")).toEqual({
         y: 0,
         count: 0,

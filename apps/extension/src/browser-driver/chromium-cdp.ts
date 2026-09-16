@@ -189,6 +189,8 @@ export class ChromiumCdp {
     private readonly options: {
       /** CDP observation alone does not authorize dismissing user dialogs. */
       shouldAutoAcceptDialog?: (tabId: number) => boolean | Promise<boolean>;
+      /** Invalidate document-bound references, including child-frame navigations. */
+      onDocumentChanged?: (tabId: number) => void;
     } = {},
   ) {
     this.api = api;
@@ -452,6 +454,7 @@ export class ChromiumCdp {
     if (!this.attachedTabs.has(tabId)) return;
     this.attachedTabs.delete(tabId);
     this.attachmentIds.delete(tabId);
+    this.options.onDocumentChanged?.(tabId);
     this.clearDialogState(tabId);
     this.clearConsoleState(tabId);
     this.clearNetworkState(tabId);
@@ -511,6 +514,7 @@ export class ChromiumCdp {
     this.tabOwners.clear();
     this.attachedTabs.clear();
     this.attachmentIds.clear();
+    for (const tabId of tabs) this.options.onDocumentChanged?.(tabId);
     this.dialogBuffers.clear();
     this.dialogSequences.clear();
     this.consoleBuffers.clear();
@@ -585,11 +589,22 @@ export class ChromiumCdp {
     const listener = (source: CdpDebuggee, method: string, params: unknown) => {
       const tabId = source.tabId;
       if (typeof tabId !== "number") return;
+      if (
+        [
+          "Page.frameNavigated",
+          "Page.documentOpened",
+          "DOM.documentUpdated",
+          "Page.frameDetached",
+        ].includes(method)
+      ) {
+        this.options.onDocumentChanged?.(tabId);
+      }
       const raw = (params ?? {}) as Record<string, unknown>;
       const sessionId = typeof raw.sessionId === "string" ? raw.sessionId : undefined;
       if (!sessionId) return;
 
       if (method === "Target.detachedFromTarget") {
+        this.options.onDocumentChanged?.(tabId);
         const state = this.frameDiscovery.get(tabId);
         if (state?.sessions.delete(sessionId)) state.generation += 1;
         return;
@@ -856,6 +871,7 @@ export class ChromiumCdp {
     if (this.detachSubscription) return;
     const listener = (source: chrome.debugger.Debuggee, _reason: string) => {
       if (typeof source.tabId === "number") {
+        this.options.onDocumentChanged?.(source.tabId);
         this.attachedTabs.delete(source.tabId);
         this.attachmentIds.delete(source.tabId);
         this.attachInFlight.delete(source.tabId);

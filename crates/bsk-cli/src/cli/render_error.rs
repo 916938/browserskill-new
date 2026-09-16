@@ -259,6 +259,32 @@ pub fn info_for_error(code: ErrorCode, data: Option<&serde_json::Value>) -> Rend
             ),
             exit_code: base.exit_code,
         },
+        (_, "target_disabled") => RenderInfo {
+            summary: "the target control is disabled",
+            hint: Some(
+                "observe the page and satisfy the control's prerequisites before trying again",
+            ),
+            ..base
+        },
+        (_, "input_not_ready") => RenderInfo {
+            summary: "the browser did not become ready for native input",
+            hint: Some("no input was sent; observe the page again before retrying"),
+            ..base
+        },
+        (_, "input_cleanup_failed") => RenderInfo {
+            summary: "input completed but temporary browser state could not be restored",
+            hint: Some(
+                "do not repeat the input; observe the page to check its result before continuing",
+            ),
+            ..base
+        },
+        (ErrorCode::Timeout, "cancel_cleanup_timeout") => RenderInfo {
+            summary: "the browser operation did not finish cancellation in time",
+            hint: Some(
+                "the operation may already have taken effect; observe the page before deciding whether to retry",
+            ),
+            ..base
+        },
         (_, reason::TRANSFER_OUTCOME_UNKNOWN) => RenderInfo {
             summary: "the file transfer outcome could not be confirmed",
             hint: Some(
@@ -844,5 +870,29 @@ mod tests {
             "single-select requires exactly one option value"
         );
         assert!(info.hint.unwrap().contains("exactly one"));
+    }
+    #[test]
+    fn input_recovery_hints_do_not_encourage_blind_replay() {
+        let ready = info_for_error(
+            ErrorCode::CdpFailed,
+            Some(&serde_json::json!({"reason":"input_not_ready"})),
+        );
+        assert!(ready.hint.unwrap().contains("no input was sent"));
+        let cleanup = info_for_error(
+            ErrorCode::CdpFailed,
+            Some(&serde_json::json!({"reason":"input_cleanup_failed"})),
+        );
+        assert!(cleanup.hint.unwrap().contains("do not repeat"));
+        let timeout = info_for_error(
+            ErrorCode::Timeout,
+            Some(&serde_json::json!({"reason":"cancel_cleanup_timeout"})),
+        );
+        assert!(
+            timeout
+                .hint
+                .unwrap()
+                .contains("may already have taken effect")
+        );
+        assert_eq!(timeout.exit_code, 4);
     }
 }

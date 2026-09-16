@@ -1070,6 +1070,7 @@ async function handleVomObservation(
       return isRpcError(page) ? page : attachDialogs(deps.cdp, target.tabId, dialogCursor, page);
     }
     clearObservationContinuation(ctx.refStore);
+    const documentRevision = ctx.refStore.documentRevision(target.tabId);
     const observation = await captureVomObservation(deps.cdp, target.tabId, target.url, {
       includeVisualFacts: toolName === "observe",
       maxDepth: params.max_depth,
@@ -1080,6 +1081,13 @@ async function handleVomObservation(
       signal,
     });
     throwIfAborted(signal, toolName);
+    if (ctx.refStore.documentRevision(target.tabId) !== documentRevision) {
+      return {
+        code: "not_found",
+        message: "Document changed during observation; observe again",
+        data: { reason: "ref_not_found" },
+      };
+    }
     if (observation.visualOutput) {
       const page = await publishObservationPage(
         ctx.refStore,

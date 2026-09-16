@@ -713,6 +713,10 @@ function renderNodeLine(
   const rawValue = cleaned(node.value);
   const role = normalizedRole(node);
   const fillable = ["textbox", "searchbox"].includes(role);
+  if (node.disabled) line += " [disabled]";
+  if (node.checked !== undefined) {
+    line += ` [${node.checked === "mixed" ? "mixed" : node.checked ? "checked" : "unchecked"}]`;
+  }
   if (fillable) {
     line += ` [${node.inputState ?? (rawValue === undefined ? "empty" : "filled")}]`;
   }

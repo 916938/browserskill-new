@@ -55,6 +55,17 @@ describe("page capture cleanup", () => {
     document.body.innerHTML = "";
   });
 
+  it("rejects an initially hidden page before changing styles or scroll", async () => {
+    vi.spyOn(document, "hidden", "get").mockReturnValue(true);
+    const before = document.documentElement.innerHTML;
+    await expect(
+      send({ action: "begin", label: "Capture", cancelLabel: "Cancel" }),
+    ).rejects.toMatchObject({ code: "interrupted", reason: "page_hidden" });
+    expect(document.documentElement.innerHTML).toBe(before);
+    expect(window.scrollTo).not.toHaveBeenCalled();
+    expect(cancel).not.toHaveBeenCalled();
+  });
+
   it("restores each changed CSS property and the original two-dimensional scroll", async () => {
     await send({ action: "begin", label: "Capture", cancelLabel: "Cancel" });
     const moving = send({ action: "move", y: 800, capture: true });

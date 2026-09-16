@@ -61,6 +61,8 @@ async function fixture(frame: "top" | "same-target" | "oopif" = "top") {
     hooks.after(call);
     if (override) return override as T;
     const args = call.params ?? {};
+    if (method === "Runtime.evaluate" && args.expression === "document.visibilityState")
+      return { result: { value: "visible" } } as T;
     const replies: Record<string, unknown> = {
       "DOM.getDocument": { root: { nodeId: 1 } },
       "DOM.querySelector": { nodeId: 2 },
@@ -122,6 +124,45 @@ async function fixture(frame: "top" | "same-target" | "oopif" = "top") {
 afterEach(() => vi.restoreAllMocks());
 
 describe("handleWheel", () => {
+  it.each([
+    "complete",
+    "cancel",
+    "failed",
+  ])("keeps hidden rendering ready until the wheel is painted (%s)", async (mode) => {
+    const f = await fixture();
+    let finish: ((value: object) => void) | undefined;
+    f.hooks.reply = (call) => {
+      if (call.method === "Emulation.setFocusEmulationEnabled") return {};
+      if (call.method === "Page.captureScreenshot") return { data: "frame" };
+      if (call.method === "Runtime.evaluate") {
+        if (call.params?.expression === "document.visibilityState")
+          return { result: { value: "hidden" } };
+        return new Promise<object>((resolve) => {
+          finish = resolve;
+        });
+      }
+    };
+    const pending = f.run();
+    await vi.waitFor(() => expect(finish).toBeDefined());
+    expect(
+      f.calls.filter((c) => c.method === "Emulation.setFocusEmulationEnabled").map((c) => c.params),
+    ).toEqual([{ enabled: true }]);
+    if (mode === "cancel") f.abort.abort();
+    else finish!({ result: { value: mode === "complete" } });
+    const result = await pending;
+    if (mode === "complete") expect(result).not.toHaveProperty("code");
+    else
+      expect(result).toMatchObject({
+        code: mode === "cancel" ? "cancelled" : "cdp_failed",
+        data: { effect_state: "unknown" },
+      });
+    expect(f.calls.filter((c) => c.params?.type === "mouseWheel")).toHaveLength(1);
+    expect(
+      f.calls.filter((c) => c.method === "Emulation.setFocusEmulationEnabled").at(-1)?.params,
+    ).toEqual({ enabled: false });
+    finish!({ result: { value: true } });
+  });
+
   it("moves to the viewport centre and sends signed native deltas and modifiers", async () => {
     const f = await fixture();
     expect(
@@ -134,6 +175,10 @@ describe("handleWheel", () => {
       delta_y: 600,
     });
     expect(f.calls.map(({ method, params }) => ({ method, params }))).toEqual([
+      {
+        method: "Runtime.evaluate",
+        params: { expression: "document.visibilityState", returnByValue: true },
+      },
       { method: "Page.getLayoutMetrics", params: {} },
       {
         method: "Input.dispatchMouseEvent",
@@ -347,7 +392,10 @@ describe("handleWheel", () => {
       return undefined;
     };
     expect(await f.run({ ref: "@e3" })).toMatchObject({ code: "cancelled" });
-    expect(f.calls.map((c) => c.method)).toEqual(["DOM.scrollIntoViewIfNeeded"]);
+    expect(f.calls.map((c) => c.method)).toEqual([
+      "Runtime.evaluate",
+      "DOM.scrollIntoViewIfNeeded",
+    ]);
   });
 
   it.each([

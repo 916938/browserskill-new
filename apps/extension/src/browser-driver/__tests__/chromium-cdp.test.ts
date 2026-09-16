@@ -902,3 +902,31 @@ describe("ChromiumCdp", () => {
     expect(cdp.isAttached(1)).toBe(false);
   });
 });
+
+describe("document-bound references", () => {
+  it("invalidates navigation, document replacement and iframe detach, not hash changes", async () => {
+    const { api, onEvent, onDetach } = fakeApi();
+    const changed = vi.fn();
+    const cdp = new ChromiumCdp(api, { onDocumentChanged: changed });
+    await cdp.ensureAttached(4);
+    onEvent.fire({ tabId: 4 }, "Page.navigatedWithinDocument", { frameId: "root" });
+    expect(changed).not.toHaveBeenCalled();
+    for (const method of [
+      "Page.frameNavigated",
+      "Page.documentOpened",
+      "DOM.documentUpdated",
+      "Page.frameDetached",
+    ]) {
+      onEvent.fire({ tabId: 4, sessionId: "child" }, method, { frame: { id: "child" } });
+      expect(changed).toHaveBeenLastCalledWith(4);
+    }
+    onEvent.fire({ tabId: 4 }, "Target.detachedFromTarget", { sessionId: "child" });
+    expect(changed).toHaveBeenCalledTimes(5);
+    await cdp.detach(4);
+    expect(changed).toHaveBeenCalledTimes(6);
+    await cdp.ensureAttached(4);
+    onDetach.fire({ tabId: 4 }, "target_closed");
+    expect(changed).toHaveBeenCalledTimes(7);
+    cdp.dispose();
+  });
+});

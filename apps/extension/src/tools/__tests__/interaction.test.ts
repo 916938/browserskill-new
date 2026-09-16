@@ -27,11 +27,22 @@ function fakeAgentWindow(ids: number[]) {
   };
 }
 
-function makeFakeCdp(handlers: Record<string, (params: unknown) => unknown>) {
+function makeFakeCdp(
+  handlers: Record<string, (params: unknown) => unknown>,
+  visibility: () => string = () => "visible",
+  rendered: () => boolean | Promise<boolean> = () => true,
+) {
   const sent: Array<{ tabId: number; method: string; params?: object }> = [];
   const sendImpl = async (tabId: number, method: string, params?: object) => {
     sent.push({ tabId, method, params });
+    if (
+      method === "Runtime.evaluate" &&
+      (params as { expression?: string })?.expression === "document.visibilityState"
+    )
+      return { result: { value: visibility() } };
+    if (method === "Page.captureScreenshot") return { data: (await rendered()) ? "pixel" : "" };
     const h = handlers[method];
+    if (!h && method === "Accessibility.getPartialAXTree") return { nodes: [] };
     if (!h && method === "Page.getLayoutMetrics") {
       return { cssLayoutViewport: { clientWidth: 1280, clientHeight: 720 } };
     }
@@ -199,6 +210,7 @@ describe("handleClick", () => {
     const targetCalls: Array<{ sessionId?: string; method: string }> = [];
     fake.cdp.sendToTarget = vi.fn(async (target, method) => {
       targetCalls.push({ sessionId: target.sessionId, method });
+      if (method === "Accessibility.getPartialAXTree") return { nodes: [] };
       if (method === "DOM.scrollIntoViewIfNeeded") return {};
       if (method === "DOM.getContentQuads") {
         return { quads: [[10, 20, 110, 20, 110, 60, 10, 60]] };
@@ -220,6 +232,7 @@ describe("handleClick", () => {
     // The iframe content box starts at (204, 306) after its border and is scaled 2x.
     expect(res).toMatchObject({ x: 324, y: 386 });
     expect(targetCalls).toEqual([
+      { sessionId: "child-session", method: "Accessibility.getPartialAXTree" },
       { sessionId: "child-session", method: "DOM.scrollIntoViewIfNeeded" },
       { sessionId: "child-session", method: "DOM.getContentQuads" },
       { sessionId: "child-session", method: "Page.getLayoutMetrics" },
@@ -332,6 +345,24 @@ describe("handleClick", () => {
       { cdp: fake.cdp, tabsApi: fake.tabsApi, bypassOverlay },
     );
     expect(bypassOverlay).not.toHaveBeenCalled();
+  });
+
+  it("rejects a currently disabled target without mouse input", async () => {
+    const manager = new SessionManager({ agentWindow: fakeAgentWindow([100]) });
+    const ctx = await manager.start("aa11");
+    ctx.refStore.set("e1", 100, { tabId: 4 });
+    const fake = makeFakeCdp({
+      "Accessibility.getPartialAXTree": () => ({
+        nodes: [
+          { backendDOMNodeId: 100, properties: [{ name: "disabled", value: { value: true } }] },
+        ],
+      }),
+    });
+    expect(await handleClick(manager, { session_id: "aa11", ref: "e1" }, fake)).toMatchObject({
+      code: "invalid_params",
+      data: { reason: "target_disabled", effect_state: "none" },
+    });
+    expect(fake.sent.some((c) => c.method.startsWith("Input."))).toBe(false);
   });
 
   it("rejects click_count=0", async () => {
@@ -497,6 +528,246 @@ describe("handleClick", () => {
 
     expect(res).toMatchObject({ code: "cancelled" });
     expect(fake.sent.filter((c) => c.method === "Input.dispatchMouseEvent")).toHaveLength(1);
+  });
+});
+
+describe("click input readiness", () => {
+  async function fixture(
+    options: {
+      visibility?: () => string;
+      rendered?: () => boolean | Promise<boolean>;
+      onCommand?: (method: string, params: Record<string, unknown>) => void;
+    } = {},
+  ) {
+    const manager = new SessionManager({ agentWindow: fakeAgentWindow([100]) });
+    const ctx = await manager.start("aa11");
+    ctx.refStore.set("e1", 1234, { tabId: 4 });
+    const handler = (method: string, value: object) => (params: unknown) => {
+      options.onCommand?.(method, params as Record<string, unknown>);
+      return value;
+    };
+    const fake = makeFakeCdp(
+      {
+        "DOM.scrollIntoViewIfNeeded": handler("scroll", {}),
+        "DOM.getContentQuads": handler("quads", { quads: [[0, 0, 40, 0, 40, 20, 0, 20]] }),
+        "DOM.getBoxModel": handler("box", { model: { content: [0, 0, 40, 0, 40, 20, 0, 20] } }),
+        "Emulation.setFocusEmulationEnabled": handler("focus", {}),
+        "Input.dispatchMouseEvent": handler("mouse", {}),
+      },
+      options.visibility ?? (() => "hidden"),
+      options.rendered,
+    );
+    let attachmentId: string | undefined = "original";
+    fake.cdp.getAttachmentId = () => attachmentId;
+    return {
+      ...fake,
+      ctx,
+      replaceAttachment: (id?: string) => {
+        attachmentId = id;
+      },
+      click: (signal?: AbortSignal) =>
+        handleClick(manager, { session_id: "aa11", ref: "e1" }, { ...fake, signal }),
+      focusCommands: () =>
+        fake.sent.filter((c) => c.method === "Emulation.setFocusEmulationEnabled"),
+      mouseCommands: () => fake.sent.filter((c) => c.method === "Input.dispatchMouseEvent"),
+    };
+  }
+
+  it("leaves visible pages and an existing focus override alone", async () => {
+    const f = await fixture({ visibility: () => "visible" });
+    expect(await f.click()).not.toHaveProperty("code");
+    expect(f.focusCommands()).toEqual([]);
+    expect(f.mouseCommands()).toHaveLength(3);
+  });
+
+  it("wakes even an active-but-hidden page before geometry, then restores after release", async () => {
+    const f = await fixture();
+    expect(await f.click()).not.toHaveProperty("code");
+    expect(f.focusCommands().map((c) => c.params)).toEqual([{ enabled: true }, { enabled: false }]);
+    const names = f.sent.map((c) => c.method);
+    expect(names.indexOf("Emulation.setFocusEmulationEnabled")).toBeLessThan(
+      names.indexOf("DOM.scrollIntoViewIfNeeded"),
+    );
+    expect(names.at(-1)).toBe("Emulation.setFocusEmulationEnabled");
+    expect(f.mouseCommands().at(-1)?.params).toMatchObject({ type: "mouseReleased" });
+    expect(f.cdp.trackSessionTab).toHaveBeenCalledWith("aa11", 4);
+    expect(names).not.toContain("Page.bringToFront");
+  });
+
+  it.each([
+    "before",
+    "visibility",
+    "enable",
+    "mouseMoved",
+    "mousePressed",
+  ])("cleans up cancellation at %s without repeating the click", async (step) => {
+    const controller = new AbortController();
+    if (step === "before") controller.abort();
+    const f = await fixture({
+      visibility: () => {
+        if (step === "visibility") controller.abort();
+        return "hidden";
+      },
+      onCommand: (method, params) => {
+        if (
+          (method === "focus" && params.enabled && step === "enable") ||
+          (method === "mouse" && params.type === step)
+        )
+          controller.abort();
+      },
+    });
+    expect(await f.click(controller.signal)).toMatchObject({ code: "cancelled" });
+    const enabled = !["before", "visibility"].includes(step);
+    expect(f.focusCommands().map((c) => c.params)).toEqual(
+      enabled ? [{ enabled: true }, { enabled: false }] : [],
+    );
+    const events = f.mouseCommands().map((c) => (c.params as { type: string }).type);
+    expect(events).toEqual(
+      step === "mousePressed"
+        ? ["mouseMoved", "mousePressed", "mouseReleased"]
+        : step === "mouseMoved"
+          ? ["mouseMoved"]
+          : [],
+    );
+  });
+
+  it.each(["enable", "geometry", "press"])("restores focus after a %s failure", async (step) => {
+    const f = await fixture({
+      onCommand: (method, params) => {
+        if (
+          (step === "enable" && method === "focus" && params.enabled) ||
+          (step === "geometry" && ["quads", "box"].includes(method)) ||
+          (step === "press" && method === "mouse" && params.type === "mousePressed")
+        )
+          throw new Error("injected failure");
+      },
+    });
+    expect(await f.click()).toHaveProperty("code");
+    expect(f.focusCommands().map((c) => c.params)).toEqual([{ enabled: true }, { enabled: false }]);
+    if (step === "press")
+      expect(f.mouseCommands().at(-1)?.params).toMatchObject({ type: "mouseReleased" });
+    else expect(f.mouseCommands()).toHaveLength(0);
+  });
+
+  it("restores the tab-scoped override after navigation in the same attachment", async () => {
+    const f = await fixture({
+      onCommand: (method, params) => {
+        if (method === "mouse" && params.type === "mouseReleased") f.replaceAttachment("original");
+      },
+    });
+    expect(await f.click()).not.toHaveProperty("code");
+    expect(f.focusCommands().at(-1)?.params).toEqual({ enabled: false });
+  });
+
+  it.each([
+    undefined,
+    "replacement",
+  ])("does not reattach or alter a replaced attachment (%s)", async (id) => {
+    const f = await fixture({
+      onCommand: (method, params) => {
+        if (method === "mouse" && params.type === "mouseReleased") f.replaceAttachment(id);
+      },
+    });
+    expect(await f.click()).not.toHaveProperty("code");
+    expect(f.focusCommands().map((c) => c.params)).toEqual([{ enabled: true }]);
+  });
+
+  it("rejects a document replaced during readiness before any pointer event", async () => {
+    const f = await fixture({
+      rendered: () => {
+        f.ctx.refStore.invalidateTab(4);
+        return true;
+      },
+    });
+    expect(await f.click()).toMatchObject({
+      code: "not_found",
+      data: { reason: "ref_not_found", effect_state: "none" },
+    });
+    expect(f.mouseCommands()).toEqual([]);
+    expect(f.focusCommands().map((c) => c.params)).toEqual([{ enabled: true }, { enabled: false }]);
+  });
+
+  it("cancels a pending surface read and consumes its late reply without clicking", async () => {
+    const controller = new AbortController();
+    let complete!: (value: boolean) => void;
+    const f = await fixture({
+      rendered: () =>
+        new Promise<boolean>((resolve) => {
+          complete = resolve;
+          controller.abort();
+        }),
+    });
+    expect(await f.click(controller.signal)).toMatchObject({
+      code: "cancelled",
+      data: { effect_state: "none" },
+    });
+    complete(true);
+    await Promise.resolve();
+    expect(f.mouseCommands()).toEqual([]);
+    expect(f.focusCommands().at(-1)?.params).toEqual({ enabled: false });
+  });
+
+  it("does not click when rendering fails to become ready", async () => {
+    const f = await fixture({ rendered: () => false });
+    expect(await f.click()).toMatchObject({ code: "cdp_failed", data: { effect_state: "none" } });
+    expect(f.mouseCommands()).toHaveLength(0);
+    expect(f.focusCommands().at(-1)?.params).toEqual({ enabled: false });
+  });
+
+  it("cancels a hung render wait and restores focus without waiting for the page", async () => {
+    const controller = new AbortController();
+    const f = await fixture({
+      rendered: () => {
+        controller.abort();
+        return new Promise(() => {});
+      },
+    });
+    expect(await f.click(controller.signal)).toMatchObject({ code: "cancelled" });
+    expect(f.mouseCommands()).toHaveLength(0);
+    expect(f.focusCommands().at(-1)?.params).toEqual({ enabled: false });
+  });
+
+  it("bounds a hung render wait independently of the page timers", async () => {
+    vi.useFakeTimers();
+    try {
+      const f = await fixture({ rendered: () => new Promise(() => {}) });
+      const click = f.click();
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(await click).toMatchObject({ code: "cdp_failed", data: { effect_state: "none" } });
+      expect(f.mouseCommands()).toHaveLength(0);
+      expect(f.focusCommands().at(-1)?.params).toEqual({ enabled: false });
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("reports cleanup failure without retrying a completed click", async () => {
+    const f = await fixture({
+      onCommand: (method, params) => {
+        if (method === "focus" && !params.enabled) throw new Error("cleanup failed");
+      },
+    });
+    expect(await f.click()).toMatchObject({
+      code: "cdp_failed",
+      data: { effect_state: "unknown", cleanup_error: "cleanup failed" },
+    });
+    expect(f.mouseCommands()).toHaveLength(3);
+  });
+
+  it("preserves the primary error when cleanup also fails", async () => {
+    const f = await fixture({
+      onCommand: (method, params) => {
+        if (method === "focus")
+          throw new Error(params.enabled ? "enable failed" : "cleanup failed");
+      },
+    });
+    expect(await f.click()).toMatchObject({
+      code: "cdp_failed",
+      message: "enable failed",
+      data: { effect_state: "none", cleanup_error: "cleanup failed" },
+    });
+    expect(f.mouseCommands()).toHaveLength(0);
   });
 });
 

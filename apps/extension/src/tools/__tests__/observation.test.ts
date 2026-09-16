@@ -2748,12 +2748,15 @@ describe("handleSnapshot", () => {
     );
   });
 
-  it("hovers the page only after the accessibility tree has been captured", async () => {
+  it.each([
+    false,
+    true,
+  ])("does not publish refs if navigation interrupts capture (%s)", async (navigated) => {
     // Hovering can open menus and reflow the page. Probing between the DOM and
     // AX captures would leave the two halves of one observation describing the
     // page on either side of that change.
     const sm = new SessionManager({ agentWindow: fakeAgentWindow([100]) });
-    await sm.start("aa11");
+    const ctx = await sm.start("aa11");
     const root: CdpAxNode = {
       nodeId: "1",
       role: { type: "role", value: "RootWebArea" },
@@ -2774,7 +2777,10 @@ describe("handleSnapshot", () => {
     const send = vi.fn(async (_tabId: number, method: string, params?: object) => {
       methodOrder.push(method);
       if (method === "Accessibility.enable") return {};
-      if (method === "Accessibility.getFullAXTree") return { nodes: [root, button] };
+      if (method === "Accessibility.getFullAXTree") {
+        if (navigated) ctx.refStore.invalidateTab(4);
+        return { nodes: [root, button] };
+      }
       if (method === "Page.getLayoutMetrics") {
         return {
           visualViewport: { clientWidth: 1000 },
@@ -2847,6 +2853,11 @@ describe("handleSnapshot", () => {
       },
     );
 
+    if (navigated) {
+      expect(res).toMatchObject({ code: "not_found", data: { reason: "ref_not_found" } });
+      expect(ctx.refStore.isEmpty()).toBe(true);
+      return;
+    }
     if ("code" in res) throw new Error(`unexpected error: ${JSON.stringify(res)}`);
     const firstHover = methodOrder.indexOf("Input.dispatchMouseEvent");
     expect(firstHover).toBeGreaterThan(-1);
