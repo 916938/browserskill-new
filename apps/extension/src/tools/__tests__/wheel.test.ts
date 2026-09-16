@@ -125,6 +125,29 @@ afterEach(() => vi.restoreAllMocks());
 
 describe("handleWheel", () => {
   it.each([
+    "geometry",
+    "move",
+    "wheel",
+  ])("distinguishes a %s failure from a sent wheel input", async (step) => {
+    const f = await fixture();
+    f.hooks.reply = (call) => {
+      if (
+        (step === "geometry" && call.method === "Page.getLayoutMetrics") ||
+        (step === "move" && call.params?.type === "mouseMoved") ||
+        (step === "wheel" && call.params?.type === "mouseWheel")
+      )
+        throw new Error("injected failure");
+      return undefined;
+    };
+    expect(await f.run()).toMatchObject({
+      code: "cdp_failed",
+      data: {
+        effect_state: step === "wheel" ? "unknown" : "none",
+        reason: step === "wheel" ? "input_outcome_unknown" : "input_not_ready",
+      },
+    });
+  });
+  it.each([
     "complete",
     "cancel",
     "failed",

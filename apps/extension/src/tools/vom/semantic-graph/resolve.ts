@@ -510,6 +510,7 @@ export function resolveSemanticGraph(
         tag === "dialog" ||
         (attrs["aria-modal"] ?? "").toLowerCase() === "true",
       disabled:
+        (node.ax?.ignored !== true && axProperty(node.ax, "disabled") === "true") ||
         Object.prototype.hasOwnProperty.call(attrs, "disabled") ||
         (attrs["aria-disabled"] ?? "").toLowerCase() === "true",
       inert: Object.prototype.hasOwnProperty.call(attrs, "inert"),

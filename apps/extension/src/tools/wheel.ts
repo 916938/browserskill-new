@@ -122,11 +122,12 @@ export async function handleWheel(
     if (isRpcError(target)) return target;
     const denied = enforceAgentWindow(ctx, target, "wheel");
     if (denied) return denied;
+    // Reject stale refs before changing hidden-page focus or rendering state.
     if (params.ref) {
       const node = await resolveBackendNode(cdp, ctx, target, { ref: params.ref }, "wheel");
       if (isRpcError(node)) return node;
     }
-    return await withInputReady(ctx, target.tabId, deps, async (hidden) => {
+    return await withInputReady(ctx, target.tabId, { ...deps, deadline }, async (input) => {
       const dialogCursor = markDialogCursor(deps.cdp, target.tabId);
       cdp.trackSessionTab?.(ctx.sessionId, target.tabId);
       const point = await resolveWheelPoint(cdp, ctx, target, params, deadline);
@@ -144,7 +145,8 @@ export async function handleWheel(
         y: point.y,
         modifiers,
       });
-      await cdp.send(target.tabId, "Input.dispatchMouseEvent", {
+      input.markSent();
+      await deps.cdp.send(target.tabId, "Input.dispatchMouseEvent", {
         type: "mouseWheel",
         x: point.x,
         y: point.y,
@@ -152,9 +154,10 @@ export async function handleWheel(
         deltaY,
         modifiers,
       });
+      checkActive();
       // Wheel acknowledgement precedes compositor scrolling. Keep the hidden renderer
       // awake until its resulting frame is available, then restore focus.
-      if (hidden) await waitForInputPaint(cdp, target.tabId, deps.signal);
+      if (input.hidden) await waitForInputPaint(cdp, target.tabId, deps.signal, deadline);
       return attachDialogs(deps.cdp, target.tabId, dialogCursor, {
         tab_id: target.tabId,
         used_ref: point.usedRef,

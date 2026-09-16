@@ -41,6 +41,42 @@ function document(
 }
 
 describe("semantic VOM graph", () => {
+  it.each<{ ax: boolean; ignored: boolean; attrs: Record<string, string>; disabled: boolean }>([
+    { ax: true, ignored: false, attrs: {}, disabled: true },
+    { ax: false, ignored: false, attrs: {}, disabled: false },
+    { ax: true, ignored: true, attrs: {}, disabled: false },
+    { ax: false, ignored: true, attrs: { disabled: "" }, disabled: true },
+    { ax: false, ignored: false, attrs: { "aria-disabled": "true" }, disabled: true },
+  ])("observes inherited AX disabled state while retaining DOM fallbacks: %j", ({
+    ax,
+    ignored,
+    attrs,
+    disabled,
+  }) => {
+    const scene = buildSemanticVomScene({
+      viewport: { width: 800, height: 600 },
+      rootFrameId: "main",
+      documents: [
+        document(
+          "main",
+          [
+            {
+              nodeId: "button",
+              backendDOMNodeId: 2,
+              ignored,
+              role: { type: "role", value: "button" },
+              name: { type: "computedString", value: "Submit" },
+              properties: [{ name: "disabled", value: { value: ax } }],
+            },
+          ],
+          [dom(2, null, "button", attrs, "Submit")],
+        ),
+      ],
+    });
+    expect(scene.nodes.find((node) => node.backendNodeId === 2)?.disabled).toBe(disabled);
+    expect(renderVom(scene).text.includes("[disabled]")).toBe(disabled);
+  });
+
   it.each([
     { ax: "true", live: false, ignored: false, aria: "false", expected: true },
     { ax: "false", live: true, ignored: false, aria: "true", expected: false },

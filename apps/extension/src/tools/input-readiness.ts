@@ -6,6 +6,13 @@ import { isAbortError } from "./vom/capture-abort";
 export interface InputReadinessDeps {
   cdp: CdpRunner;
   signal?: AbortSignal;
+  deadline?: number;
+}
+
+export interface ReadyInput {
+  hidden: boolean;
+  /** Call immediately before sending a click, key press or wheel event. */
+  markSent(): void;
 }
 function abortError(signal?: AbortSignal): RpcError | null {
   return signal?.aborted
@@ -18,16 +25,20 @@ function waitForInputReply<T>(
   pending: Promise<T>,
   signal?: AbortSignal,
   timeout = 5000,
+  deadline = Infinity,
 ): Promise<T> {
   return new Promise((resolve, reject) => {
     const abort = () => {
       cleanup();
       reject(new DOMException("input aborted", "AbortError"));
     };
-    const timer = setTimeout(() => {
-      cleanup();
-      reject(new Error("Renderer did not become ready for input"));
-    }, timeout);
+    const timer = setTimeout(
+      () => {
+        cleanup();
+        reject(new DOMException("Renderer did not become ready for input", "TimeoutError"));
+      },
+      Math.max(0, Math.min(timeout, deadline - Date.now())),
+    );
     function cleanup() {
       clearTimeout(timer);
       signal?.removeEventListener("abort", abort);
@@ -53,6 +64,7 @@ export async function flushInputRendering(
   cdp: CdpRunner,
   tabId: number,
   signal?: AbortSignal,
+  deadline?: number,
 ): Promise<void> {
   if (signal?.aborted) throw new DOMException("input aborted", "AbortError");
   // Read the viewport surface without a document-space clip, which can become
@@ -65,6 +77,8 @@ export async function flushInputRendering(
       captureBeyondViewport: false,
     }),
     signal,
+    5000,
+    deadline,
   );
   if (!shot.data) throw new Error("Renderer did not produce an input readiness frame");
 }
@@ -74,6 +88,7 @@ export async function waitForInputPaint(
   cdp: CdpRunner,
   tabId: number,
   signal?: AbortSignal,
+  deadline?: number,
 ): Promise<void> {
   if (signal?.aborted) throw new DOMException("input aborted", "AbortError");
   const reply = await waitForInputReply(
@@ -89,6 +104,8 @@ export async function waitForInputPaint(
       returnByValue: true,
     }),
     signal,
+    5000,
+    deadline,
   );
   if (reply.result?.value !== true) throw new Error("Renderer did not finish painting input");
 }
@@ -98,17 +115,23 @@ export async function withInputReady<T extends object>(
   ctx: SessionContext,
   tabId: number,
   deps: InputReadinessDeps,
-  action: (hidden: boolean) => Promise<T | RpcError>,
+  action: (input: ReadyInput) => Promise<T | RpcError>,
 ): Promise<T | RpcError> {
   const aborted = abortError(deps.signal);
   if (aborted) return aborted;
   const documentRevision = ctx.refStore.documentRevision(tabId);
   let restoreFocus = false;
   let attachmentId: string | undefined;
-  let actionStarted = false;
+  let inputSent = false;
+  const checkActive = () => {
+    if (deps.signal?.aborted) throw new DOMException("input aborted", "AbortError");
+    if (Date.now() >= (deps.deadline ?? Infinity))
+      throw new DOMException("input timed out", "TimeoutError");
+  };
   let result: T | RpcError;
   let cleanupError: string | undefined;
   try {
+    checkActive();
     deps.cdp.trackSessionTab?.(ctx.sessionId, tabId);
     const visibility = await waitForInputReply(
       deps.cdp.send<{ result: { value?: string } }>(tabId, "Runtime.evaluate", {
@@ -116,9 +139,12 @@ export async function withInputReady<T extends object>(
         returnByValue: true,
       }),
       deps.signal,
+      5000,
+      deps.deadline,
     );
     const cancelled = abortError(deps.signal);
     if (cancelled) return cancelled;
+    checkActive();
     if (visibility.result.value === "hidden") {
       attachmentId = deps.cdp.getAttachmentId?.(tabId);
       // Mark ownership before awaiting: a failed reply may still have enabled it.
@@ -126,9 +152,11 @@ export async function withInputReady<T extends object>(
       await waitForInputReply(
         deps.cdp.send(tabId, "Emulation.setFocusEmulationEnabled", { enabled: true }),
         deps.signal,
+        5000,
+        deps.deadline,
       );
-      if (deps.signal?.aborted) throw new DOMException("input aborted", "AbortError");
-      await flushInputRendering(deps.cdp, tabId, deps.signal);
+      checkActive();
+      await flushInputRendering(deps.cdp, tabId, deps.signal, deps.deadline);
     } else if (visibility.result.value !== "visible") {
       throw new Error("Could not determine input target visibility");
     }
@@ -142,9 +170,15 @@ export async function withInputReady<T extends object>(
           data: { reason: "ref_not_found", effect_state: "none" },
         };
       } else {
-        actionStarted = true;
+        checkActive();
         // Recompute geometry after waking: the background viewport may have changed.
-        result = await action(restoreFocus);
+        result = await action({
+          hidden: restoreFocus,
+          markSent: () => {
+            checkActive();
+            inputSent = true;
+          },
+        });
       }
     }
   } catch (error) {
@@ -157,8 +191,8 @@ export async function withInputReady<T extends object>(
             : "cdp_failed",
       message: error instanceof Error ? error.message : String(error),
       data: {
-        effect_state: actionStarted ? "unknown" : "none",
-        reason: actionStarted ? "input_outcome_unknown" : "input_not_ready",
+        effect_state: inputSent ? "unknown" : "none",
+        reason: inputSent ? "input_outcome_unknown" : "input_not_ready",
       },
     };
   } finally {
@@ -177,6 +211,21 @@ export async function withInputReady<T extends object>(
         cleanupError = error instanceof Error ? error.message : String(error);
       }
     }
+  }
+  // Actions can return structured errors instead of throwing. Keep both paths
+  // consistent, including cancellation after an input acknowledgement was lost.
+  if (isRpcError(result)) {
+    result = {
+      ...result,
+      data: {
+        ...result.data,
+        ...(inputSent && result.data?.reason && result.data.reason !== "input_outcome_unknown"
+          ? { cause_reason: result.data.reason }
+          : {}),
+        effect_state: inputSent ? "unknown" : "none",
+        reason: inputSent ? "input_outcome_unknown" : (result.data?.reason ?? "input_not_ready"),
+      },
+    };
   }
   if (cleanupError) {
     if (!isRpcError(result))

@@ -259,16 +259,11 @@ pub fn info_for_error(code: ErrorCode, data: Option<&serde_json::Value>) -> Rend
             ),
             exit_code: base.exit_code,
         },
-        (_, "target_disabled") => RenderInfo {
-            summary: "the target control is disabled",
-            hint: Some(
-                "observe the page and satisfy the control's prerequisites before trying again",
-            ),
-            ..base
-        },
         (_, "input_not_ready") => RenderInfo {
             summary: "the browser did not become ready for native input",
-            hint: Some("no input was sent; observe the page again before retrying"),
+            hint: Some(
+                "no click, key press or wheel input was sent; observe the page again before retrying",
+            ),
             ..base
         },
         (_, "input_cleanup_failed") => RenderInfo {
@@ -884,7 +879,12 @@ mod tests {
             ErrorCode::CdpFailed,
             Some(&serde_json::json!({"reason":"input_not_ready"})),
         );
-        assert!(ready.hint.unwrap().contains("no input was sent"));
+        assert!(
+            ready
+                .hint
+                .unwrap()
+                .contains("no click, key press or wheel input was sent")
+        );
         let cleanup = info_for_error(
             ErrorCode::CdpFailed,
             Some(&serde_json::json!({"reason":"input_cleanup_failed"})),

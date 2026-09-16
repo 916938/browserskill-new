@@ -457,9 +457,10 @@ export async function handleClick(
 ): Promise<ClickResult | RpcError> {
   const ctxOrErr = lookupSession(manager, params, "click");
   if (isRpcError(ctxOrErr)) return ctxOrErr;
+  const deadline = Date.now() + (params.timeout_ms ?? 30_000);
   const ctx = ctxOrErr;
   const aborted = throwIfAborted(deps.signal);
-  if (aborted) return aborted;
+  if (aborted) return { ...aborted, data: { effect_state: "none" } };
   const target = await resolveTargetTab(manager, ctx, params.tab_id, deps.tabsApi);
   if (isRpcError(target)) return target;
   const denied = enforceAgentWindow(ctx, target, "click");
@@ -467,37 +468,15 @@ export async function handleClick(
   if (isVisualPointRequest(params)) {
     const consumed = consumeVisualCapture(ctx.refStore, target.tabId, params);
     if (isRpcError(consumed)) return consumed;
-    return withInputReady(ctx, target.tabId, deps, () =>
-      clickVisualPoint(ctx, target, params, deps, consumed),
+    return withInputReady(ctx, target.tabId, { ...deps, deadline }, (input) =>
+      clickVisualPoint(ctx, target, params, deps, consumed, input.markSent),
     );
   }
   const resolved = await resolveActionTarget(deps.cdp, ctx, target, params, "click");
   if (isRpcError(resolved)) return resolved;
-  return withInputReady(ctx, target.tabId, deps, async () => {
-    // AX includes native fieldset inheritance and aria-disabled semantics.
-    // Read it live: a control may have changed since the last observation.
-    const ax = await cdpRunnerForTarget(deps.cdp, resolved.cdpTarget).send<{
-      nodes: {
-        backendDOMNodeId?: number;
-        properties?: { name: string; value: { value?: unknown } }[];
-      }[];
-    }>(target.tabId, "Accessibility.getPartialAXTree", {
-      backendNodeId: resolved.backendNodeId,
-      fetchRelatives: false,
-    });
-    const disabled = ax.nodes
-      .find((node) => node.backendDOMNodeId === resolved.backendNodeId)
-      ?.properties?.some(
-        (property) => property.name === "disabled" && property.value.value === true,
-      );
-    if (disabled)
-      return {
-        code: "invalid_params",
-        message: "click target is disabled",
-        data: { reason: "target_disabled", effect_state: "none" },
-      };
-    return clickResolvedTarget(ctx, resolved, params, deps);
-  });
+  return withInputReady(ctx, target.tabId, { ...deps, deadline }, (input) =>
+    clickResolvedTarget(ctx, resolved, params, deps, input.markSent),
+  );
 }
 
 export async function clickResolvedTarget(
@@ -505,6 +484,7 @@ export async function clickResolvedTarget(
   resolved: ResolvedActionTarget,
   params: Pick<ClickParams, "button" | "click_count" | "modifiers">,
   deps: InteractionDeps,
+  markSent?: () => void,
 ): Promise<ClickResult | RpcError> {
   const { tab: target } = resolved;
   const dialogCursor = markDialogCursor(deps.cdp, target.tabId);
@@ -547,7 +527,14 @@ export async function clickResolvedTarget(
   }
 
   try {
-    const error = await dispatchClickAtPoint(target.tabId, centre, params, deps);
+    const error = await dispatchClickAtPoint(
+      target.tabId,
+      centre,
+      params,
+      deps,
+      undefined,
+      markSent,
+    );
     if (error) return error;
   } finally {
     if (automationBypassEnabled && deps.bypassOverlay && !deps.keepOverlayBypassAfterHover) {
@@ -575,6 +562,7 @@ async function dispatchClickAtPoint(
   params: Pick<ClickParams, "button" | "click_count" | "modifiers">,
   deps: InteractionDeps,
   beforePress?: () => Promise<RpcError | null>,
+  markSent?: () => void,
 ): Promise<RpcError | null> {
   const button = params.button ?? "left",
     modifiers = modifiersBitfield(params.modifiers);
@@ -622,6 +610,7 @@ async function dispatchClickAtPoint(
         if (error) return failure(error);
       }
       if (deps.signal?.aborted) return failure({ code: "cancelled", message: "click aborted" });
+      markSent?.();
       attempted = true;
       releaseNeeded = true;
       await deps.cdp.send(tabId, "Input.dispatchMouseEvent", {
@@ -638,7 +627,12 @@ async function dispatchClickAtPoint(
     return null;
   } catch (error) {
     return failure({
-      code: deps.signal?.aborted || isAbortError(error) ? "cancelled" : "cdp_failed",
+      code:
+        deps.signal?.aborted || isAbortError(error)
+          ? "cancelled"
+          : error instanceof Error && error.name === "TimeoutError"
+            ? "timeout"
+            : "cdp_failed",
       message: error instanceof Error ? error.message : String(error),
     });
   } finally {
@@ -652,6 +646,7 @@ async function clickVisualPoint(
   params: ClickParams,
   deps: InteractionDeps,
   consumed: Exclude<ReturnType<typeof consumeVisualCapture>, RpcError>,
+  markSent: () => void,
 ): Promise<ClickResult | RpcError> {
   const { capture, point } = consumed;
   const dialogCursor = markDialogCursor(deps.cdp, target.tabId);
@@ -693,10 +688,17 @@ async function clickVisualPoint(
     }
     const invalid = await validate();
     if (invalid) return { ...invalid, data: { ...invalid.data, effect_state: "none" } };
-    const error = await dispatchClickAtPoint(target.tabId, point, params, deps, async () => {
-      await wait(32, deps.signal); // Scheduling opportunity, not a claim of page stability.
-      return validate();
-    });
+    const error = await dispatchClickAtPoint(
+      target.tabId,
+      point,
+      params,
+      deps,
+      async () => {
+        await wait(32, deps.signal); // Scheduling opportunity, not a claim of page stability.
+        return validate();
+      },
+      markSent,
+    );
     if (error) return error;
     return attachDialogs(deps.cdp, target.tabId, dialogCursor, {
       tab_id: target.tabId,
@@ -1448,6 +1450,7 @@ export async function handlePress(
   params: PressParams,
   deps: InteractionDeps = getDefaultDeps(),
 ): Promise<PressResult | RpcError> {
+  const deadline = Date.now() + (params?.timeout_ms ?? 30_000);
   if (!params || typeof params.key !== "string" || params.key.length === 0) {
     return { code: "invalid_params", message: "press requires a key string" };
   }
@@ -1483,7 +1486,7 @@ export async function handlePress(
       ? await resolveBackendNode(deps.cdp, ctx, target, params, "press")
       : undefined;
   if (node && isRpcError(node)) return node;
-  return withInputReady(ctx, target.tabId, deps, async () => {
+  return withInputReady(ctx, target.tabId, { ...deps, deadline }, async (input) => {
     // Optional focus before key dispatch.
     if (node) {
       const nodeCdp = cdpRunnerForTarget(deps.cdp, node.cdpTarget);
@@ -1520,6 +1523,7 @@ export async function handlePress(
     try {
       let cancelled = false;
       deps.cdp.trackSessionTab?.(ctx.sessionId, target.tabId);
+      input.markSent();
       await deps.cdp.send(target.tabId, "Input.dispatchKeyEvent", {
         type: "rawKeyDown",
         key: descriptor.key,
@@ -1563,7 +1567,12 @@ export async function handlePress(
       }
     } catch (err) {
       return {
-        code: "cdp_failed",
+        code:
+          deps.signal?.aborted || isAbortError(err)
+            ? "cancelled"
+            : err instanceof Error && err.name === "TimeoutError"
+              ? "timeout"
+              : "cdp_failed",
         message: err instanceof Error ? err.message : String(err),
       };
     }

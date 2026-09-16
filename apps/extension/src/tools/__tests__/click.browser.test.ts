@@ -14,7 +14,7 @@ type Send = <T = Record<string, unknown>>(
 ) => Promise<T>;
 
 describe.skipIf(!process.env.BSK_CLICK_CHROME)("real browser click readiness", () => {
-  it("delivers hidden native input, rejects disabled controls and restores visibility", async () => {
+  it("delivers hidden native input, preserves disabled semantics and restores visibility", async () => {
     const server = createServer((_request, response) => {
       response.setHeader("Content-Type", "text/html");
       response.end(`<!doctype html><button id="target">Click</button><a id="link" href="/next">Next</a>
@@ -151,12 +151,8 @@ describe.skipIf(!process.env.BSK_CLICK_CHROME)("real browser click readiness", (
                       { session_id: ctx.sessionId, tab_id: 4, ...action },
                       { cdp, tabsApi },
                     );
-            if (mode.startsWith("disabled-"))
-              expect(result).toMatchObject({
-                code: "invalid_params",
-                data: { reason: "target_disabled" },
-              });
-            else expect(result, JSON.stringify(result)).not.toHaveProperty("message");
+            expect(result, JSON.stringify(result)).not.toHaveProperty("message");
+            expect(commands.some((c) => c.method === "Accessibility.getPartialAXTree")).toBe(false);
             if (mode === "navigation") {
               for (let i = 0; i < 100; i++) {
                 if (
@@ -183,7 +179,7 @@ describe.skipIf(!process.env.BSK_CLICK_CHROME)("real browser click readiness", (
               expect(await target.evaluate("window.wheels")).toEqual([true]);
             } else
               expect(await target.evaluate("window.clicks")).toEqual(
-                mode.startsWith("disabled-") ? [] : [true],
+                mode === "disabled-native" || mode === "disabled-fieldset" ? [] : [true],
               );
             expect(await target.evaluate("document.visibilityState")).toBe(
               hidden ? "hidden" : "visible",
