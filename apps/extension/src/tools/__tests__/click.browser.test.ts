@@ -1,9 +1,11 @@
 // @vitest-environment node
 // Opt in with BSK_CLICK_CHROME; each test owns its browser, profile and HTTP server.
 import { createServer } from "node:http";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { type CdpDebuggee, type CdpDebuggerApi, ChromiumCdp } from "@/browser-driver/chromium-cdp";
 import { SessionManager } from "@/session-manager/manager";
 import { handleClick, handlePress } from "../interaction";
+import { handleObserve } from "../observation";
 import type { CdpRunner } from "../shared";
 import { handleWheel } from "../wheel";
 
@@ -12,6 +14,14 @@ type Send = <T = Record<string, unknown>>(
   params?: object,
   sessionId?: string,
 ) => Promise<T>;
+
+interface CdpEvent {
+  sessionId?: string;
+  method: string;
+  params?: object;
+}
+
+type CdpEventListener = (source: CdpDebuggee, method: string, params: unknown) => void;
 
 describe.skipIf(!process.env.BSK_CLICK_CHROME)("real browser click readiness", () => {
   it("delivers hidden native input, preserves disabled semantics and restores visibility", async () => {
@@ -30,8 +40,14 @@ describe.skipIf(!process.env.BSK_CLICK_CHROME)("real browser click readiness", (
           import.meta.url,
         ).href
       );
+      let onEvent: ((event: CdpEvent) => void) | undefined;
       await withChrome(
-        { executable: process.env.BSK_CLICK_CHROME, deviceScale: 1.5, zoom: 1 },
+        {
+          executable: process.env.BSK_CLICK_CHROME,
+          deviceScale: 1.5,
+          zoom: 1,
+          onEvent: (event: CdpEvent) => onEvent?.(event),
+        },
         async (send: Send) => {
           const page = async (background: boolean) => {
             const { targetId } = await send<{ targetId: string }>("Target.createTarget", {
@@ -198,6 +214,100 @@ describe.skipIf(!process.env.BSK_CLICK_CHROME)("real browser click readiness", (
                 visibility: await target.evaluate("document.visibilityState"),
               }),
             );
+            await send("Target.closeTarget", { targetId: target.targetId });
+          }
+
+          // Exercise production document invalidation with real Chrome events,
+          // including a navigation control so a disconnected listener cannot pass.
+          await send("Page.bringToFront", {}, foreground.sessionId);
+          const target = await page(true);
+          const listeners = new Set<CdpEventListener>();
+          let documentUpdates = 0;
+          onEvent = (event) => {
+            if (event.sessionId !== target.sessionId) return;
+            if (event.method === "DOM.documentUpdated") documentUpdates++;
+            for (const listener of listeners) listener({ tabId: 4 }, event.method, event.params);
+          };
+          const api: CdpDebuggerApi = {
+            // page() already attached the root debugger session.
+            attach: async () => {},
+            detach: async () => {
+              await send("Target.detachFromTarget", { sessionId: target.sessionId });
+            },
+            sendCommand: (debuggee, method, params) =>
+              send(method, params, debuggee.sessionId ?? target.sessionId),
+            onEvent: {
+              addListener: (listener: CdpEventListener) => listeners.add(listener),
+              removeListener: (listener: CdpEventListener) => listeners.delete(listener),
+            } as unknown as CdpDebuggerApi["onEvent"],
+            onDetach: {
+              addListener: () => {},
+              removeListener: () => {},
+            } as unknown as CdpDebuggerApi["onDetach"],
+          };
+          let documentChanges = 0;
+          const cdp = new ChromiumCdp(api, {
+            onDocumentChanged: (tabId) => {
+              documentChanges++;
+              manager.invalidateTabRefs(tabId);
+            },
+          });
+          try {
+            await cdp.ensureAttached(4);
+            // Subscribe explicitly: the snapshot-only observe path does not need
+            // DOM events, but later selector operations may enable this domain.
+            await cdp.send(4, "DOM.enable");
+            const tab = { id: 4, windowId: 100, active: false, url } as chrome.tabs.Tab;
+            const tabsApi = { get: async () => tab, query: async () => [tab] };
+            const observed = await handleObserve(
+              manager,
+              { session_id: ctx.sessionId, tab_id: 4 },
+              { cdp, tabsApi, conditionalSurfaceProbe: false },
+            );
+            expect(observed, JSON.stringify(observed)).not.toHaveProperty("code");
+            const ref = [...ctx.refStore.entries()].find(
+              ([, entry]) => entry.kind === "dom" && entry.name === "Click",
+            )?.[0];
+            expect(ref).toBeDefined();
+            expect(documentChanges).toBe(0);
+            const clicked = await handleClick(
+              manager,
+              { session_id: ctx.sessionId, tab_id: 4, ref: ref! },
+              { cdp, tabsApi },
+            );
+            expect(clicked, JSON.stringify(clicked)).not.toHaveProperty("code");
+            expect(await target.evaluate("window.clicks")).toEqual([true]);
+            expect(documentChanges).toBe(0);
+            expect(ctx.refStore.resolve(ref!, { tabId: 4 })).not.toBeNull();
+            await cdp.send(4, "Page.navigate", { url: `${url}/next` });
+            await vi.waitFor(() => expect(documentUpdates).toBeGreaterThan(0), { timeout: 5000 });
+            expect(documentChanges).toBeGreaterThan(0);
+            expect(ctx.refStore.resolve(ref!, { tabId: 4 })).toBeNull();
+            await vi.waitFor(
+              async () => expect(await target.evaluate("document.readyState")).toBe("complete"),
+              { timeout: 5000 },
+            );
+
+            // Simulate a leftover override and observe from another CDP session:
+            // ending the owning session must restore the hidden tab's real focus.
+            expect(await target.evaluate("document.hasFocus()")).toBe(false);
+            await cdp.send(4, "Emulation.setFocusEmulationEnabled", { enabled: true });
+            expect(await target.evaluate("document.hasFocus()")).toBe(true);
+            const observer = await send<{ sessionId: string }>("Target.attachToTarget", {
+              targetId: target.targetId,
+              flatten: true,
+            });
+            await cdp.detachSession(ctx.sessionId);
+            const focus = await send<{ result: { value: boolean } }>(
+              "Runtime.evaluate",
+              { expression: "document.hasFocus()", returnByValue: true },
+              observer.sessionId,
+            );
+            expect(focus.result.value).toBe(false);
+            expect(await foreground.evaluate("document.visibilityState")).toBe("visible");
+          } finally {
+            cdp.dispose();
+            onEvent = undefined;
             await send("Target.closeTarget", { targetId: target.targetId });
           }
         },

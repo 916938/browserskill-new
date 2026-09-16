@@ -179,13 +179,41 @@ describe("handleWheel", () => {
     else
       expect(result).toMatchObject({
         code: mode === "cancel" ? "cancelled" : "cdp_failed",
-        data: { reason: "input_outcome_unknown", effect_state: "unknown" },
+        data: { reason: "input_paint_unconfirmed", effect_state: "unknown" },
       });
     expect(f.calls.filter((c) => c.params?.type === "mouseWheel")).toHaveLength(1);
     expect(
       f.calls.filter((c) => c.method === "Emulation.setFocusEmulationEnabled").at(-1)?.params,
     ).toEqual({ enabled: false });
     finish!({ result: { value: true } });
+  });
+
+  it("preserves the paint diagnostic on deadline and cleans up without replaying the wheel", async () => {
+    vi.useFakeTimers();
+    try {
+      const f = await fixture();
+      f.hooks.reply = (call) => {
+        if (call.method === "Emulation.setFocusEmulationEnabled") return {};
+        if (call.method === "Page.captureScreenshot") return { data: "frame" };
+        if (call.method === "Runtime.evaluate") {
+          if (call.params?.expression === "document.visibilityState")
+            return { result: { value: "hidden" } };
+          return new Promise(() => {});
+        }
+      };
+      const pending = f.run({ timeout_ms: 100 });
+      await vi.advanceTimersByTimeAsync(100);
+      expect(await pending).toMatchObject({
+        code: "timeout",
+        data: { reason: "input_paint_unconfirmed", effect_state: "unknown" },
+      });
+      expect(f.calls.filter((c) => c.params?.type === "mouseWheel")).toHaveLength(1);
+      expect(
+        f.calls.filter((c) => c.method === "Emulation.setFocusEmulationEnabled").at(-1)?.params,
+      ).toEqual({ enabled: false });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("moves to the viewport centre and sends signed native deltas and modifiers", async () => {

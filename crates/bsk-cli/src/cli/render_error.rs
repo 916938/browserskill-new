@@ -280,6 +280,13 @@ pub fn info_for_error(code: ErrorCode, data: Option<&serde_json::Value>) -> Rend
             ),
             ..base
         },
+        (_, "input_paint_unconfirmed") => RenderInfo {
+            summary: "wheel input was sent but paint completion could not be confirmed",
+            hint: Some(
+                "do not repeat the wheel input; observe the page to check its scroll position before continuing",
+            ),
+            ..base
+        },
         (ErrorCode::Timeout, "cancel_cleanup_timeout") => RenderInfo {
             summary: "the browser operation did not finish cancellation in time",
             hint: Some(
@@ -873,6 +880,29 @@ mod tests {
         );
         assert!(info.hint.unwrap().contains("exactly one"));
     }
+    #[test]
+    fn acknowledged_wheel_with_unconfirmed_paint_has_a_scroll_specific_hint() {
+        for code in [
+            ErrorCode::CdpFailed,
+            ErrorCode::Timeout,
+            ErrorCode::Cancelled,
+            ErrorCode::UserAborted,
+        ] {
+            let info = info_for_error(
+                code,
+                Some(&serde_json::json!({
+                    "reason": "input_paint_unconfirmed",
+                    "effect_state": "unknown"
+                })),
+            );
+            assert!(info.summary.contains("wheel input was sent"));
+            let hint = info.hint.unwrap();
+            assert!(hint.contains("do not repeat"));
+            assert!(hint.contains("scroll position"));
+            assert_eq!(info.exit_code, info_for(code).exit_code);
+        }
+    }
+
     #[test]
     fn input_recovery_hints_do_not_encourage_blind_replay() {
         let ready = info_for_error(

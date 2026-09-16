@@ -624,7 +624,14 @@ async fn click_and_press_deadlines_keep_the_session_busy_during_focus_cleanup() 
 async fn native_input_effect_survives_deadline_and_user_cancellation() {
     for method in [Method::ToolClick, Method::ToolPress, Method::ToolWheel] {
         for user_cancel in [false, true] {
-            for effect in ["none", "unknown"] {
+            for (effect, reason) in [
+                ("none", "input_not_ready"),
+                ("unknown", "input_outcome_unknown"),
+                ("unknown", "input_paint_unconfirmed"),
+            ] {
+                if reason == "input_paint_unconfirmed" && method != Method::ToolWheel {
+                    continue;
+                }
                 let (handle, sock) = spawn_daemon().await;
                 let mut ws = connect_ext(handle.ws_addr()).await;
                 let _ = handshake_as_ext(&mut ws).await;
@@ -686,7 +693,7 @@ async fn native_input_effect_survives_deadline_and_user_cancellation() {
                 tokio::time::sleep(Duration::from_millis(10)).await;
                 let data = json!({
                     "effect_state": effect,
-                    "reason": if effect == "none" { "input_not_ready" } else { "input_outcome_unknown" },
+                    "reason": reason,
                 });
                 reply_tx.send((rpc_id, data.clone())).unwrap();
                 let Err(DispatchError::Rpc(error)) =

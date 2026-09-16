@@ -25,6 +25,7 @@ export type RpcErrorReason =
   | "element_not_visible"
   | "input_not_ready"
   | "input_outcome_unknown"
+  | "input_paint_unconfirmed"
   | "input_cleanup_failed"
   | "ref_not_found"
   | "ref_kind_unsupported"

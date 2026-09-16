@@ -6,7 +6,15 @@ import { join } from "node:path";
 
 // This regression owns its browser/profile. It never attaches to a user's Chrome.
 export async function withChrome(
-  { executable, deviceScale, zoom, extensionPath, headless = true, softwareRendering = false },
+  {
+    executable,
+    deviceScale,
+    zoom,
+    extensionPath,
+    headless = true,
+    softwareRendering = false,
+    onEvent,
+  },
   run,
 ) {
   const profile = await mkdtemp(join(tmpdir(), "bsk-snapshot-coordinates-"));
@@ -73,6 +81,10 @@ export async function withChrome(
     });
     socket.addEventListener("message", ({ data }) => {
       const reply = JSON.parse(data);
+      if (reply.method) {
+        onEvent?.(reply);
+        return;
+      }
       const request = pending.get(reply.id);
       if (!request) return;
       clearTimeout(request.timeout);

@@ -20,6 +20,13 @@ function abortError(signal?: AbortSignal): RpcError | null {
     : null;
 }
 
+class InputPaintUnconfirmedError extends Error {
+  constructor(error: unknown) {
+    super(error instanceof Error ? error.message : String(error));
+    this.name = error instanceof Error ? error.name : "Error";
+  }
+}
+
 /** CDP commands cannot be cancelled; consume late replies without delaying cleanup. */
 function waitForInputReply<T>(
   pending: Promise<T>,
@@ -90,24 +97,29 @@ export async function waitForInputPaint(
   signal?: AbortSignal,
   deadline?: number,
 ): Promise<void> {
-  if (signal?.aborted) throw new DOMException("input aborted", "AbortError");
-  const reply = await waitForInputReply(
-    cdp.send<{ result?: { value?: boolean } }>(tabId, "Runtime.evaluate", {
-      expression: `new Promise(resolve => {
+  try {
+    if (signal?.aborted) throw new DOMException("input aborted", "AbortError");
+    const reply = await waitForInputReply(
+      cdp.send<{ result?: { value?: boolean } }>(tabId, "Runtime.evaluate", {
+        expression: `new Promise(resolve => {
         let frame;
         const timer = setTimeout(() => { cancelAnimationFrame(frame); resolve(false); }, 4000);
         frame = requestAnimationFrame(() => { frame = requestAnimationFrame(() => {
           clearTimeout(timer); resolve(true);
         }); });
       })`,
-      awaitPromise: true,
-      returnByValue: true,
-    }),
-    signal,
-    5000,
-    deadline,
-  );
-  if (reply.result?.value !== true) throw new Error("Renderer did not finish painting input");
+        awaitPromise: true,
+        returnByValue: true,
+      }),
+      signal,
+      5000,
+      deadline,
+    );
+    if (reply.result?.value !== true) throw new Error("Renderer did not finish painting input");
+  } catch (error) {
+    // This helper runs only after the wheel dispatch was acknowledged.
+    throw new InputPaintUnconfirmedError(error);
+  }
 }
 
 /** Prepare hidden native input without activating the tab or retrying the action.
@@ -196,6 +208,9 @@ export async function withInputReady<T extends object>(
       message: error instanceof Error ? error.message : String(error),
       data: {
         effect_state: inputSent ? "unknown" : "none",
+        ...(inputSent && error instanceof InputPaintUnconfirmedError
+          ? { reason: "input_paint_unconfirmed" as const }
+          : {}),
         ...(!ready && code !== "cancelled" ? { reason: "input_not_ready" as const } : {}),
       },
     };
@@ -209,6 +224,7 @@ export async function withInputReady<T extends object>(
         await waitForInputReply(
           deps.cdp.send(tabId, "Emulation.setFocusEmulationEnabled", { enabled: false }),
           undefined,
+          // Leave room within the daemon's 2s cancellation grace for other cleanup and transport.
           1000,
         );
       } catch (error) {
@@ -224,7 +240,9 @@ export async function withInputReady<T extends object>(
       data: {
         ...result.data,
         effect_state: inputSent ? "unknown" : "none",
-        ...(inputSent ? { reason: "input_outcome_unknown" as const } : {}),
+        ...(inputSent && result.data?.reason !== "input_paint_unconfirmed"
+          ? { reason: "input_outcome_unknown" as const }
+          : {}),
       },
     };
   }

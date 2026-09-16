@@ -156,10 +156,10 @@ export async function handleWheel(
         deltaY,
         modifiers,
       });
-      checkActive();
       // Wheel acknowledgement precedes compositor scrolling. Keep the hidden renderer
       // awake until its resulting frame is available, then restore focus.
       if (input.hidden) await waitForInputPaint(cdp, target.tabId, deps.signal, deadline);
+      checkActive();
       return attachDialogs(deps.cdp, target.tabId, dialogCursor, {
         tab_id: target.tabId,
         used_ref: point.usedRef,
