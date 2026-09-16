@@ -127,7 +127,7 @@ This list of names is complete. Never invent a command outside it; read
 `bsk <command...> --help` for flags instead of guessing them.
 
 ```text
-session start|stop|list   browsers   status   doctor   update   logs
+session start|stop|list   browsers   browsers close   status   doctor   update   logs
 navigate   navigate-back   navigate-forward   reload   wait-for-navigation   wait-ms
 observe   snapshot   get-html   screenshot   console   network
 click   hover   fill   select   press   evaluate
@@ -206,6 +206,29 @@ subcommand layer. It is the backend for shell helpers such as `invoke.sh` / `inv
 | `--args-json '{...}'` | Raw JSON arguments (mutually exclusive with `--args-file`) |
 | `--args-file <path>` | JSON file path, or `-` for stdin |
 | `--dry-run` | Validate and print the request without contacting the daemon |
+
+### Quit a browser — `bsk browsers close`
+
+`bsk browsers` lists connected instances; `bsk browsers close --browser-id <instance_id> --confirm`
+stops every session of that instance and then closes all of its windows, which makes the browser
+process exit.
+
+| Flag | Purpose |
+|------|---------|
+| `--browser-id <id>` | Exact `instance_id` from `bsk browsers`; labels and prefixes are rejected |
+| `--confirm` | Required acknowledgement (the command refuses to run without it) |
+
+Rules:
+
+- This is the only command that reaches outside a session. It closes **every** window of that
+  browser instance, including windows the agent never touched, and discards anything unsaved in
+  them. Do not use it to "clean up" — use `bsk session stop <id>` for that.
+- Only close an instance the user asked to close, and only after the work on it is done. Never
+  guess the id: read `bsk browsers` first.
+- A reply may never arrive because the browser exits mid-call. The daemon reports success when the
+  instance has actually left the registry (`disconnected: true` in `--json` output); otherwise it
+  fails with a timeout, which means the browser is still running.
+- `bsk` never starts browsers, so there is no matching "open" command.
 
 ### Profile templates — `bsk templates`
 

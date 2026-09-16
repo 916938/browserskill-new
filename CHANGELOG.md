@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `bsk browsers close --browser-id <instance_id> --confirm`：新增 `browser.close` RPC，停止该实例的
+  全部会话后关闭其所有窗口，使浏览器进程退出（`crates/bsk-cli/src/daemon/browser_close.rs`、
+  `apps/extension/src/tools/browser-close.ts`）。
+- 协议新增 `browser.close` 方法与 `browser_close_params` / `browser_close_result` schema。
+- 该命令必须显式 `--browser-id`（精确 `instance_id`，拒绝 label/前缀）与 `--confirm`；daemon 收到
+  `confirm != true` 一律拒绝。关闭最后一个窗口前先回写响应，连接断开且实例已脱离注册表时判定为
+  关闭成功（`disconnected: true`），实例仍在则报超时。
+
+### Verification
+
+- `cargo clippy --workspace --all-targets --locked -- -D warnings` 通过。
+- `cargo test --workspace --locked` 全量通过（新增 `tests/browser_close_ipc.rs` 6 例、`cli_parse.rs` 1 例、
+  `bsk-protocol` 4 例）。
+- `pnpm --filter @browser-skill/extension compile` 与 `pnpm ext:test` 通过（新增
+  `browser-close.test.ts` 4 例）。
+
 ## [0.2.3] - 2026-09-08
 
 ### Upstream sync — 2026-09-08（Tencent/BrowserSkill `47ac947` → `3c5f838`，205 commits）
