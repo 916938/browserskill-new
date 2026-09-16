@@ -43,6 +43,7 @@ import type {
 } from "@/transport/types";
 import { isRequestFrame } from "@/transport/types";
 import { auditContext } from "./audit-context";
+import { handleBrowserClose } from "./browser-close";
 import { handleBrowserTabs } from "./browser-tabs";
 import { handleConsole } from "./console";
 import { handleDownload } from "./download";
@@ -364,6 +365,8 @@ export class ToolDispatcher {
 
   private async invoke(req: RequestFrame, signal: AbortSignal): Promise<unknown | RpcError> {
     switch (req.method) {
+      case "browser.close":
+        return handleBrowserClose(this.sessions, req.params, undefined, signal);
       case "browser.tabs.list":
       case "browser.tabs.select":
       case "browser.tabs.create":
