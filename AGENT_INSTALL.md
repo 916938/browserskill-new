@@ -73,22 +73,26 @@ custom instructions are preserved. Verify discovery in Step 5.
 ## 3. Run `bsk doctor`
 
 If this environment reaps child processes after every shell command, first follow
-the [sandbox setup guide](docs/sandboxed-agents.md): arrange a persistent daemon
-in the owning host environment. If the host provides persistent background tasks,
-run `bsk daemon start --foreground` in one of those tasks and keep it running;
-the flag alone cannot prevent host cleanup. This also applies to Windows agents
-with this process-lifetime constraint; the guide includes PowerShell examples.
-Use the same accessible `BSK_HOME` for daemon and clients, and `BSK_AUTO_START=0`
-for every sandboxed command, including `doctor` and session commands. Keep normal
-browser commands sandboxed. Do not assume environment settings persist across
-separate shell tool calls.
+the [sandbox setup guide](docs/sandboxed-agents.md), including its PowerShell examples
+for Windows. Reuse the host daemon's existing `BSK_HOME` (or its default if unset),
+set `BSK_AUTO_START=0`, and check `bsk status --json`. Reuse a working daemon; a
+permission error or timeout is not evidence that it is absent. Only when it is
+missing and no host task is already starting it, launch
+`bsk daemon start --foreground` in a persistent host task, or use a normal host
+terminal as described in the guide. In another shell tool call, confirm status
+succeeds before continuing; allow up to five checks with one-second pauses for
+transient startup errors. If the task exits or never becomes ready, inspect its
+output and `bsk logs`, then recheck for an existing daemon before another launch.
+Use the same `BSK_HOME` and `BSK_AUTO_START=0` for every sandboxed command, including
+`doctor` and session commands. Keep browser commands sandboxed; environment settings
+may not persist across shell calls. Report unresolved errors instead of looping.
 
 ```bash
 bsk doctor
 ```
 
 Each `fail` row prints a `hint` — follow it and re-run once. When auto-start is
-disabled, an unavailable daemon needs host-side startup using the same directory.
+disabled and the daemon is missing, return to the reuse/startup checks above.
 For a path/permission failure, use the resolved path in the report to check the
 shared directory and sandbox access rules; do not guess `/home/<user>` or delete
 daemon files. A fresh install where only `extension connected` fails is expected;
