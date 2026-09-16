@@ -83,6 +83,9 @@ describe.skipIf(!process.env.BSK_CLICK_CHROME)("real browser click readiness", (
             "disabled-aria",
           ] as const) {
             const hidden = mode !== "foreground";
+            // Chrome's selected tab after closing a foreground target varies by
+            // platform. Establish the fixture foreground before testing hidden input.
+            if (hidden) await send("Page.bringToFront", {}, foreground.sessionId);
             const target = await page(hidden);
             expect(await target.evaluate("document.visibilityState")).toBe(
               hidden ? "hidden" : "visible",

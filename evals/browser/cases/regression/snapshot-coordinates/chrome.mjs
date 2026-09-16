@@ -105,6 +105,7 @@ export async function withChrome(
       await exited;
       clearTimeout(timeout);
     }
-    await rm(profile, { recursive: true, force: true });
+    // Chrome children may finish writing their profile just after the parent exits.
+    await rm(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 }
