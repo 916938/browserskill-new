@@ -2,6 +2,7 @@
 
 pub mod abort;
 pub mod audit;
+pub(crate) mod browser_close;
 pub(crate) mod browser_tabs;
 pub mod browsers;
 mod cancel_forward;

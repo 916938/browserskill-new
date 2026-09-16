@@ -256,6 +256,12 @@ pub fn full_handler(status: DaemonStatus, state: Arc<DaemonState>) -> RpcHandler
                     Ok(v) => ResponseBody::Ok(v),
                     Err(e) => ResponseBody::Err(e),
                 },
+                Method::BrowserClose => {
+                    match super::browser_close::handle(&state, rpc_id, params).await {
+                        Ok(v) => ResponseBody::Ok(v),
+                        Err(e) => ResponseBody::Err(e),
+                    }
+                }
                 Method::BrowserTabsList
                 | Method::BrowserTabsSelect
                 | Method::BrowserTabsCreate

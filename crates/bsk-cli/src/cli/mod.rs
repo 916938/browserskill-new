@@ -45,6 +45,7 @@ pub mod window;
 
 use clap::{Args, Parser, Subcommand};
 
+use crate::cli::browsers::BrowsersCmd;
 use crate::cli::completion::CompletionArgs;
 use crate::cli::console::ConsoleArgs;
 use crate::cli::daemon::DaemonCmd;
@@ -135,8 +136,8 @@ pub enum Command {
     /// Session lifecycle.
     Session(SessionCmd),
 
-    /// List connected browsers.
-    Browsers,
+    /// List connected browsers, or quit one.
+    Browsers(BrowsersCmd),
 
     /// Tab management commands.
     Tab(TabCmd),
