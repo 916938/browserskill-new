@@ -158,7 +158,7 @@ export async function withInputReady<T extends object>(
       message: error instanceof Error ? error.message : String(error),
       data: {
         effect_state: actionStarted ? "unknown" : "none",
-        ...(!actionStarted ? { reason: "input_not_ready" } : {}),
+        reason: actionStarted ? "input_outcome_unknown" : "input_not_ready",
       },
     };
   } finally {

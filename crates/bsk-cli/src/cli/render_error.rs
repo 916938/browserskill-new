@@ -278,6 +278,13 @@ pub fn info_for_error(code: ErrorCode, data: Option<&serde_json::Value>) -> Rend
             ),
             ..base
         },
+        (_, "input_outcome_unknown") => RenderInfo {
+            summary: "the browser input may already have taken effect",
+            hint: Some(
+                "do not repeat the input; observe the page to check its result before continuing",
+            ),
+            ..base
+        },
         (ErrorCode::Timeout, "cancel_cleanup_timeout") => RenderInfo {
             summary: "the browser operation did not finish cancellation in time",
             hint: Some(
@@ -883,6 +890,22 @@ mod tests {
             Some(&serde_json::json!({"reason":"input_cleanup_failed"})),
         );
         assert!(cleanup.hint.unwrap().contains("do not repeat"));
+        for code in [
+            ErrorCode::CdpFailed,
+            ErrorCode::Timeout,
+            ErrorCode::Cancelled,
+        ] {
+            let unknown = info_for_error(
+                code,
+                Some(&serde_json::json!({
+                    "reason": "input_outcome_unknown",
+                    "effect_state": "unknown"
+                })),
+            );
+            assert!(unknown.summary.contains("may already have taken effect"));
+            assert!(unknown.hint.unwrap().contains("do not repeat"));
+            assert_eq!(unknown.exit_code, info_for(code).exit_code);
+        }
         let timeout = info_for_error(
             ErrorCode::Timeout,
             Some(&serde_json::json!({"reason":"cancel_cleanup_timeout"})),

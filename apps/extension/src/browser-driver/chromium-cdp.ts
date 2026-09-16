@@ -189,7 +189,7 @@ export class ChromiumCdp {
     private readonly options: {
       /** CDP observation alone does not authorize dismissing user dialogs. */
       shouldAutoAcceptDialog?: (tabId: number) => boolean | Promise<boolean>;
-      /** Invalidate document-bound references, including child-frame navigations. */
+      /** Invalidate tab refs when the root document or debugger attachment changes. */
       onDocumentChanged?: (tabId: number) => void;
     } = {},
   ) {
@@ -589,22 +589,24 @@ export class ChromiumCdp {
     const listener = (source: CdpDebuggee, method: string, params: unknown) => {
       const tabId = source.tabId;
       if (typeof tabId !== "number") return;
+      const raw = (params ?? {}) as Record<string, unknown>;
+      const frame = raw.frame as { parentId?: string } | undefined;
+      // A child navigation/detach does not replace the root document. Keep this
+      // tab-wide invalidation limited to root changes; child lifetimes need
+      // frame-scoped handling rather than discarding unrelated page refs.
       if (
-        [
-          "Page.frameNavigated",
-          "Page.documentOpened",
-          "DOM.documentUpdated",
-          "Page.frameDetached",
-        ].includes(method)
+        !source.sessionId &&
+        (method === "DOM.documentUpdated" ||
+          ((method === "Page.frameNavigated" || method === "Page.documentOpened") &&
+            frame &&
+            !frame.parentId))
       ) {
         this.options.onDocumentChanged?.(tabId);
       }
-      const raw = (params ?? {}) as Record<string, unknown>;
       const sessionId = typeof raw.sessionId === "string" ? raw.sessionId : undefined;
       if (!sessionId) return;
 
       if (method === "Target.detachedFromTarget") {
-        this.options.onDocumentChanged?.(tabId);
         const state = this.frameDiscovery.get(tabId);
         if (state?.sessions.delete(sessionId)) state.generation += 1;
         return;

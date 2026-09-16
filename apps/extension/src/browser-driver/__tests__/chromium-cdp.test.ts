@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { RefStore } from "@/session-manager/ref-store";
 import { type CdpDebuggee, type CdpDebuggerApi, ChromiumCdp } from "../chromium-cdp";
 
 function fakeChromeEvent<TArgs extends unknown[]>() {
@@ -904,29 +905,53 @@ describe("ChromiumCdp", () => {
 });
 
 describe("document-bound references", () => {
-  it("invalidates navigation, document replacement and iframe detach, not hash changes", async () => {
+  it("invalidates root document and attachment changes, not hash changes", async () => {
     const { api, onEvent, onDetach } = fakeApi();
     const changed = vi.fn();
     const cdp = new ChromiumCdp(api, { onDocumentChanged: changed });
     await cdp.ensureAttached(4);
     onEvent.fire({ tabId: 4 }, "Page.navigatedWithinDocument", { frameId: "root" });
     expect(changed).not.toHaveBeenCalled();
-    for (const method of [
-      "Page.frameNavigated",
-      "Page.documentOpened",
-      "DOM.documentUpdated",
-      "Page.frameDetached",
-    ]) {
-      onEvent.fire({ tabId: 4, sessionId: "child" }, method, { frame: { id: "child" } });
+    for (const method of ["Page.frameNavigated", "Page.documentOpened", "DOM.documentUpdated"]) {
+      onEvent.fire({ tabId: 4 }, method, { frame: { id: "root" } });
       expect(changed).toHaveBeenLastCalledWith(4);
     }
-    onEvent.fire({ tabId: 4 }, "Target.detachedFromTarget", { sessionId: "child" });
-    expect(changed).toHaveBeenCalledTimes(5);
+    expect(changed).toHaveBeenCalledTimes(3);
     await cdp.detach(4);
-    expect(changed).toHaveBeenCalledTimes(6);
+    expect(changed).toHaveBeenCalledTimes(4);
     await cdp.ensureAttached(4);
     onDetach.fire({ tabId: 4 }, "target_closed");
-    expect(changed).toHaveBeenCalledTimes(7);
+    expect(changed).toHaveBeenCalledTimes(5);
+    cdp.dispose();
+  });
+
+  it("preserves main-page refs and an in-flight observation across child frame changes", async () => {
+    const { api, onEvent } = fakeApi();
+    const refs = new RefStore();
+    const cdp = new ChromiumCdp(api, { onDocumentChanged: (tabId) => refs.invalidateTab(tabId) });
+    await cdp.ensureAttached(4);
+    refs.set("e1", 42, { tabId: 4, frameId: "root" });
+    const revision = refs.documentRevision(4);
+    const generation = refs.revision;
+    onEvent.fire({ tabId: 4 }, "Page.frameNavigated", {
+      frame: { id: "child", parentId: "root" },
+    });
+    onEvent.fire({ tabId: 4 }, "Page.documentOpened", {
+      frame: { id: "child", parentId: "root" },
+    });
+    for (const method of ["Page.frameNavigated", "Page.documentOpened", "DOM.documentUpdated"])
+      onEvent.fire({ tabId: 4, sessionId: "child-session" }, method, {
+        frame: { id: "child" },
+      });
+    onEvent.fire({ tabId: 4 }, "Page.frameDetached", { frameId: "child", reason: "remove" });
+    onEvent.fire({ tabId: 4 }, "Target.detachedFromTarget", { sessionId: "child-session" });
+    expect(refs.resolve("e1", { tabId: 4 })).toBe(42);
+    expect(refs.documentRevision(4)).toBe(revision);
+    expect(refs.revision).toBe(generation);
+
+    onEvent.fire({ tabId: 4 }, "Page.frameNavigated", { frame: { id: "root" } });
+    expect(refs.resolve("e1", { tabId: 4 })).toBeNull();
+    expect(refs.documentRevision(4)).not.toBe(revision);
     cdp.dispose();
   });
 });

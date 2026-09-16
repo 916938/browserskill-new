@@ -154,7 +154,7 @@ describe("handleWheel", () => {
     else
       expect(result).toMatchObject({
         code: mode === "cancel" ? "cancelled" : "cdp_failed",
-        data: { effect_state: "unknown" },
+        data: { reason: "input_outcome_unknown", effect_state: "unknown" },
       });
     expect(f.calls.filter((c) => c.params?.type === "mouseWheel")).toHaveLength(1);
     expect(
