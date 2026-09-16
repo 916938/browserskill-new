@@ -139,13 +139,15 @@ describe("handleWheel", () => {
         throw new Error("injected failure");
       return undefined;
     };
-    expect(await f.run()).toMatchObject({
+    const result = await f.run();
+    expect(result).toMatchObject({
       code: "cdp_failed",
       data: {
         effect_state: step === "wheel" ? "unknown" : "none",
-        reason: step === "wheel" ? "input_outcome_unknown" : "input_not_ready",
+        ...(step === "wheel" ? { reason: "input_outcome_unknown" } : {}),
       },
     });
+    if (step !== "wheel") expect(result).not.toHaveProperty("data.reason");
   });
   it.each([
     "complete",

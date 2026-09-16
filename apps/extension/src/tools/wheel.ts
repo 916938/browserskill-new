@@ -145,6 +145,8 @@ export async function handleWheel(
         y: point.y,
         modifiers,
       });
+      // markSent checks cancellation/deadline. Dispatch directly so a second
+      // guard cannot reject between recording the attempt and sending the wheel.
       input.markSent();
       await deps.cdp.send(target.tabId, "Input.dispatchMouseEvent", {
         type: "mouseWheel",

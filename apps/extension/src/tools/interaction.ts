@@ -457,7 +457,7 @@ export async function handleClick(
 ): Promise<ClickResult | RpcError> {
   const ctxOrErr = lookupSession(manager, params, "click");
   if (isRpcError(ctxOrErr)) return ctxOrErr;
-  const deadline = Date.now() + (params.timeout_ms ?? 30_000);
+  const deadline = Date.now() + (params.timeout_ms ?? deps.defaultTimeoutMs ?? DEFAULT_TIMEOUT_MS);
   const ctx = ctxOrErr;
   const aborted = throwIfAborted(deps.signal);
   if (aborted) return { ...aborted, data: { effect_state: "none" } };
@@ -1450,7 +1450,7 @@ export async function handlePress(
   params: PressParams,
   deps: InteractionDeps = getDefaultDeps(),
 ): Promise<PressResult | RpcError> {
-  const deadline = Date.now() + (params?.timeout_ms ?? 30_000);
+  const deadline = Date.now() + (params?.timeout_ms ?? deps.defaultTimeoutMs ?? DEFAULT_TIMEOUT_MS);
   if (!params || typeof params.key !== "string" || params.key.length === 0) {
     return { code: "invalid_params", message: "press requires a key string" };
   }

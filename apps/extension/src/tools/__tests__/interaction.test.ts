@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { SessionManager } from "@/session-manager/manager";
 import type { CdpRunner } from "@/tools/shared";
+import { withInputReady } from "../input-readiness";
 import {
   handleBlur,
   handleClick,
@@ -382,7 +383,12 @@ describe("handleClick", () => {
       { cdp: fake.cdp, tabsApi: fake.tabsApi },
     );
 
-    expect(res).toMatchObject({ code: "invalid_params" });
+    expect(res).toMatchObject({
+      code: "invalid_params",
+      message: "click_count must be greater than zero",
+      data: { effect_state: "none" },
+    });
+    expect(res).not.toHaveProperty("data.reason");
     expect(fake.sent.some((c) => c.method === "Input.dispatchMouseEvent")).toBe(false);
   });
 
@@ -538,6 +544,7 @@ describe("click input readiness", () => {
     options: {
       visibility?: () => string;
       rendered?: () => boolean | Promise<boolean>;
+      defaultTimeoutMs?: number;
       onCommand?: (method: string, params: Record<string, unknown>) => void;
     } = {},
   ) {
@@ -568,7 +575,17 @@ describe("click input readiness", () => {
         attachmentId = id;
       },
       click: (signal?: AbortSignal, timeout_ms?: number) =>
-        handleClick(manager, { session_id: "aa11", ref: "e1", timeout_ms }, { ...fake, signal }),
+        handleClick(
+          manager,
+          { session_id: "aa11", ref: "e1", timeout_ms },
+          { ...fake, signal, defaultTimeoutMs: options.defaultTimeoutMs },
+        ),
+      press: (signal?: AbortSignal, timeout_ms?: number) =>
+        handlePress(
+          manager,
+          { session_id: "aa11", key: "Enter", timeout_ms },
+          { ...fake, signal, defaultTimeoutMs: options.defaultTimeoutMs },
+        ),
       focusCommands: () =>
         fake.sent.filter((c) => c.method === "Emulation.setFocusEmulationEnabled"),
       mouseCommands: () => fake.sent.filter((c) => c.method === "Input.dispatchMouseEvent"),
@@ -618,10 +635,12 @@ describe("click input readiness", () => {
           controller.abort();
       },
     });
-    expect(await f.click(controller.signal)).toMatchObject({
+    const result = await f.click(controller.signal);
+    expect(result).toMatchObject({
       code: "cancelled",
       data: { effect_state: step === "mousePressed" ? "unknown" : "none" },
     });
+    if (step !== "mousePressed") expect(result).not.toHaveProperty("data.reason");
     const enabled = !["before", "visibility"].includes(step);
     expect(f.focusCommands().map((c) => c.params)).toEqual(
       enabled ? [{ enabled: true }, { enabled: false }] : [],
@@ -647,9 +666,11 @@ describe("click input readiness", () => {
           throw new Error("injected failure");
       },
     });
-    expect(await f.click()).toMatchObject({
+    const result = await f.click();
+    expect(result).toMatchObject({
       data: { effect_state: step === "press" ? "unknown" : "none" },
     });
+    if (step === "geometry") expect(result).not.toHaveProperty("data.reason", "input_not_ready");
     expect(f.focusCommands().map((c) => c.params)).toEqual([{ enabled: true }, { enabled: false }]);
     if (step === "press")
       expect(f.mouseCommands().at(-1)?.params).toMatchObject({ type: "mouseReleased" });
@@ -760,6 +781,65 @@ describe("click input readiness", () => {
       data: { effect_state: "unknown", cleanup_error: "cleanup failed" },
     });
     expect(f.mouseCommands()).toHaveLength(3);
+  });
+
+  it("does not classify an exception from a ready action as renderer unreadiness", async () => {
+    const f = await fixture();
+    const result = await withInputReady(f.ctx, 4, { cdp: f.cdp }, async () => {
+      throw new Error("action geometry query failed");
+    });
+    expect(result).toMatchObject({
+      code: "cdp_failed",
+      message: "action geometry query failed",
+      data: { effect_state: "none" },
+    });
+    expect(result).not.toHaveProperty("data.reason");
+  });
+
+  it("preserves the diagnostic message while warning about an attempted input", async () => {
+    const f = await fixture();
+    const result = await withInputReady(f.ctx, 4, { cdp: f.cdp }, async (input) => {
+      input.markSent();
+      return {
+        code: "not_found" as const,
+        message: "visual target changed after the first click",
+        data: { reason: "visual_capture_stale" as const },
+      };
+    });
+    expect(result).toEqual({
+      code: "not_found",
+      message: "visual target changed after the first click",
+      data: { reason: "input_outcome_unknown", effect_state: "unknown" },
+    });
+  });
+
+  it.each([
+    "click",
+    "press",
+  ] as const)("uses the configured %s timeout unless the caller overrides it", async (tool) => {
+    vi.useFakeTimers();
+    try {
+      for (const timeout_ms of [undefined, 200]) {
+        const f = await fixture({ defaultTimeoutMs: 80, rendered: () => new Promise(() => {}) });
+        let finished = false;
+        const pending = f[tool](undefined, timeout_ms).then((result) => {
+          finished = true;
+          return result;
+        });
+        await vi.advanceTimersByTimeAsync((timeout_ms ?? 80) - 1);
+        expect(finished).toBe(false);
+        await vi.advanceTimersByTimeAsync(1);
+        expect(finished).toBe(true);
+        expect(await pending).toMatchObject({
+          code: "timeout",
+          data: { reason: "input_not_ready", effect_state: "none" },
+        });
+        expect(f.focusCommands().at(-1)?.params).toEqual({ enabled: false });
+        expect(vi.getTimerCount()).toBe(0);
+      }
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("uses the caller's remaining deadline for a hung readiness step", async () => {
@@ -1375,20 +1455,22 @@ describe("handlePress", () => {
         return {};
       },
     });
-    expect(
-      await handlePress(
-        manager,
-        { session_id: "aa11", key: "Enter", ref: "e1" },
-        { ...fake, signal: abort.signal },
-      ),
-    ).toMatchObject({
+    const result = await handlePress(
+      manager,
+      { session_id: "aa11", key: "Enter", ref: "e1" },
+      { ...fake, signal: abort.signal },
+    );
+    expect(result).toMatchObject({
       code: step === "cancel" ? "cancelled" : "cdp_failed",
       data: {
         effect_state: step === "focus" ? "none" : "unknown",
-        reason: step === "focus" ? "input_not_ready" : "input_outcome_unknown",
+        ...(step === "focus" ? {} : { reason: "input_outcome_unknown" }),
       },
     });
-    if (step === "focus") expect(fake.sent.some((c) => c.method.startsWith("Input."))).toBe(false);
+    if (step === "focus") {
+      expect(fake.sent.some((c) => c.method.startsWith("Input."))).toBe(false);
+      expect(result).not.toHaveProperty("data.reason");
+    }
     if (step === "cancel") expect(fake.sent.at(-1)?.params).toMatchObject({ type: "keyUp" });
   });
 

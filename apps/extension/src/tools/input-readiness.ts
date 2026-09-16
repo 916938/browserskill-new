@@ -110,7 +110,8 @@ export async function waitForInputPaint(
   if (reply.result?.value !== true) throw new Error("Renderer did not finish painting input");
 }
 
-/** Prepare hidden native input without activating the tab or retrying the action. */
+/** Prepare hidden native input without activating the tab or retrying the action.
+ * Focus ownership relies on the daemon's per-session queue and exclusive tab ownership. */
 export async function withInputReady<T extends object>(
   ctx: SessionContext,
   tabId: number,
@@ -123,6 +124,7 @@ export async function withInputReady<T extends object>(
   let restoreFocus = false;
   let attachmentId: string | undefined;
   let inputSent = false;
+  let ready = false;
   const checkActive = () => {
     if (deps.signal?.aborted) throw new DOMException("input aborted", "AbortError");
     if (Date.now() >= (deps.deadline ?? Infinity))
@@ -172,6 +174,7 @@ export async function withInputReady<T extends object>(
       } else {
         checkActive();
         // Recompute geometry after waking: the background viewport may have changed.
+        ready = true;
         result = await action({
           hidden: restoreFocus,
           markSent: () => {
@@ -182,17 +185,18 @@ export async function withInputReady<T extends object>(
       }
     }
   } catch (error) {
+    const code =
+      deps.signal?.aborted || isAbortError(error)
+        ? "cancelled"
+        : error instanceof Error && error.name === "TimeoutError"
+          ? "timeout"
+          : "cdp_failed";
     result = {
-      code:
-        deps.signal?.aborted || isAbortError(error)
-          ? "cancelled"
-          : error instanceof Error && error.name === "TimeoutError"
-            ? "timeout"
-            : "cdp_failed",
+      code,
       message: error instanceof Error ? error.message : String(error),
       data: {
         effect_state: inputSent ? "unknown" : "none",
-        reason: inputSent ? "input_outcome_unknown" : "input_not_ready",
+        ...(!ready && code !== "cancelled" ? { reason: "input_not_ready" as const } : {}),
       },
     };
   } finally {
@@ -219,11 +223,8 @@ export async function withInputReady<T extends object>(
       ...result,
       data: {
         ...result.data,
-        ...(inputSent && result.data?.reason && result.data.reason !== "input_outcome_unknown"
-          ? { cause_reason: result.data.reason }
-          : {}),
         effect_state: inputSent ? "unknown" : "none",
-        reason: inputSent ? "input_outcome_unknown" : (result.data?.reason ?? "input_not_ready"),
+        ...(inputSent ? { reason: "input_outcome_unknown" as const } : {}),
       },
     };
   }
