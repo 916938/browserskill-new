@@ -654,6 +654,7 @@ describe("ToolDispatcher", () => {
     let resolveNode: ((value: object) => void) | undefined;
     const cdp = {
       send: vi.fn(async (_tabId: number, method: string) => {
+        if (method === "Runtime.evaluate") return { result: { value: "visible" } };
         if (method === "DOM.resolveNode")
           return new Promise((resolve) => {
             resolveNode = resolve;

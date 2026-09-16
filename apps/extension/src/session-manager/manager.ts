@@ -138,6 +138,10 @@ export class SessionManager {
     return Array.from(this.sessions.values());
   }
 
+  invalidateTabRefs(tabId: number): void {
+    for (const ctx of this.sessions.values()) ctx.refStore.invalidateTab(tabId);
+  }
+
   /**
    * Forget a tab Chrome has removed, including any uncommitted borrow.
    * Whole-window closures keep committed borrows until the window-removed
@@ -145,6 +149,7 @@ export class SessionManager {
    */
   forgetClosedTab(tabId: number, { isWindowClosing = false } = {}): void {
     this.borrowReservations.delete(tabId);
+    this.invalidateTabRefs(tabId);
     for (const ctx of this.sessions.values()) {
       ctx.agentCreatedTabs.delete(tabId);
       if (!isWindowClosing) ctx.borrowedTabs.delete(tabId);

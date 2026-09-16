@@ -189,6 +189,8 @@ export class ChromiumCdp {
     private readonly options: {
       /** CDP observation alone does not authorize dismissing user dialogs. */
       shouldAutoAcceptDialog?: (tabId: number) => boolean | Promise<boolean>;
+      /** Invalidate tab refs when the root document or debugger attachment changes. */
+      onDocumentChanged?: (tabId: number) => void;
     } = {},
   ) {
     this.api = api;
@@ -452,6 +454,7 @@ export class ChromiumCdp {
     if (!this.attachedTabs.has(tabId)) return;
     this.attachedTabs.delete(tabId);
     this.attachmentIds.delete(tabId);
+    this.options.onDocumentChanged?.(tabId);
     this.clearDialogState(tabId);
     this.clearConsoleState(tabId);
     this.clearNetworkState(tabId);
@@ -511,6 +514,7 @@ export class ChromiumCdp {
     this.tabOwners.clear();
     this.attachedTabs.clear();
     this.attachmentIds.clear();
+    for (const tabId of tabs) this.options.onDocumentChanged?.(tabId);
     this.dialogBuffers.clear();
     this.dialogSequences.clear();
     this.consoleBuffers.clear();
@@ -586,6 +590,19 @@ export class ChromiumCdp {
       const tabId = source.tabId;
       if (typeof tabId !== "number") return;
       const raw = (params ?? {}) as Record<string, unknown>;
+      const frame = raw.frame as { parentId?: string } | undefined;
+      // A child navigation/detach does not replace the root document. Keep this
+      // tab-wide invalidation limited to root changes; child lifetimes need
+      // frame-scoped handling rather than discarding unrelated page refs.
+      if (
+        !source.sessionId &&
+        (method === "DOM.documentUpdated" ||
+          ((method === "Page.frameNavigated" || method === "Page.documentOpened") &&
+            frame &&
+            !frame.parentId))
+      ) {
+        this.options.onDocumentChanged?.(tabId);
+      }
       const sessionId = typeof raw.sessionId === "string" ? raw.sessionId : undefined;
       if (!sessionId) return;
 
@@ -856,6 +873,7 @@ export class ChromiumCdp {
     if (this.detachSubscription) return;
     const listener = (source: chrome.debugger.Debuggee, _reason: string) => {
       if (typeof source.tabId === "number") {
+        this.options.onDocumentChanged?.(source.tabId);
         this.attachedTabs.delete(source.tabId);
         this.attachmentIds.delete(source.tabId);
         this.attachInFlight.delete(source.tabId);

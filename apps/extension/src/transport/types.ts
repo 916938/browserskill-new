@@ -23,6 +23,10 @@ export type ErrorCode =
 export type RpcErrorReason =
   | "agent_window_scope"
   | "element_not_visible"
+  | "input_not_ready"
+  | "input_outcome_unknown"
+  | "input_paint_unconfirmed"
+  | "input_cleanup_failed"
   | "ref_not_found"
   | "ref_kind_unsupported"
   | "visual_capture_stale"

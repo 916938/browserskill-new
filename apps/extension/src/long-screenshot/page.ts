@@ -11,6 +11,8 @@ export function createPageCapture(onCancel: (id: string, reason: CaptureCancelRe
   let task: ReturnType<typeof prepare> | undefined;
 
   function prepare(id: string, label: string, cancelLabel: string, scope: CaptureScope = "follow") {
+    // The stitcher captures visible viewports; hidden tabs cannot reliably repaint or restore them.
+    if (document.hidden) throw new ScreenshotError("interrupted", "page_hidden");
     const limit = scope === "current" ? measure().height : Infinity;
     const controller = new AbortController();
     const original = { x: window.scrollX, y: window.scrollY };

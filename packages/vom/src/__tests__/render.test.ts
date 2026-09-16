@@ -29,6 +29,30 @@ function coreRefs(refs: ReturnType<typeof renderVom>["refs"]) {
 }
 
 describe("renderVom single-layer page", () => {
+  it.each([
+    { checked: true, marker: " [checked]" },
+    { checked: false, marker: " [unchecked]" },
+    { checked: "mixed" as const, marker: " [mixed]" },
+    { checked: undefined, marker: "" },
+  ])("renders checkbox state separately from its value: %j", ({ checked, marker }) => {
+    const out = renderVom(
+      scene([
+        node({
+          id: 1,
+          backendNodeId: 1,
+          tag: "input",
+          role: "checkbox",
+          name: "Subscribe",
+          checked,
+          value: "on",
+          rect: { x: 0, y: 0, w: 20, h: 20 },
+        }),
+      ]),
+    );
+    expect(out.text).toContain('@e1 checkbox "Subscribe"' + marker + ' ="on"');
+    expect(out.refs).toHaveLength(1);
+  });
+
   it("does not derive handle context across frame scopes", () => {
     const out = renderVom(
       scene([
@@ -1077,5 +1101,29 @@ describe("renderVom double-layer page", () => {
       line: expect.any(Number),
     });
     expect(out.text.split("\n")[out.refs[0]?.line ?? -1]).toContain('@e1 textbox "Email"');
+  });
+});
+
+describe("disabled form state", () => {
+  it("exposes disabled state independently of checkbox state and submitted value", () => {
+    const out = renderVom(
+      scene([
+        node({ id: 1, role: "RootWebArea", name: "Form" }),
+        node({ id: 2, parentId: 1, role: "button", name: "Save", disabled: true }),
+        node({
+          id: 3,
+          parentId: 1,
+          role: "checkbox",
+          name: "Terms",
+          disabled: true,
+          checked: false,
+          value: "payload",
+        }),
+        node({ id: 4, parentId: 1, role: "button", name: "Cancel" }),
+      ]),
+    );
+    expect(out.text).toContain('button "Save" [disabled]');
+    expect(out.text).toContain('checkbox "Terms" [disabled] [unchecked] ="payload"');
+    expect(out.text).not.toContain('button "Cancel" [disabled]');
   });
 });
