@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::convert::Infallible;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
@@ -44,14 +44,41 @@ struct Gateway {
     path: String,
     authorize_path: String,
     active: Mutex<HashMap<String, ActiveConnection>>,
-    connections: Arc<Semaphore>,
+    connections: DeviceCapacity,
     attempts: Mutex<AuthorizationRateLimit>,
     capacity_warning: Mutex<Option<Instant>>,
 }
 
 struct ActiveConnection {
     cancel: watch::Sender<bool>,
-    slot: Arc<OwnedSemaphorePermit>,
+}
+
+// Capacity belongs to a device from reservation through socket teardown, even
+// before an upgraded connection has entered the active/cancellation registry.
+struct DeviceCapacity {
+    permits: Arc<Semaphore>,
+    slots: Mutex<HashMap<String, Weak<OwnedSemaphorePermit>>>,
+}
+
+impl DeviceCapacity {
+    fn new(limit: usize) -> Self {
+        Self {
+            permits: Arc::new(Semaphore::new(limit)),
+            slots: Mutex::new(HashMap::new()),
+        }
+    }
+
+    fn acquire(&self, device_id: &str) -> Option<Arc<OwnedSemaphorePermit>> {
+        let mut slots = self.slots.lock().unwrap();
+        if let Some(slot) = slots.get(device_id).and_then(Weak::upgrade) {
+            return Some(slot);
+        }
+        // Weak entries must neither retain capacity nor accumulate across devices.
+        slots.retain(|_, slot| slot.strong_count() > 0);
+        let slot = Arc::new(self.permits.clone().try_acquire_owned().ok()?);
+        slots.insert(device_id.to_owned(), Arc::downgrade(&slot));
+        Some(slot)
+    }
 }
 
 pub(crate) struct ConnectionAuthorization {
@@ -142,7 +169,7 @@ pub async fn bind(state: Arc<DaemonState>, addr: SocketAddr) -> Result<WsHandle>
     let configure_store = store.clone();
     let configure = config.clone();
     tokio::task::spawn_blocking(move || configure_store.configure(&configure)).await??;
-    let connections = Arc::new(Semaphore::new(config.max_connections));
+    let connections = DeviceCapacity::new(config.max_connections);
     let attempts = Mutex::new(AuthorizationRateLimit::new(config.authorize_rate_limit));
     let gateway = Arc::new(Gateway {
         store,
@@ -345,29 +372,17 @@ async fn handle(
     };
     // Replacement sockets reuse their device's slot, including at capacity.
     // The short-lived HTTP permit is released after the upgrade completes.
-    let slot = {
-        let active = gateway.active.lock().unwrap();
-        if let Some(entry) = active.get(&device.device_id) {
-            entry.slot.clone()
-        } else {
-            match gateway.connections.clone().try_acquire_owned() {
-                Ok(permit) => Arc::new(permit),
-                Err(_) => {
-                    let mut last = gateway.capacity_warning.lock().unwrap();
-                    if last.is_none_or(|time| time.elapsed() >= Duration::from_secs(60)) {
-                        warn!(
-                            "remote browser capacity reached; rejecting new devices with HTTP 503"
-                        );
-                        *last = Some(Instant::now());
-                    }
-                    return Ok(retry_response(
-                        StatusCode::SERVICE_UNAVAILABLE,
-                        "connection_capacity_reached",
-                        5,
-                    ));
-                }
-            }
+    let Some(slot) = gateway.connections.acquire(&device.device_id) else {
+        let mut last = gateway.capacity_warning.lock().unwrap();
+        if last.is_none_or(|time| time.elapsed() >= Duration::from_secs(60)) {
+            warn!("remote browser capacity reached; rejecting new devices with HTTP 503");
+            *last = Some(Instant::now());
         }
+        return Ok(retry_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "connection_capacity_reached",
+            5,
+        ));
     };
     let mut upgrade_request = Request::new(());
     *upgrade_request.method_mut() = request.method().clone();
@@ -385,7 +400,7 @@ async fn handle(
         .insert("sec-websocket-protocol", protocol.parse().unwrap());
     let upgrade = hyper::upgrade::on(&mut request);
     tokio::spawn(async move {
-        let _slot = slot.clone();
+        let _slot = slot;
         let Ok(Ok(stream)) = tokio::time::timeout(Duration::from_secs(5), upgrade).await else {
             return;
         };
@@ -403,7 +418,7 @@ async fn handle(
             .active
             .lock()
             .unwrap()
-            .insert(device.device_id.clone(), ActiveConnection { cancel, slot })
+            .insert(device.device_id.clone(), ActiveConnection { cancel })
         {
             let _ = previous.cancel.send(true);
         }
@@ -422,4 +437,36 @@ async fn handle(
         let _ = drive_connection(gateway.state.clone(), ws, Some(authorization)).await;
     });
     Ok(upgrade_response.map(|_| Full::new(Bytes::new())))
+}
+
+#[cfg(test)]
+mod capacity_tests {
+    use super::DeviceCapacity;
+    use std::sync::Arc;
+
+    #[test]
+    fn pending_and_replacement_connections_share_one_device_slot() {
+        let capacity = DeviceCapacity::new(1);
+        // Neither socket has reached the active registry yet.
+        let pending = capacity.acquire("first").unwrap();
+        let replacement = capacity.acquire("first").unwrap();
+        assert!(Arc::ptr_eq(&pending, &replacement));
+        assert!(capacity.acquire("second").is_none());
+        drop(pending);
+        assert!(capacity.acquire("second").is_none());
+        drop(replacement);
+        assert!(capacity.acquire("second").is_some());
+    }
+
+    #[test]
+    fn failed_upgrade_releases_capacity_and_expired_device_entries() {
+        let capacity = DeviceCapacity::new(1);
+        let pending = capacity.acquire("failed").unwrap();
+        drop(pending);
+        let next = capacity.acquire("next").unwrap();
+        assert_eq!(capacity.slots.lock().unwrap().len(), 1);
+        assert!(capacity.acquire("failed").is_none());
+        drop(next);
+        assert!(capacity.acquire("failed").is_some());
+    }
 }
