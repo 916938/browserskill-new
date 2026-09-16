@@ -7,6 +7,16 @@ verify skill installation or discovery: no installed skill is reported as `N/A`.
 Explain remaining warnings; a local process identity warning permits browser use
 over working IPC. Never use `sudo`; the user installs the browser extension.
 
+## Choose the connection mode first
+
+- **Agent and browser on the same computer:** follow the local steps below.
+- **Remote, with a configured service or pairing link:** follow
+  [pairing and first-use verification](docs/remote-extension-connection.md#pair-and-verify).
+  The browser computer needs only the extension; CLI and harness setup belongs on the Agent server.
+- **Remote, with a server still to configure:** use Steps 1–2 on the Agent server,
+  then follow [server setup](docs/remote-extension-connection.md#standalone-server)
+  before checking the connection. Report missing server access or TLS prerequisites.
+
 ## 1. Install the CLI
 
 For an existing installation, check `bsk --version` and follow the
@@ -63,18 +73,26 @@ custom instructions are preserved. Verify discovery in Step 5.
 ## 3. Run `bsk doctor`
 
 If this environment reaps child processes after every shell command, first follow
-the [sandbox setup guide](docs/sandboxed-agents.md): arrange a persistent daemon
-in the owning host environment, then use the same accessible `BSK_HOME` and
-`BSK_AUTO_START=0` for every sandboxed command, including `doctor` and the session
-commands. Keep normal browser commands sandboxed. Do not assume one `export`
-persists across separate shell tool calls.
+the [sandbox setup guide](docs/sandboxed-agents.md), including its PowerShell examples
+for Windows. Reuse the host daemon's existing `BSK_HOME` (or its default if unset),
+set `BSK_AUTO_START=0`, and check `bsk status --json`. Reuse a working daemon; a
+permission error or timeout is not evidence that it is absent. Only when it is
+missing and no host task is already starting it, launch
+`bsk daemon start --foreground` in a persistent host task, or use a normal host
+terminal as described in the guide. In another shell tool call, confirm status
+succeeds before continuing; allow up to five checks with one-second pauses for
+transient startup errors. If the task exits or never becomes ready, inspect its
+output and `bsk logs`, then recheck for an existing daemon before another launch.
+Use the same `BSK_HOME` and `BSK_AUTO_START=0` for every sandboxed command, including
+`doctor` and session commands. Keep browser commands sandboxed; environment settings
+may not persist across shell calls. Report unresolved errors instead of looping.
 
 ```bash
 bsk doctor
 ```
 
 Each `fail` row prints a `hint` — follow it and re-run once. When auto-start is
-disabled, an unavailable daemon needs host-side startup using the same directory.
+disabled and the daemon is missing, return to the reuse/startup checks above.
 For a path/permission failure, use the resolved path in the report to check the
 shared directory and sandbox access rules; do not guess `/home/<user>` or delete
 daemon files. A fresh install where only `extension connected` fails is expected;
@@ -82,24 +100,22 @@ go to Step 4.
 
 ## 4. Connect the browser extension
 
-If the intended browser is already connected, continue to Step 5. If its extension
-is installed but disconnected, check that the connection is enabled and the local
-port matches the daemon. For a server deployment, follow
-[remote pairing](docs/remote-extension-connection.md).
+If the intended browser is already connected, continue to Step 5.
 
-If the extension is not installed, open the page matching the user's browser —
+If the extension is not installed, give the user the page matching their browser —
 [Chrome Web Store](https://chromewebstore.google.com/detail/hhcmgoofomhgciiibhipgmgkgnoenaoi)
 for Chrome and other Chromium browsers,
 [Edge Add-ons](https://microsoftedge.microsoft.com/addons/detail/browserskill/emacgiaaaiojkkpkddmmdfhmokgmnikg)
-for Microsoft Edge — then tell the user:
+for Microsoft Edge — and ask them to install it on the computer with that browser.
 
-> Install **BrowserSkill** from the
-> [Chrome Web Store](https://chromewebstore.google.com/detail/hhcmgoofomhgciiibhipgmgkgnoenaoi)
-> (or [Edge Add-ons](https://microsoftedge.microsoft.com/addons/detail/browserskill/emacgiaaaiojkkpkddmmdfhmokgmnikg)
-> on Edge), open the popup, and wait until it turns green. Reply when done.
+- **Local:** ask the user to open the popup, enable the connection and confirm the
+  port matches the local daemon; wait for the connected status.
+- **Remote:** ask the user to select **Remote connection**, paste the pairing link
+  and save it. Follow the [remote verification steps](docs/remote-extension-connection.md#pair-and-verify);
+  installing the extension or generating a link alone does not establish a connection.
 
-If opening the page fails, give the user the same link. Wait for the user's reply,
-then run `bsk doctor` once more.
+After the user completes the browser-side step, run `bsk doctor` on the Agent's
+machine. For a managed remote server, use its `BSK_HOME` and `BSK_AUTO_START=0`.
 
 ## 5. Verify skill discovery and first use
 

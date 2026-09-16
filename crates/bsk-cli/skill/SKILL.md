@@ -13,6 +13,38 @@ Use `bsk` to work in an **Agent Window** with the user's existing logins. User t
 require explicit borrowing. This skill does not install the extension or handle
 advice-only tasks. Never extract credentials, cookies, tokens, or other secrets.
 
+## Before starting a session
+
+For remote setup or pairing, follow the [remote guide](https://github.com/Tencent/BrowserSkill/blob/main/docs/remote-extension-connection.md).
+
+Local commands normally auto-start the daemon. If the host terminates background
+children after each shell call, including on Windows, complete these steps first:
+
+1. Reuse the host daemon's existing `BSK_HOME` (or its default if unset). Set
+   `BSK_AUTO_START=0` and run `bsk status --json`. Reuse a working daemon; an empty
+   `browsers` list means the extension still needs connecting. Permission errors,
+   timeouts or invalid replies do not prove the daemon is absent.
+2. Only if the check reports a missing daemon and no host task is already starting
+   it, run `bsk daemon start --foreground` with the same `BSK_HOME` in the host's
+   approved persistent background task outside the per-command sandbox. Keep that
+   task alive; `--foreground` alone cannot prevent host cleanup. The
+   [sandbox guide](https://github.com/Tencent/BrowserSkill/blob/main/docs/sandboxed-agents.md)
+   covers the normal host-terminal alternative and PowerShell examples.
+3. After launching, or if a host task is already starting the daemon, run
+   `bsk status --json` in a **separate shell tool call** with the same `BSK_HOME`
+   and `BSK_AUTO_START=0`. While startup is pending, make at most five
+   checks with one-second pauses for missing-endpoint or transient startup errors;
+   stop on permission/protocol errors. Proceed only after a successful status
+   response. If the host task exits (including a lock error) or readiness never
+   succeeds, inspect its output and `bsk logs`, then recheck status for another
+   daemon before deciding whether startup is still needed. Report unresolved
+   errors; do not loop on launches, delete runtime files or restart a shared daemon.
+
+Use the same `BSK_HOME` and `BSK_AUTO_START=0` on EVERY sandboxed command;
+environment settings may not persist between shell calls. Keep browser commands
+sandboxed. For other startup failures, retry once, then use `bsk doctor`.
+A local process identity warning permits browser commands when IPC works.
+
 ## Task workflow
 
 1. Define success from the user's request. Start `bsk session start --json` and
@@ -121,7 +153,7 @@ full settings support. A feature's version error does not disable other operatio
 Remote content reads/actions require task-created or borrowed tabs. Page-opened
 popups gain no control automatically; an unowned tab inside the Agent Window
 needs the user to move it to a user window before borrowing. Remote upload/download
-are unsupported; screenshots work. See the [remote guide](https://github.com/Tencent/BrowserSkill/blob/main/docs/remote-extension-connection.md).
+are unsupported; screenshots work.
 
 ## Human steps and recovery
 
@@ -237,14 +269,3 @@ sequence cursors. `emulate --device iphone-14` affects one tab; `--off` restores
 CLI exit code 0. Never evaluate secrets. `record start` captures user actions;
 read its help first and never record banking, SSO or password-manager pages.
 Use `bsk --help` to find navigation/history, tab, wait and window commands.
-
-## Startup problems
-
-Commands normally auto-start the daemon. After one failed retry, use `bsk doctor`.
-If command sandboxes reap background processes, arrange a persistent daemon in
-its owning host environment using the [sandbox guide](https://github.com/Tencent/BrowserSkill/blob/main/docs/sandboxed-agents.md).
-Use the same accessible `BSK_HOME` and `BSK_AUTO_START=0` on EVERY sandboxed command;
-exports may not persist between shell calls. Keep browser commands sandboxed.
-A missing daemon needs host-side startup, not repeated auto-start, guessed home
-paths, deleted runtime files or a shared-daemon restart. A local process identity
-warning permits browser commands when IPC works.
