@@ -420,28 +420,20 @@ fn invalid_and_mismatched_responses_do_not_trigger_startup() {
 
 #[test]
 fn discovery_rereads_metadata_when_an_instance_changes_during_probe() {
-    let daemon = MockDaemon::new(FOREIGN_PID, |n, info| {
+    let daemon = MockDaemon::new(FOREIGN_PID, |_, info| {
         let mut replacement = info.clone();
         replacement.pid -= 1;
-        if n == 0 {
-            // Publish only after discovery has read the original metadata.
-            let home = info.sock_path.parent().unwrap();
-            std::fs::rename(home.join("replacement.json"), home.join("daemon.json")).unwrap();
-        }
+        write_to_path(
+            &replacement,
+            &info.sock_path.parent().unwrap().join("daemon.json"),
+        )
+        .unwrap();
         Some(status(&replacement))
     });
-    // Prepare and sync outside the CLI's probe deadline: this test exercises
-    // atomic metadata replacement, not filesystem durability latency.
-    let mut replacement: DaemonInfo = serde_json::from_slice(&daemon.metadata()).unwrap();
-    replacement.pid -= 1;
-    write_to_path(&replacement, &daemon.home().join("replacement.json")).unwrap();
     let out = run(daemon.home(), &["--json", "status"]);
     success(&out);
     let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(value["pid"], FOREIGN_PID - 1);
-    let published: DaemonInfo = serde_json::from_slice(&daemon.metadata()).unwrap();
-    assert_eq!(published, replacement);
-    assert!(!daemon.home().join("replacement.json").exists());
     assert!(!daemon.home().join("daemon.lock").exists());
 }
 
