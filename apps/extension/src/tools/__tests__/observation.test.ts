@@ -4461,3 +4461,92 @@ describe("controlled viewport screenshot routing", () => {
     expect(capture).not.toHaveBeenCalled();
   });
 });
+
+it.each([
+  "borrowed-default",
+  "background-explicit",
+] as const)("keeps screenshot targeting compatible with PR249 (%s)", async (mode) => {
+  const manager = new SessionManager({ agentWindow: fakeAgentWindow([100]) });
+  const ctx = await manager.start("aa11");
+  ctx.borrowedTabs.set(7, { tabId: 7, originalWindowId: 200, originalIndex: 0 });
+  ctx.agentCreatedTabs.add(8);
+  const capture = vi.fn();
+  const { cdp } = makeFakeCdp({
+    "Page.getFrameTree": () => ({ frameTree: { frame: { id: "main" } } }),
+    "Page.createIsolatedWorld": () => ({ executionContextId: 1 }),
+    "Runtime.evaluate": () => ({
+      result: { deepSerializedValue: { type: "node", value: { backendNodeId: 42 } } },
+    }),
+    "Runtime.releaseObjectGroup": () => ({}),
+    "Page.captureScreenshot": () => ({ data: TINY_PNG }),
+  });
+  cdp.getAttachmentId = () => "attachment";
+  let activeTab = mode === "borrowed-default" ? 7 : 8;
+  const tab = (id: number) => ({ id, windowId: 100, active: id === activeTab }) as chrome.tabs.Tab;
+  const query = vi.fn(async () => [tab(activeTab)]);
+  const deps = makeScreenshotDeps({
+    cdp,
+    get: async (id) => tab(id),
+    query,
+    captureVisibleTab: capture,
+  });
+  deps.sendToTab = async () => {
+    activeTab = 8;
+  };
+  const result = await handleScreenshot(
+    manager,
+    {
+      session_id: "aa11",
+      ...(mode === "background-explicit" ? { tab_id: 7 } : {}),
+    },
+    deps,
+  );
+  expect(result).toMatchObject({ tab_id: 7, image_base64: TINY_PNG });
+  expect(cdp.send).toHaveBeenCalledWith(7, "Page.captureScreenshot", expect.any(Object));
+  expect(capture).not.toHaveBeenCalled();
+  expect(activeTab).toBe(8);
+  if (mode === "borrowed-default")
+    expect(query).toHaveBeenCalledWith({ active: true, windowId: 100 });
+  else expect(query).not.toHaveBeenCalled();
+});
+
+it.each([
+  "returned",
+  "moved",
+  "session-ended",
+] as const)("discards a viewport result when target ownership changes during capture (%s)", async (kind) => {
+  const manager = new SessionManager({ agentWindow: fakeAgentWindow([100]) });
+  const ctx = await manager.start("aa11");
+  ctx.borrowedTabs.set(7, { tabId: 7, originalWindowId: 200, originalIndex: 0 });
+  let windowId = 100;
+  const capture = vi.fn();
+  const { cdp } = makeFakeCdp({
+    "Page.getFrameTree": () => ({ frameTree: { frame: { id: "main" } } }),
+    "Page.createIsolatedWorld": () => ({ executionContextId: 1 }),
+    "Runtime.evaluate": () => ({
+      result: { deepSerializedValue: { type: "node", value: { backendNodeId: 42 } } },
+    }),
+    "Runtime.releaseObjectGroup": () => ({}),
+    "Page.captureScreenshot": () => ({ data: TINY_PNG }),
+  });
+  cdp.getAttachmentId = () => "attachment";
+  const deps = makeScreenshotDeps({
+    cdp,
+    get: async () => ({ id: 7, windowId, active: false }) as chrome.tabs.Tab,
+    captureVisibleTab: capture,
+  });
+  const phases: string[] = [];
+  deps.sendToTab = async (_id, message) => {
+    phases.push(message.phase);
+    if (message.phase !== "end") return;
+    if (kind === "returned") ctx.borrowedTabs.delete(7);
+    if (kind === "moved") windowId = 200;
+    if (kind === "session-ended") await manager.stop("aa11");
+  };
+  expect(await handleScreenshot(manager, { session_id: "aa11", tab_id: 7 }, deps)).toMatchObject({
+    code: "not_found",
+    data: { reason: "visual_target_changed" },
+  });
+  expect(phases).toEqual(["begin", "end"]);
+  expect(capture).not.toHaveBeenCalled();
+});
