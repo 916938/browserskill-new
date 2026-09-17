@@ -14,10 +14,12 @@ export class NavigationDocument {
   }
 
   begin(): void {
-    this.retire(this.id);
-    this.id = undefined;
+    // A request can be cancelled without replacing the committed document.
     this.pending = true;
-    this.version += 1;
+  }
+
+  cancelPending(): void {
+    this.pending = false;
   }
 
   commit(id: string | undefined): boolean {
@@ -30,6 +32,6 @@ export class NavigationDocument {
   }
 
   isCurrent(version: number): boolean {
-    return this.version === version && !this.pending;
+    return this.version === version;
   }
 }

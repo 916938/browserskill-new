@@ -250,6 +250,8 @@ function startLifecycleWait(
     let lastLifecycle: string | undefined;
     const document = new NavigationDocument();
     document.retire(guard?.beforeLoaderId ?? undefined);
+    const pendingRequests = new Set<string>();
+    let navigationRevision = 0;
     let pendingLifecycle: { name: string; frameId?: string; loaderId?: string } | null = null;
     let listenerSub: { dispose(): void } | null = null;
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -326,7 +328,7 @@ function startLifecycleWait(
       if (settled) return;
       const version = document.version;
       const readyState = await probeMainFrameReadyState(cdp, expectedTabId);
-      if (guard?.followNavigations && !document.isCurrent(version)) return;
+      if (guard?.followNavigations && (!document.isCurrent(version) || document.pending)) return;
       if (readyState === null) return;
       if (
         shouldTrustReadyStateProbe(readyState, targetName, {
@@ -337,6 +339,25 @@ function startLifecycleWait(
       ) {
         finish({ reached: "match", lastLifecycle: targetName });
       }
+    };
+
+    // Request intent is not a commit. Reconcile buffered current-document
+    // events after cancellation, without accepting a probe from an older turn.
+    const reconcilePending = async () => {
+      if (settled || !document.pending || pendingRequests.size) return;
+      const version = document.version;
+      const revision = navigationRevision;
+      const frame = await readMainFrameInfo(cdp, expectedTabId);
+      if (
+        settled ||
+        !document.isCurrent(version) ||
+        revision !== navigationRevision ||
+        pendingRequests.size
+      )
+        return;
+      if (frame.frameId !== currentFrameId() || frame.loaderId !== document.id) return;
+      document.cancelPending();
+      maybeFinishPending();
     };
 
     if (signal?.aborted) {
@@ -359,10 +380,45 @@ function startLifecycleWait(
                 (!p.disposition || p.disposition === "currentTab")
               ) {
                 document.begin();
-                pendingLifecycle = null;
-                sawRelevantLifecycle = false;
-                lastLifecycle = undefined;
+                navigationRevision += 1;
               }
+              return;
+            }
+            if (method === "Network.requestWillBeSent") {
+              const p = params as {
+                requestId?: string;
+                frameId?: string;
+                loaderId?: string;
+                type?: string;
+              };
+              if (
+                p.type === "Document" &&
+                p.frameId === currentFrameId() &&
+                p.requestId &&
+                document.id &&
+                p.loaderId !== document.id &&
+                !document.isRetired(p.loaderId)
+              ) {
+                document.begin();
+                navigationRevision += 1;
+                pendingRequests.add(p.requestId);
+              }
+              return;
+            }
+            if (method === "Network.loadingFailed" || method === "Network.loadingFinished") {
+              const p = params as { requestId?: string };
+              if (p.requestId && pendingRequests.delete(p.requestId)) {
+                navigationRevision += 1;
+                void reconcilePending();
+              }
+              return;
+            }
+            if (
+              method === "Page.frameStoppedLoading" ||
+              method === "Page.navigatedWithinDocument"
+            ) {
+              const p = params as { frameId?: string };
+              if (p.frameId === currentFrameId()) void reconcilePending();
               return;
             }
             if (method === "Page.frameNavigated") {
@@ -373,6 +429,8 @@ function startLifecycleWait(
                 document.commit(p.frame?.loaderId)
               ) {
                 observedMainFrameId = p.frame?.id ?? "";
+                navigationRevision += 1;
+                pendingRequests.clear();
                 pendingLifecycle = null;
                 sawRelevantLifecycle = false;
                 lastLifecycle = undefined;
@@ -395,6 +453,16 @@ function startLifecycleWait(
           if (method !== "Page.lifecycleEvent") return;
           const p = params as { name?: string; frameId?: string; loaderId?: string };
           if (!p?.name) return;
+          if (
+            guard?.followNavigations &&
+            document.pending &&
+            p.loaderId === document.id &&
+            lifecycleEventMatchesFrame(p.frameId)
+          ) {
+            pendingLifecycle = { name: p.name, frameId: p.frameId, loaderId: p.loaderId };
+            void reconcilePending();
+            return;
+          }
           if (currentFrameId().length === 0) {
             // A static empty `frameId` means the caller does not know
             // which frame to filter on (M9.2 `wait_for_navigation`
@@ -572,6 +640,9 @@ async function prepareNavigation(
   try {
     await acquireNavigationExecution(manager, ctx, target.tabId, deps);
     await ensureCdpReady(deps.cdp, target.tabId);
+    // Successor request termination is part of navigation waiting, even if
+    // optional network capture was unavailable during debugger attachment.
+    await deps.cdp.send(target.tabId, "Network.enable", {});
     return "cdp";
   } catch (error) {
     // Only preflight access denial permits fallback. Never replay a sent action.

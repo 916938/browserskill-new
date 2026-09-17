@@ -462,15 +462,24 @@ export async function handleTabCreate(
       if (props.url !== "about:blank") await getTabsApi(deps).update(tab.id, { url: props.url });
       if (deps.signal?.aborted) throw new Error("Tab creation cancelled during navigation");
     } catch (error) {
+      const cleanupErrors: string[] = [];
       try {
         await deps.cdp?.releaseSessionTab?.(ctx.sessionId, tab.id);
+      } catch (cleanupError) {
+        cleanupErrors.push(`release: ${describeError(cleanupError)}`);
+      }
+      try {
         await getTabsApi(deps).remove(tab.id);
         ctx.agentCreatedTabs.delete(tab.id);
       } catch (cleanupError) {
+        // Keep the claim only when closing fails, so session cleanup can retry.
+        cleanupErrors.push(`close: ${describeError(cleanupError)}`);
+      }
+      if (cleanupErrors.length) {
         return rpcError(
           "protocol_error",
           "cleanup_failed",
-          `Background tab initialization failed: ${describeError(error)}; cleanup failed: ${describeError(cleanupError)}`,
+          `Background tab initialization failed: ${describeError(error)}; cleanup failed: ${cleanupErrors.join("; ")}`,
           { resource_type: "tab", resource_id: tab.id },
         );
       }
@@ -936,12 +945,18 @@ export async function handleTabBorrow(
         message: `tab_borrow claim could not be committed: ${describeError(err)}`,
       };
     }
-    // Moving/claiming a target is not a request to select it in the browser UI.
+    // Preserve borrow's default-target contract: subsequent commands without a
+    // tab_id operate on the borrowed page. Background execution survives later
+    // user tab switches; selecting a tab does not focus its window.
     try {
       const tab = await tabsApi.get(params.tab_id);
       if (!cdpBlockedUrlReason(tab.url)) {
         await deps.cdp?.acquireBackgroundExecution?.(ctx.sessionId, params.tab_id);
       }
+      if (deps.signal?.aborted || manager.get(ctx.sessionId) !== ctx) {
+        throw new Error("Borrow cancelled during background execution setup");
+      }
+      await tabsApi.update(params.tab_id, { active: true });
       if (deps.signal?.aborted || manager.get(ctx.sessionId) !== ctx) {
         throw new Error("Borrow cancelled during background execution setup");
       }

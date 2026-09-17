@@ -40,6 +40,8 @@ async function fixture() {
     onDOMContentLoaded: event<Listener>(),
     onCompleted: event<Listener>(),
     onErrorOccurred: event<Listener>(),
+    onReferenceFragmentUpdated: event<Listener>(),
+    onHistoryStateUpdated: event<Listener>(),
   };
   const cdpEvents = event<Parameters<NonNullable<CdpRunner["onEvent"]>>[0]>();
   const state = { blocked: true, destinationBlocked: false, emitIdle: true };
@@ -695,4 +697,81 @@ it("keeps one deadline across multiple document handoffs", async () => {
   } finally {
     vi.useRealTimers();
   }
+});
+
+it.each([
+  "abort",
+  "fragment",
+  "history",
+] as const)("resumes the committed document after a successor ends without commit (%s)", async (kind) => {
+  const f = await fixture();
+  let settled = false;
+  const attempt = { ...f.main, documentId: undefined, url: `${url}/cancelled` };
+  const work = navigateWithBrowserApi(
+    f.deps.browserNavigation,
+    4,
+    async () => {
+      f.events.onBeforeNavigate.fire(f.main);
+      f.events.onCommitted.fire(f.main);
+      f.events.onBeforeNavigate.fire(attempt);
+      f.events.onCompleted.fire(f.main);
+    },
+    "load",
+    1000,
+  ).then((result) => {
+    settled = true;
+    return result;
+  });
+  await vi.waitFor(() => expect(f.deps.browserNavigation.getFrame).toHaveBeenCalledOnce());
+  await Promise.resolve();
+  expect(settled).toBe(false);
+  if (kind === "abort") f.events.onErrorOccurred.fire({ ...attempt, error: "net::ERR_ABORTED" });
+  else if (kind === "fragment") f.events.onReferenceFragmentUpdated.fire(f.main);
+  else f.events.onHistoryStateUpdated.fire(f.main);
+  expect(await work).toMatchObject({ reached: "match", lastLifecycle: "load" });
+  f.expectCleanedUp();
+});
+
+it("does not let a late cancellation probe complete a successor document", async () => {
+  const f = await fixture();
+  let resolveFrame!: (value: { documentId: string }) => void;
+  f.deps.browserNavigation.getFrame
+    .mockReset()
+    .mockImplementationOnce(async () => ({ documentId: "old-document" }))
+    .mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveFrame = resolve;
+        }),
+    );
+  const attempt = { ...f.main, documentId: undefined, url: `${url}/attempt` };
+  let settled = false;
+  const work = navigateWithBrowserApi(
+    f.deps.browserNavigation,
+    4,
+    async () => {
+      f.events.onBeforeNavigate.fire(f.main);
+      f.events.onCommitted.fire(f.main);
+      f.events.onBeforeNavigate.fire(attempt);
+      f.events.onCompleted.fire(f.main);
+      f.events.onErrorOccurred.fire({ ...attempt, error: "net::ERR_ABORTED" });
+    },
+    "load",
+    1000,
+  ).then((result) => {
+    settled = true;
+    return result;
+  });
+  await vi.waitFor(() => expect(resolveFrame).toBeDefined());
+  const next = { ...f.main, documentId: "successor", url: `${url}/successor` };
+  f.events.onBeforeNavigate.fire(next);
+  f.events.onCommitted.fire(next);
+  resolveFrame({ documentId: f.main.documentId });
+  f.events.onCompleted.fire(f.main);
+  await Promise.resolve();
+  await Promise.resolve();
+  expect(settled).toBe(false);
+  f.events.onCompleted.fire(next);
+  expect(await work).toMatchObject({ reached: "match", url: next.url });
+  f.expectCleanedUp();
 });

@@ -64,6 +64,7 @@ function makeFakeCdp(opts?: {
   const sent: Array<{ tabId: number; method: string; params?: object }> = [];
   const methodHandlers: Record<string, (tabId: number, params?: object) => object> = {
     "Page.enable": () => ({}),
+    "Network.enable": () => ({}),
     "Page.setLifecycleEventsEnabled": () => ({}),
     "Page.navigate": () => {
       if (opts?.fireLifecycleDuringNavigate) {
@@ -708,5 +709,56 @@ it("does not overwrite a successor observed before Page.navigate resolves with i
       { cdp: fake.cdp, tabsApi: fake.tabsApi },
     ),
   ).toMatchObject({ reached: "load" });
+  expect(fake.listeners).toHaveLength(0);
+});
+
+it.each([
+  false,
+  true,
+])("resumes a cancelled successor without retiring the current loader (request=%s)", async (networkRequest) => {
+  const manager = new SessionManager({ agentWindow: fakeAgentWindow([100]) });
+  await manager.start("aa11");
+  const fake = makeFakeCdp();
+  const send = fake.cdp.send.bind(fake.cdp);
+  let current = "loader-before";
+  fake.cdp.send = (async (tabId, method, params) => {
+    if (method === "Page.getFrameTree")
+      return { frameTree: { frame: { id: "frame-1", loaderId: current } } };
+    return send(tabId, method, params);
+  }) as CdpRunner["send"];
+  const fire = (method: string, params: Record<string, unknown>) => {
+    for (const listener of [...fake.listeners]) listener({ tabId: 4 }, method, params);
+  };
+  let settled = false;
+  const work = handleNavigate(
+    manager,
+    { session_id: "aa11", url: "https://example.com/", wait_until: "load", timeout_ms: 1000 },
+    { cdp: fake.cdp, tabsApi: fake.tabsApi },
+  ).then((result) => {
+    settled = true;
+    return result;
+  });
+  await vi.waitFor(() => expect(fake.sent.some((s) => s.method === "Page.navigate")).toBe(true));
+  current = "loader-after";
+  fake.fireFrameNavigated();
+  fire("Page.frameRequestedNavigation", { frameId: "frame-1", disposition: "currentTab" });
+  if (networkRequest)
+    fire("Network.requestWillBeSent", {
+      frameId: "frame-1",
+      type: "Document",
+      loaderId: "attempt-loader",
+      requestId: "attempt",
+    });
+  fake.fireLifecycle("load");
+  if (networkRequest) {
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    fire("Network.loadingFailed", {
+      requestId: "attempt",
+      canceled: true,
+      errorText: "net::ERR_ABORTED",
+    });
+  }
+  expect(await work).toMatchObject({ reached: "load" });
   expect(fake.listeners).toHaveLength(0);
 });

@@ -28,6 +28,8 @@ export interface BrowserNavigationApi {
   onDOMContentLoaded: NavigationEvents;
   onCompleted: NavigationEvents;
   onErrorOccurred: NavigationEvents;
+  onReferenceFragmentUpdated?: NavigationEvents;
+  onHistoryStateUpdated?: NavigationEvents;
 }
 
 export const chromeBrowserNavigationApi: BrowserNavigationApi = {
@@ -47,6 +49,12 @@ export const chromeBrowserNavigationApi: BrowserNavigationApi = {
   },
   get onCompleted() {
     return chrome.webNavigation.onCompleted;
+  },
+  get onReferenceFragmentUpdated() {
+    return chrome.webNavigation.onReferenceFragmentUpdated;
+  },
+  get onHistoryStateUpdated() {
+    return chrome.webNavigation.onHistoryStateUpdated;
   },
   get onErrorOccurred() {
     return chrome.webNavigation.onErrorOccurred;
@@ -75,6 +83,8 @@ export async function navigateWithBrowserApi(
   const document = new NavigationDocument();
   let handoff = new AbortController();
   let acceptedCommit = false;
+  let pendingUrl: string | undefined;
+  let navigationRevision = 0;
   let committedUrl: string | undefined;
   // An explicit navigate identifies its start URL. A committed server redirect
   // still belongs to that navigation; an unfinished source commit does not.
@@ -105,10 +115,7 @@ export async function navigateWithBrowserApi(
   const isMainFrame = (details: NavigationEvent) =>
     details.tabId === tabId && details.frameId === 0;
   const isDocument = (details: NavigationEvent) =>
-    isMainFrame(details) &&
-    !document.pending &&
-    !!document.id &&
-    details.documentId === document.id;
+    isMainFrame(details) && !!document.id && details.documentId === document.id;
   const resetReadiness = () => {
     handoff.abort();
     handoff = new AbortController();
@@ -123,7 +130,8 @@ export async function navigateWithBrowserApi(
       return;
     }
     document.begin();
-    resetReadiness();
+    pendingUrl = details.url;
+    navigationRevision += 1;
   };
   const onCommitted = (details: NavigationEvent) => {
     if (!isMainFrame(details) || settled || document.isRetired(details.documentId)) return;
@@ -137,6 +145,8 @@ export async function navigateWithBrowserApi(
     }
     if (!document.commit(details.documentId)) return;
     acceptedCommit = true;
+    pendingUrl = undefined;
+    navigationRevision += 1;
     resetReadiness();
     committedUrl = details.url;
     lastLifecycle = "commit";
@@ -178,7 +188,43 @@ export async function navigateWithBrowserApi(
     matched ||= waitUntil !== "networkidle";
     tryFinish();
   };
+  const resumeCurrentDocument = async () => {
+    const version = document.version;
+    const revision = navigationRevision;
+    try {
+      const current = await api.getFrame(tabId);
+      if (
+        settled ||
+        !document.isCurrent(version) ||
+        navigationRevision !== revision ||
+        !document.id ||
+        current?.documentId !== document.id
+      )
+        return;
+      document.cancelPending();
+      pendingUrl = undefined;
+      tryFinish();
+    } catch {
+      // An unreadable/replaced document cannot confirm a cancelled successor.
+    }
+  };
+  const onSameDocument = (details: NavigationEvent) => {
+    if (isDocument(details) && document.pending) void resumeCurrentDocument();
+  };
   const onError = (details: NavigationEvent) => {
+    // A cancelled successor does not invalidate an already committed page.
+    // Match its attempted URL, then confirm the current document before resuming.
+    if (
+      isMainFrame(details) &&
+      document.pending &&
+      pendingUrl &&
+      details.url === pendingUrl &&
+      details.error === "net::ERR_ABORTED" &&
+      !document.isRetired(details.documentId)
+    ) {
+      void resumeCurrentDocument();
+      return;
+    }
     if (
       !isMainFrame(details) ||
       !started ||
@@ -195,8 +241,10 @@ export async function navigateWithBrowserApi(
     [api.onDOMContentLoaded, onDOMContentLoaded],
     [api.onCompleted, onCompleted],
     [api.onErrorOccurred, onError],
+    [api.onReferenceFragmentUpdated, onSameDocument],
+    [api.onHistoryStateUpdated, onSameDocument],
   ] as const;
-  for (const [event, listener] of subscriptions) event.addListener(listener);
+  for (const [event, listener] of subscriptions) event?.addListener(listener);
   signal?.addEventListener("abort", onAbort, { once: true });
   const timer = setTimeout(() => finish({ reached: "timeout", lastLifecycle }), timeoutMs);
   try {
@@ -228,6 +276,6 @@ export async function navigateWithBrowserApi(
     handoff.abort();
     clearTimeout(timer);
     signal?.removeEventListener("abort", onAbort);
-    for (const [event, listener] of subscriptions) event.removeListener(listener);
+    for (const [event, listener] of subscriptions) event?.removeListener(listener);
   }
 }
