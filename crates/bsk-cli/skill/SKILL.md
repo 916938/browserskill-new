@@ -141,9 +141,12 @@ window. For a background-created tab (`tab create --no-active`), retain the retu
 `tab_id` and pass `--tab-id <tab-id>` to observation, navigation and input commands.
 Created and borrowed web pages continue running while controlled even after they
 move into the background. A default created tab starts at `about:blank`.
-Ordinary viewport and full-page screenshots still require an active tab; do not
-activate a background task just to work around that limitation. Prefer semantic
-observation, and report the limitation when an image is required.
+Ordinary viewport screenshots of controlled tabs also work in the background,
+using the same explicit `--tab-id`. Prefer semantic observation first and take a
+screenshot when the task needs image content. Full-page screenshots still require
+an active tab; do not activate a background task just to work around that
+limitation. A viewport screenshot does not issue a Canvas `capture_id`; use the
+existing `--ref` flow for screenshot-bound Canvas clicks.
 
 Never invent tab IDs or keep a user tab across unrelated work. Do not repeat
 pending, denied or timed-out borrows. For `borrow_outcome_unknown`, inspect tab/
