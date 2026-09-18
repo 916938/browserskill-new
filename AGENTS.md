@@ -67,6 +67,43 @@ pnpm cli:build   # runs: cargo run -p bsk-protocol --bin dump-schema --locked &&
 
 Schemas land in `crates/bsk-protocol/schema/`. These are committed and should match what `dump-schema` produces.
 
+## Design invariants
+
+These are the rules a change must not break. A "quirk" below is a fact about
+the toolchain; an invariant is a fact about the **architecture** — breaking one
+silently degrades the product, and reviewers should reject the change.
+
+1. **The daemon is the only control plane.** CLI and any other consumer reach
+   the browser through the daemon's IPC/WebSocket surface. Do not add a second
+   path that talks to the extension directly.
+2. **Everything stays on the loopback interface.** The daemon binds WS to
+   `127.0.0.1` (`start.rs`) and IPC to a local socket/named pipe. Never bind a
+   public interface and never open a listening port for "remote" convenience.
+3. **No telemetry, analytics, or crash reporting.** `PRIVACY.md` states it
+   outright. Do not add SDKs, beacons, or usage counters.
+4. **User tabs are protected by default.** Automation runs in an isolated
+   Agent Window; a user-window tab is only touched after an explicit
+   `tab_borrow`, and borrowed tabs must be returned. Cross-session isolation
+   holds: one session never sees another session's Agent Window tabs.
+5. **Borrow never happens silently.** Missing confirmation wiring must fail
+   closed, not approve (see `approveBorrow` in `tools/tabs.ts`).
+6. **Sessions are bounded.** `session stop` is the cleanup path; the 5-minute
+   session idle reaper and the 60s browser liveness reaper are safety nets, not
+   the contract. An agent must not rely on them.
+7. **Reconnects are generation-guarded.** A stale socket must not clobber the
+   registration of the newer connection under the same `instance_id`.
+8. **Protocol compatibility is negotiated, not assumed.** Handshake compares
+   `protocol_version`, and minor drift is allowed but surfaced as
+   `version_skew`. Do not silently drop unknown-version peers.
+9. **The generated schemas are committed truth.** `crates/bsk-protocol/schema/`
+   must match `dump-schema` output; a protocol change that skips regeneration
+   breaks the extension's contract.
+10. **`skill/SKILL.md` is the single source of the agent instructions.** It is
+    copied into the crate by `build.rs`; never edit the copy.
+11. **Command availability is tiered.** Baseline / `0.2.4+` / fork-only. A new
+    command must declare its tier in the docs, never imply the released binary
+    has it.
+
 ## Important quirks
 
 - **`wxt prepare` is required** before `tsc --noEmit` or `vitest` — it generates `.wxt/` type stubs. CI always runs it; you must too.
