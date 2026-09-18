@@ -141,10 +141,11 @@ window. For a background-created tab (`tab create --no-active`), retain the retu
 `tab_id` and pass `--tab-id <tab-id>` to observation, navigation and input commands.
 Created and borrowed web pages continue running while controlled even after they
 move into the background. A default created tab starts at `about:blank`.
-Full-page screenshots support background controlled tabs; pass `--tab-id` without
-selecting the target. Ordinary viewport screenshots still require an active tab;
-do not activate a background task just to work around that limitation. Prefer
+Viewport and full-page screenshots of controlled tabs work in the background;
+pass `--tab-id` without selecting the target or focusing the window. Prefer
 semantic observation first and take a screenshot when the task needs image content.
+A viewport screenshot does not issue a Canvas `capture_id`; use the existing
+`--ref` flow for screenshot-bound Canvas clicks.
 
 Never invent tab IDs or keep a user tab across unrelated work. Do not repeat
 pending, denied or timed-out borrows. For `borrow_outcome_unknown`, inspect tab/
@@ -231,10 +232,9 @@ or substitute a viewport image when an older extension rejects full-page capture
 Use matching CLI/extension builds. Ctrl-C cancels; failed full-page captures save
 no partial image. A `loading_stalled` error means the bottom kept a loading
 indicator without height growth for 30s; do not simply increase the deadline.
-Choose `current` only when that range satisfies the request. Keep the capture tab
-visible: `page_hidden` is an environment interruption, while `user_cancelled`
-means user input stopped capture. For other failures follow the returned reason
-and hint; do not work around them by editing the page or stitching screenshots.
+Choose `current` only when that range satisfies the request. A `user_cancelled`
+error means user input stopped capture. For other failures follow the returned
+reason and hint; do not work around them by editing the page or stitching screenshots.
 
 For `@eN canvas [visual:screenshot]`, observe returns text, not pixels. Screenshot
 that ref when its contents matter; never infer Canvas controls or names from

@@ -101,6 +101,9 @@ jobs:
       - name: Run localization tests
         run: pnpm --filter @browser-skill/i18n test
 
+      - name: Run VOM tests
+        run: pnpm --filter @browser-skill/vom test
+
       - name: Run extension tests
         run: pnpm ext:test
 

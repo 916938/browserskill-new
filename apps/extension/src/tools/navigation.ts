@@ -459,7 +459,11 @@ function startLifecycleWait(
             p.loaderId === document.id &&
             lifecycleEventMatchesFrame(p.frameId)
           ) {
-            pendingLifecycle = { name: p.name, frameId: p.frameId, loaderId: p.loaderId };
+            // Keep evidence that this document met the wait condition until the
+            // pending navigation is cancelled or a successor commits and clears it.
+            if (!pendingLifecycle || !lifecycleMeetsOrExceeds(pendingLifecycle.name, targetName)) {
+              pendingLifecycle = { name: p.name, frameId: p.frameId, loaderId: p.loaderId };
+            }
             void reconcilePending();
             return;
           }
