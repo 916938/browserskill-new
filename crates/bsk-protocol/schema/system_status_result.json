@@ -114,6 +114,11 @@
         "label": {
           "type": "string"
         },
+        "profile_account_id": {
+          "description": "Opt-in obfuscated account id of the signed-in browser profile (fork builds); empty when the user has not enabled sharing.",
+          "default": "",
+          "type": "string"
+        },
         "session_count": {
           "type": "integer",
           "format": "uint32",

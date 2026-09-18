@@ -84,6 +84,7 @@ async fn send_handshake_with_floors(
             version: "131.0".into(),
         },
         label: "Test".into(),
+        profile_account_id: None,
         min_compatible_peer: peer_min_compatible_peer.map(|s| s.parse().unwrap()),
         min_compatible_protocol: peer_min_compatible_protocol.map(String::from),
     };
@@ -237,6 +238,7 @@ async fn status_surfaces_version_skew_for_skewed_browser() {
         extension_version: "9.9.9".into(),
         extension_protocol_version: "1.4".into(),
         label: "Older".into(),
+        profile_account_id: String::new(),
         sink: bsk::daemon::browsers::BrowserSink { tx },
         pending: Mutex::new(bsk::daemon::browsers::Pending::default()),
         generation: bsk::daemon::browsers::next_browser_generation(),

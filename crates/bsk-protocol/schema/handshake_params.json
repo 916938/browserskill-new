@@ -37,6 +37,13 @@
         "null"
       ]
     },
+    "profile_account_id": {
+      "description": "Opt-in, obfuscated account id of the signed-in browser profile (fork builds). Never an email address: the extension only shares the opaque id, and only when the user enabled it in the popup.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "protocol_version": {
       "description": "Logical protocol revision (for example `\"1.0\"`), independent of SemVer app releases.",
       "type": "string"

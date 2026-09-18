@@ -7,6 +7,7 @@ import {
 import type { Transport } from "../transport/transport";
 import type { ConnectionState, HandshakeResult } from "../transport/types";
 import { generateDefaultLabel, getLabel, getOrCreateInstanceId, setLabel } from "./instance-id";
+import { getProfileAccountId } from "./profile-account";
 import { compareProtocol, parseProtocolMajor } from "./semver";
 
 const HANDSHAKE_RETRY_DELAY_MS = 1_000;
@@ -43,6 +44,12 @@ export class ConnectionController {
   private instanceId = "";
   private label = "";
   private auditEnabled = false;
+  /**
+   * Opt-in obfuscated account id, resolved once per attach and refreshed
+   * when the preference changes. Read during the handshake, so it must be
+   * available synchronously when a connection comes up.
+   */
+  private profileAccountId = "";
 
   setAuditEnabled(enabled: boolean): void {
     this.auditEnabled = enabled;
@@ -100,6 +107,7 @@ export class ConnectionController {
     this.lifecycleHooks = lifecycleHooks;
     this.instanceId = await getOrCreateInstanceId();
     this.label = await getLabel();
+    this.profileAccountId = await getProfileAccountId().catch(() => "");
 
     // Auto-generate a default label if none has been set
     if (!this.label && this.instanceId) {
@@ -205,6 +213,18 @@ export class ConnectionController {
     this.setState("disconnected");
   }
 
+  /**
+   * Disconnect so the next handshake reflects a changed opt-in flag.
+   *
+   * Profile-account sharing is read during the WebSocket handshake, so the
+   * connection has to be dropped for the change to reach the daemon.
+   */
+  async reconnectForPreferenceChange(): Promise<void> {
+    this.profileAccountId = await getProfileAccountId().catch(() => "");
+    await this.disconnectForLabelUpdate();
+    if (this.connectionEnabled) this.requestConnect();
+  }
+
   private startHandshake(browser: { name: string; version: string }): void {
     this.cancelHandshake();
     const generation = ++this.connectionGeneration;
@@ -229,6 +249,7 @@ export class ConnectionController {
           browser,
           label: this.label,
           auditEnabled: this.auditEnabled,
+          profileAccountId: this.profileAccountId,
         },
         { signal },
       );

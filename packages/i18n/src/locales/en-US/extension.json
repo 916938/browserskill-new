@@ -26,6 +26,9 @@
     "controlHintsToggleTitle": "Control hints",
     "controlHintsToggleHint": "Show the status pill and orange glow while the Agent controls a page.",
     "controlHintsInfoLabel": "About control hints",
+    "profileAccountToggleTitle": "Share profile account id",
+    "profileAccountToggleHint": "Off by default. When on, `bsk browsers` shows this profile's obfuscated signed-in account id so you can tell instances apart. The email address is never read or sent.",
+    "profileAccountInfoLabel": "About profile account id",
     "versionSkewWarning": "Extension protocol v{{extensionProtocol}}, CLI protocol v{{cliProtocol}}. Protocol versions differ — please upgrade.",
     "upgradeAvailable": "Upgradable",
     "launcher": {

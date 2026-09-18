@@ -26,6 +26,7 @@ fn fixture() -> (
         extension_version: "0.2.3".into(),
         extension_protocol_version: "1.1".into(),
         label: "wrong-id".into(),
+        profile_account_id: String::new(),
         sink: BrowserSink { tx },
         pending: Mutex::new(Pending::default()),
         generation: next_browser_generation(),

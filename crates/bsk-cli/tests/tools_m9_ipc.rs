@@ -95,6 +95,7 @@ async fn do_handshake(ws: &mut Ws) -> HandshakeResult {
         min_compatible_peer: Some("0.1.0-dev.0".parse().unwrap()),
         min_compatible_protocol: Some("1.0".into()),
         label: "Test".into(),
+        profile_account_id: None,
     };
     let req = RequestFrame {
         id: "hs".into(),

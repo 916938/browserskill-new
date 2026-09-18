@@ -440,6 +440,12 @@ pub struct HandshakeParams {
     pub instance_id: String,
     pub browser: BrowserPeerInfo,
     pub label: String,
+    /// Opt-in, obfuscated account id of the signed-in browser profile (fork
+    /// builds). Never an email address: the extension only shares the opaque
+    /// id, and only when the user enabled it in the popup.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "Option<String>")]
+    pub profile_account_id: Option<String>,
     /// **Deprecated** — legacy app-semver floor kept for wire compat with
     /// pre-protocol peers. New code sends `"0.0.0"` and ignores on read.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -504,6 +510,10 @@ pub struct BrowserStatusEntry {
     pub browser_version: String,
     pub extension_version: String,
     pub label: String,
+    /// Opt-in obfuscated account id of the signed-in browser profile (fork
+    /// builds); empty when the user has not enabled sharing.
+    #[serde(default)]
+    pub profile_account_id: String,
     pub session_count: u32,
     /// Unix epoch milliseconds at which the extension completed the
     /// daemon handshake. Stable across reconnects only via the

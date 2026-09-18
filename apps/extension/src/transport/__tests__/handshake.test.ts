@@ -110,6 +110,46 @@ describe("performHandshake", () => {
     expect(outcome.result.min_compatible_protocol).toBe("1.0");
   });
 
+  it("omits profile_account_id unless the profile shares one", async () => {
+    const omitted = fakeTransport((req) => ({
+      id: (req as { id: string }).id,
+      result: { server: "browser-skill-daemon", version: "0.1.0", protocol_version: "1.3" },
+    }));
+    const plain = await performHandshake(
+      omitted,
+      {
+        instanceId: "x",
+        browser: { name: "chrome", version: "131" },
+        label: "",
+        rpcId: "hs-no-account",
+      },
+      { timeoutMs: 1_000 },
+    );
+    expect(plain.params.profile_account_id).toBeUndefined();
+
+    const sentFrames: ProtocolFrame[] = [];
+    const sharing = fakeTransport((req) => {
+      sentFrames.push(req);
+      return {
+        id: (req as { id: string }).id,
+        result: { server: "browser-skill-daemon", version: "0.1.0", protocol_version: "1.3" },
+      };
+    });
+    await performHandshake(
+      sharing,
+      {
+        instanceId: "x",
+        browser: { name: "chrome", version: "131" },
+        label: "",
+        profileAccountId: "gaia-123",
+        rpcId: "hs-account",
+      },
+      { timeoutMs: 1_000 },
+    );
+    const params = (sentFrames[0] as { params?: Record<string, unknown> }).params;
+    expect(params?.profile_account_id).toBe("gaia-123");
+  });
+
   it("accepts legacy daemon reply with only min_compatible_peer", async () => {
     const transport = fakeTransport((req) => ({
       id: (req as { id: string }).id,

@@ -320,6 +320,7 @@ async fn drive_connection(
         extension_version: params.version.to_string(),
         extension_protocol_version: params.protocol_version.clone(),
         label: params.label.clone(),
+        profile_account_id: params.profile_account_id.clone().unwrap_or_default(),
         sink: BrowserSink { tx },
         pending: std::sync::Mutex::new(Pending::default()),
         generation,

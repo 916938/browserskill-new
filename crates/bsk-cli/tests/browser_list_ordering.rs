@@ -63,6 +63,7 @@ fn fake_client(id: &str, label: &str, connected_at_ms: i64) -> Arc<BrowserClient
         extension_version: "0.1.0-dev.0".into(),
         extension_protocol_version: bsk::daemon::state::PROTOCOL_VERSION.into(),
         label: label.into(),
+        profile_account_id: String::new(),
         sink: BrowserSink { tx },
         pending: Mutex::new(Pending::default()),
         generation: next_browser_generation(),

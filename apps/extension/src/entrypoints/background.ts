@@ -26,6 +26,7 @@ import {
   type OverlayMode,
 } from "@/lib/overlay-bridge";
 import { POPUP_PORT_NAME, type PopupInbound, type PopupOutbound } from "@/lib/popup-bridge";
+import { PROFILE_ACCOUNT_SHARING_KEY } from "@/lib/profile-account";
 import { recordFrameCoordinator } from "@/lib/recording/frame-coordinator";
 import { attachSessionsLiveFlag } from "@/lib/sessions-live-flag";
 import { initTemplateClient, templateClient } from "@/lib/template-client";
@@ -384,6 +385,12 @@ export default defineBackground(() => {
     await controller.attach(transport, detectBrowserMeta(), connectionEnabled, {
       beforeDisconnect: cleanup,
       onDisconnected: cleanup,
+    });
+    // The account id is only read during the handshake, so toggling the
+    // opt-in has to drop the connection for the change to take effect.
+    chrome.storage.onChanged.addListener((changes, areaName) => {
+      if (areaName !== "local" || !changes[PROFILE_ACCOUNT_SHARING_KEY]) return;
+      void controller.reconnectForPreferenceChange();
     });
   })().catch((err) => {
     console.error("[browser-skill] controller failed to attach", err);

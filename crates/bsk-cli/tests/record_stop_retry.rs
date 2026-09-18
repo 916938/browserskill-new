@@ -65,6 +65,7 @@ async fn handshake(ws: &mut Ws) {
                 min_compatible_peer: Some("0.1.10".parse().unwrap()),
                 min_compatible_protocol: Some("1.1".into()),
                 label: "Record stop retry test".into(),
+                profile_account_id: None,
             })
             .unwrap(),
         ),

@@ -39,6 +39,11 @@ export interface HandshakeInput {
   browser: BrowserMeta;
   label: string;
   /**
+   * Opt-in obfuscated account id of the signed-in browser profile. Only
+   * sent when non-empty; never an email.
+   */
+  profileAccountId?: string;
+  /**
    * Used to make the handshake's RPC id stable in tests. Defaults to a
    * random short string.
    */
@@ -71,6 +76,7 @@ export function performHandshake(
     instance_id: input.instanceId,
     browser: input.browser,
     label: input.label,
+    ...(input.profileAccountId ? { profile_account_id: input.profileAccountId } : {}),
     min_compatible_peer: MIN_COMPATIBLE_PEER,
     min_compatible_protocol: MIN_COMPATIBLE_PROTOCOL,
   };

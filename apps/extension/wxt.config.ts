@@ -33,6 +33,7 @@ export default defineConfig({
       "cookies",
       "debugger",
       "downloads",
+      "identity",
       "idle",
       "notifications",
       "scripting",

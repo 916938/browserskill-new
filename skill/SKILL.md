@@ -230,6 +230,20 @@ Rules:
   fails with a timeout, which means the browser is still running.
 - `bsk` never starts browsers, so there is no matching "open" command.
 
+### Profile account id — opt-in (fork addition)
+
+`bsk browsers` prints an `ACCOUNT` column: the **obfuscated** account id of the browser profile's
+signed-in account, so several connected profiles can be told apart without guessing.
+
+- It is **off by default**. While off the extension never calls `chrome.identity` and never sends
+  an account id. Enable it per profile in the extension popup ("Share profile account id"); the
+  connection is re-established so the next handshake carries the value.
+- Only the opaque id is ever reported — **never an email address**, and never cookies, tokens, or
+  storage. Treat it as a routing hint, not as identity data to log or export.
+- Empty (`-`) means the profile is not signed in or the user has not opted in. Do not treat an
+  empty value as a failure, and do not use the id to select a browser — `--browser-id
+  <instance_id>` remains the only exact routing key.
+
 ### Profile templates — `bsk templates`
 
 Profile Templates provide template metadata/CRUD and controlled apply responses. They do not

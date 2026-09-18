@@ -128,6 +128,9 @@ pub struct BrowserClient {
     /// `protocol_version` from the extension handshake.
     pub extension_protocol_version: String,
     pub label: String,
+    /// Opt-in obfuscated account id of the signed-in browser profile;
+    /// empty when the user has not enabled sharing.
+    pub profile_account_id: String,
     pub sink: BrowserSink,
     pub pending: Mutex<Pending>,
     /// Monotonic counter assigned at registration time. A reconnect
@@ -193,6 +196,7 @@ impl BrowserClient {
             browser_version: self.browser_version.clone(),
             extension_version: self.extension_version.clone(),
             label: self.label.clone(),
+            profile_account_id: self.profile_account_id.clone(),
             session_count,
             connected_at_ms: self.connected_at_ms,
             version_skew: self.version_skew,
@@ -443,6 +447,7 @@ mod tests {
             extension_version: "0.1.0-dev.0".into(),
             extension_protocol_version: "1.0".into(),
             label: label.into(),
+            profile_account_id: String::new(),
             sink: BrowserSink { tx },
             pending: Mutex::new(Pending::default()),
             generation: next_browser_generation(),

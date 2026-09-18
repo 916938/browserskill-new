@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+#### 可选上报 Profile 账号 ID（opt-in，fork 新增）
+
+`bsk browsers` 新增 `ACCOUNT` 列：该浏览器 Profile 已登录账号的**混淆 ID**，用于区分同时连接的多个 Profile。
+
+- **默认关闭**。只有用户在扩展 popup 打开「共享 Profile 账号 ID」后，扩展才调用 `chrome.identity.getProfileUserInfo()`，
+  且**只取 `id`、绝不上报邮箱**；manifest 新增 `identity` 权限仅在开关打开后才会被使用。
+- 明文传输范围仅限本机：握手新增可选字段 `profile_account_id`，daemon 存进 `BrowserClient` 并随
+  `system.status` / `browser.list` 返回（`bsk browsers` / `bsk status`）。不读、不存 Cookie / token / storage。
+- 开关变更会触发重连，下一次握手生效；未登录或未开启时该列显示 `-`。
+- 新增模块 `apps/extension/src/lib/profile-account.ts` 与 `apps/extension/src/entrypoints/popup/use-profile-account-sharing.ts`；
+  协议侧 `HandshakeParams.profile_account_id`（`Option<String>`）与 `BrowserStatusEntry.profile_account_id`（默认空串），
+  向后兼容旧扩展。
+- 文档：`skill/SKILL.md` 的 Fork additions 新增 "Profile account id" 小节，`apps/extension/PRIVACY.md` 补充 `identity` 权限说明。
+
+#### `bsk browsers close`（fork 新增）
+
 - `bsk browsers close --browser-id <instance_id> --confirm`：新增 `browser.close` RPC，停止该实例的
   全部会话后关闭其所有窗口，使浏览器进程退出（`crates/bsk-cli/src/daemon/browser_close.rs`、
   `apps/extension/src/tools/browser-close.ts`）。

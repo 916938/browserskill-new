@@ -53,6 +53,7 @@ The Extension requests the following Chrome permissions. Each is used solely for
 - **`notifications`** — Show a system notification to obtain user approval before the agent borrows a user-owned tab.
 - **`downloads`** — Correlate and route the one browser download initiated by an active `bsk download` command. If that claimed transaction fails, BrowserSkill cancels an in-progress file or removes its completed temporary browser file. It is not used to enumerate download history or alter unclaimed downloads.
 - **`storage`** — Persist a random instance ID, optional label, and feature preferences in `chrome.storage.local`.
+- **`identity`** — Opt-in only, and off by default. When the user turns on "Share profile account id" in the popup, the Extension calls `chrome.identity.getProfileUserInfo()` once per connection and sends **only the obfuscated account id** to the local daemon so two browser profiles can be told apart in `bsk browsers`. The email address is never read, stored, or transmitted, and nothing leaves the device. Leaving the setting off means this API is never called.
 - **Host permission `<all_urls>`** — Inject a small status overlay (showing "Agent Active") on pages controlled by the agent, and enable automation across whatever sites the user directs the agent to. The Extension does **not** read or transmit page content from sites the agent is not actively driving.
 
 ## 6. Where Data Goes

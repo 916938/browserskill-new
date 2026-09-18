@@ -29,6 +29,7 @@ fn fake_client(id: &str, heartbeat_seen: bool, idle_secs: u64) -> std::sync::Arc
         extension_version: "0.1.4".into(),
         extension_protocol_version: bsk::daemon::state::PROTOCOL_VERSION.into(),
         label: String::new(),
+        profile_account_id: String::new(),
         sink: BrowserSink { tx },
         pending: Mutex::new(Pending::default()),
         generation: next_browser_generation(),

@@ -18,6 +18,7 @@ import { TemplateView } from "./template-view";
 import { type PopupStatusState, useConnectionState } from "./use-connection-state";
 import { useControlHintsHidden } from "./use-control-hints-hidden";
 import { useDaemonPort } from "./use-daemon-port";
+import { useProfileAccountSharing } from "./use-profile-account-sharing";
 
 const STATE_LABEL_KEYS = {
   disconnected: "popup.stateLabel.disconnected",
@@ -44,6 +45,7 @@ export function App() {
   const { t } = useTranslation("extension");
   const { snapshot, statusState, setLabel, setConnectionEnabled } = useConnectionState();
   const [controlHintsHidden, setControlHintsHidden] = useControlHintsHidden();
+  const [profileAccountSharing, setProfileAccountSharing] = useProfileAccountSharing();
   const [labelSaving, setLabelSaving] = useState(false);
   const [labelError, setLabelError] = useState<string | null>(null);
   const {
@@ -315,6 +317,31 @@ export function App() {
                 onCheckedChange={(shown) => setControlHintsHidden(!shown)}
                 aria-label={t("popup.controlHintsToggleTitle")}
                 data-slot="popup-control-hints-toggle"
+              />
+            </div>
+          </section>
+
+          <section
+            className="rounded-xl border border-border/80 bg-card/60 px-3 py-2.5"
+            data-slot="popup-profile-account-card"
+          >
+            <div className="relative flex items-center justify-between gap-2">
+              <span className="flex min-w-0 items-center gap-1">
+                <span className="truncate text-sm font-medium">
+                  {t("popup.profileAccountToggleTitle")}
+                </span>
+                <SettingInfo
+                  label={t("popup.profileAccountInfoLabel")}
+                  data-slot="popup-profile-account-info"
+                >
+                  {t("popup.profileAccountToggleHint")}
+                </SettingInfo>
+              </span>
+              <Switch
+                checked={profileAccountSharing}
+                onCheckedChange={setProfileAccountSharing}
+                aria-label={t("popup.profileAccountToggleTitle")}
+                data-slot="popup-profile-account-toggle"
               />
             </div>
           </section>

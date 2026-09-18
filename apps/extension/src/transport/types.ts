@@ -137,6 +137,12 @@ export interface HandshakeParams {
   browser: BrowserPeerInfo;
   label: string;
   /**
+   * Opt-in, obfuscated account id of the signed-in browser profile
+   * (fork build; never an email). Absent unless the user enabled
+   * profile-account sharing in the popup.
+   */
+  profile_account_id?: string;
+  /**
    * **Deprecated** — legacy app-semver floor for old daemons. New code
    * sends `"0.0.0"` and ignores on read.
    */

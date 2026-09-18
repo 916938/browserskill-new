@@ -26,6 +26,9 @@
     "controlHintsToggleTitle": "控制提示",
     "controlHintsToggleHint": "Agent 控制页面时显示提示条和橙色闪光。",
     "controlHintsInfoLabel": "控制提示说明",
+    "profileAccountToggleTitle": "共享 Profile 账号 ID",
+    "profileAccountToggleHint": "默认关闭。开启后 `bsk browsers` 会显示该 Profile 已登录账号的混淆 ID，便于区分实例；绝不会读取或发送邮箱地址。",
+    "profileAccountInfoLabel": "关于 Profile 账号 ID",
     "versionSkewWarning": "扩展协议 v{{extensionProtocol}}，CLI 协议 v{{cliProtocol}}。协议版本不同，请及时升级。",
     "upgradeAvailable": "可升级",
     "launcher": {

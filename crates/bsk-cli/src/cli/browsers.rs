@@ -131,7 +131,7 @@ fn run_list(sock: PathBuf, format: Format) -> Result<(), CliError> {
                 println!("(no browsers connected)");
                 return Ok(());
             }
-            let rows: Vec<[String; 5]> = reply
+            let rows: Vec<[String; 6]> = reply
                 .browsers
                 .iter()
                 .map(|b| {
@@ -144,12 +144,19 @@ fn run_list(sock: PathBuf, format: Format) -> Result<(), CliError> {
                         } else {
                             b.label.clone()
                         },
+                        if b.profile_account_id.is_empty() {
+                            "-".into()
+                        } else {
+                            // Opaque id: showing the first 12 chars is enough
+                            // to tell two profiles apart.
+                            b.profile_account_id.chars().take(12).collect::<String>()
+                        },
                         b.session_count.to_string(),
                     ]
                 })
                 .collect();
-            let headers = ["INSTANCE", "BROWSER", "EXT", "LABEL", "SESSIONS"];
-            let widths: [usize; 5] = std::array::from_fn(|i| {
+            let headers = ["INSTANCE", "BROWSER", "EXT", "LABEL", "ACCOUNT", "SESSIONS"];
+            let widths: [usize; 6] = std::array::from_fn(|i| {
                 rows.iter()
                     .map(|r| r[i].len())
                     .max()
@@ -157,29 +164,33 @@ fn run_list(sock: PathBuf, format: Format) -> Result<(), CliError> {
                     .max(headers[i].len())
             });
             println!(
-                "{:<w0$}  {:<w1$}  {:<w2$}  {:<w3$}  {}",
+                "{:<w0$}  {:<w1$}  {:<w2$}  {:<w3$}  {:<w4$}  {}",
                 headers[0],
                 headers[1],
                 headers[2],
                 headers[3],
                 headers[4],
+                headers[5],
                 w0 = widths[0],
                 w1 = widths[1],
                 w2 = widths[2],
                 w3 = widths[3],
+                w4 = widths[4],
             );
             for r in &rows {
                 println!(
-                    "{:<w0$}  {:<w1$}  {:<w2$}  {:<w3$}  {}",
+                    "{:<w0$}  {:<w1$}  {:<w2$}  {:<w3$}  {:<w4$}  {}",
                     r[0],
                     r[1],
                     r[2],
                     r[3],
                     r[4],
+                    r[5],
                     w0 = widths[0],
                     w1 = widths[1],
                     w2 = widths[2],
                     w3 = widths[3],
+                    w4 = widths[4],
                 );
             }
         }
