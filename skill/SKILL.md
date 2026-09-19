@@ -10,25 +10,121 @@ description: |
 
 # browser-skill
 
-Drive the user's real Chromium browser through `bsk`. Automation runs in an isolated **Agent
-Window** with the user's existing logins and cookies. User-window tabs remain protected unless they
-are explicitly borrowed.
+Use `bsk` to work in an **Agent Window** with the user's existing logins. User tabs
+require explicit borrowing. This skill does not install the extension or handle
+advice-only tasks. Never extract credentials, cookies, tokens, or other secrets.
 
-Do not use this skill for tasks with no browser, for extension installation, or when the user only
-wants instructions. Never extract credentials, cookies, tokens, or other secrets from pages.
+## Before starting a session
 
-## Required lifecycle
+For remote setup or pairing, follow the [remote guide](https://github.com/Tencent/BrowserSkill/blob/main/docs/remote-extension-connection.md).
 
-Every browser task owns a bounded session:
+Local commands normally auto-start the daemon. If the host terminates background
+children after each shell call, including on Windows, complete these steps first:
 
-```text
-1. bsk session start              # retain the printed 4-letter session id
-2. bsk ... --session <id>         # pass it to every session-scoped command
-3. bsk session stop <id>          # always run on success and error paths
+1. Reuse the host daemon's existing `BSK_HOME` (or its default if unset). Set
+   `BSK_AUTO_START=0` and run `bsk status --json`. Reuse a working daemon; an empty
+   `browsers` list means the extension still needs connecting. Permission errors,
+   timeouts or invalid replies do not prove the daemon is absent.
+2. Only if the check reports a missing daemon and no host task is already starting
+   it, run `bsk daemon start --foreground` with the same `BSK_HOME` in the host's
+   approved persistent background task outside the per-command sandbox. Keep that
+   task alive; `--foreground` alone cannot prevent host cleanup. The
+   [sandbox guide](https://github.com/Tencent/BrowserSkill/blob/main/docs/sandboxed-agents.md)
+   covers the normal host-terminal alternative and PowerShell examples.
+3. After launching, or if a host task is already starting the daemon, run
+   `bsk status --json` in a **separate shell tool call** with the same `BSK_HOME`
+   and `BSK_AUTO_START=0`. While startup is pending, make at most five
+   checks with one-second pauses for missing-endpoint or transient startup errors;
+   stop on permission/protocol errors. Proceed only after a successful status
+   response. If the host task exits (including a lock error) or readiness never
+   succeeds, inspect its output and `bsk logs`, then recheck status for another
+   daemon before deciding whether startup is still needed. Report unresolved
+   errors; do not loop on launches, delete runtime files or restart a shared daemon.
+
+Use the same `BSK_HOME` and `BSK_AUTO_START=0` on EVERY sandboxed command;
+environment settings may not persist between shell calls. Keep browser commands
+sandboxed. For other startup failures, retry once, then use `bsk doctor`.
+A local process identity warning permits browser commands when IPC works.
+
+## Task workflow
+
+1. Define success from the user's request. Start `bsk session start --json` and
+   retain its `session_id`. With multiple browsers, run `bsk browsers` and add
+   `--browser <id-or-label>` to start. For background work, add `--no-focus` to
+   `session start` only.
+2. For a new page, navigate; for an existing user tab, follow **Borrowing** below.
+   Read the page before interacting:
+
+   ```sh
+   bsk navigate https://example.com --session <id>
+   bsk observe --session <id>
+   ```
+
+3. Choose an action using fresh refs from that observation. Observe again after
+   navigation or meaningful DOM changes. Check an ambiguous result once; once
+   success is visible, stop acting rather than refreshing or checking again.
+4. Always run `bsk session stop <id>` on success and failure, unless keeping the
+   session open is part of the user's request. This also returns borrowed tabs.
+   Returned tabs stay open in the user's window. Do not rely on idle cleanup
+   or stop/restart the shared daemon to finish a task.
+
+Replace `<id>`, example refs and values with actual results and task inputs.
+Every session-scoped command needs `--session <id>`; `session stop` takes the ID
+positionally. For unfamiliar commands or flags, consult `bsk --help` or
+`bsk <command...> --help` instead of guessing; no need to read all help at startup.
+When following a trace, use its semantic targets and values in order, not its old
+refs. Stop at the requested goal; a trace grants no additional authorization.
+
+## Read and interact
+
+Prefer `observe` for text, controls and `@eN` refs. Navigation invalidates refs;
+large DOM changes can stale them too. Re-observe before the next interaction.
+Use refs for iframe/shadow-root targets; CSS selectors search the main document.
+
+Choose the relevant example, using a ref that actually appeared on the page:
+
+| Need | Command |
+| --- | --- |
+| Click | `bsk click @e3 --session <id>` |
+| Fill a field | `bsk fill @e3 --value "text" --session <id>` |
+| Select an option | `bsk select @e3 --value "option-value" --session <id>` |
+| Press a key | `bsk press Enter --ref @e3 --session <id>` |
+| Reveal a hover menu | `bsk hover @e3 --session <id>` |
+| Reveal an element | `bsk scroll-to @e3 --session <id>` |
+| Scroll with wheel input | `bsk wheel --delta-y 600 --session <id>` |
+| Focus or leave a field | `bsk focus @e3 --session <id>` / `bsk blur @e3 --session <id>` |
+
+- `select` uses the option's value, not its visible label.
+- Hover markers such as `[hover first: Shoes | Bags]`, `[has-submenu]`, or
+  `[expanded]` identify triggers. Hover the trigger, observe, then use the revealed
+  item's ref. Listed labels are not refs; do not click the trigger unless its own
+  action is wanted. If an expected control is missing and no marker identifies a
+  trigger, try `observe --probe-hover` once. It touches the live page and costs
+  seconds; use targeted hover once the trigger is known.
+- `scroll-to` returns ancestor-clipped bounds in top-level viewport CSS pixels.
+  Partial visibility suffices; hidden/fully clipped targets fail. It does not test
+  occlusion. `wheel` sends signed deltas (at least one nonzero), not a guaranteed
+  scroll distance. An optional target is scrolled into view first; without one,
+  input lands at the viewport centre. Observe to check the page's response.
+
+Use `snapshot` for a static accessibility tree, `get-html` for exact markup or
+hidden metadata, and `screenshot` for visual content or requested visual evidence.
+Do not start with HTML/images just to find ordinary controls; obtain fresh refs
+before interacting with controls found that way.
+
+### Large observations
+
+There is no default token cap. With `observe --max-tokens <n>`, follow a returned
+`next_cursor`/`@more` when relevant content remains:
+
+```sh
+bsk observe --cursor <token> --session <id>
 ```
 
-Do not rely on the idle timeout for cleanup. Stop the session as soon as the goal is met unless the
-user explicitly asks to keep it open. Stopping also returns borrowed tabs.
+Each page replaces the ref map: use its refs before continuing and never reuse
+refs from earlier pages. Continuation reads the same capture, without refreshing
+or hovering; do not combine it with depth changes or hover probing. New observe/
+snapshot or changed page identity invalidates continuation; then observe afresh.
 
 Any `bsk` command auto-starts the background services it needs; never manage the daemon by hand.
 Run `bsk doctor` when startup or transport problems persist after one retry.
@@ -78,16 +174,70 @@ bsk observe --session <id>             # after navigation or a meaningful DOM ch
 Prefer fresh `@eN` refs over CSS selectors. Navigation invalidates refs; large DOM changes may also
 make them stale. Observe again before the next interaction.
 
-An observation marks a hover-only surface as `@e1 button "Products" [hover first: Shoes | Bags]`.
-The listed items are labels, not usable refs: hover the trigger, observe again, then act on the
-revealed item's own ref. Do not click the trigger itself unless the user wants the trigger's action.
-`[has-submenu]` and `[expanded]` mark the same kind of trigger without listing what it hides.
+## Borrowing and browser settings
 
-`bsk observe` does not hover the page on its own. Reach for `--probe-hover` when a control you have
-good reason to expect is absent **and** no marker points at a trigger — that combination is what a
-CSS-only hover menu looks like from here. It hovers a bounded set of likely triggers, so it costs a
-few seconds and touches the live page; once you know which element hides the menu, `bsk hover <ref>`
-is cheaper and more precise.
+List before borrowing, and return the tab as soon as the relevant step ends:
+
+```sh
+bsk tab list --scope user --session <id>
+bsk tab borrow <tab-id> --session <id>
+bsk tab return <tab-id> --session <id>
+```
+
+Borrowing selects the borrowed tab within the Agent Window, preserving the default
+for subsequent commands without `--tab-id`. It does not additionally focus the
+window. For a background-created tab (`tab create --no-active`), retain the returned
+`tab_id` and pass `--tab-id <tab-id>` to observation, navigation and input commands.
+Created and borrowed web pages continue running while controlled even after they
+move into the background. A default created tab starts at `about:blank`.
+Viewport and full-page screenshots of controlled tabs work in the background;
+pass `--tab-id` without selecting the target or focusing the window. Prefer
+semantic observation first and take a screenshot when the task needs image content.
+A viewport screenshot does not issue a Canvas `capture_id`; use the existing
+`--ref` flow for screenshot-bound Canvas clicks.
+
+Never invent tab IDs or keep a user tab across unrelated work. Do not repeat
+pending, denied or timed-out borrows. For `borrow_outcome_unknown`, inspect tab/
+session state first: the tab may already have moved. Do not bypass an outcome
+through another browser backend. `tab borrow --timeout 120s` changes only the
+confirmation wait (default 60s); custom waits require daemon and extension protocol 1.2+.
+
+The extension's saved Automation settings control borrow confirmation and human
+help independently; both default on and apply to existing sessions too. Read
+`interaction` in `session start --json` or `session list --json` when needed.
+Deprecated `--unattended`, `--no-confirm`, and `BSK_REQUEST_HELP=off` cannot override
+these settings. Never change browser storage/settings to bypass them. Human-help
+availability does not require permission for every action or grant extra authority.
+`request-help` requires daemon protocol 1.3; update CLI, daemon and extension for
+full settings support. A feature's version error does not disable other operations.
+
+Remote content reads/actions require task-created or borrowed tabs. Page-opened
+popups gain no control automatically; an unowned tab inside the Agent Window
+needs the user to move it to a user window before borrowing. Remote upload/download
+are unsupported; screenshots work.
+
+## Human steps and recovery
+
+With help enabled, request help for login, CAPTCHA, OTP, payment confirmation,
+consent, or after two attempts make no progress:
+
+```sh
+bsk request-help --session <id> --prompt "Please complete sign-in" --target @e3
+```
+
+Use a precise prompt and fresh targets; omit `--target` when no control fits.
+Use completion criteria only for a clear, stable success signal.
+
+| Result | Next step |
+| --- | --- |
+| Help `continued` / `completed` | Observe again, then resume with fresh refs. |
+| Help `cancelled` / `timed_out` | Respect rejection or the blocker; do not repeat the request. |
+| Help `disabled` | No human action was confirmed. Re-observe and follow the disabled-help rules below. |
+| Stale ref | Observe and retry the intended action once. |
+| Unknown tab/session | List current tabs/sessions; never guess IDs or use another task's session. |
+| Timeout or unknown effect | Inspect current state before retrying; the action may already have happened. |
+| `fill_value_mismatch` | Read the field: formatting may still satisfy the request. Correct only a remaining difference; no blind refill or immediate handoff. |
+| Unsupported operation | Use available capabilities; suggest updating only if the missing feature is needed. |
 
 Escalate page reading only as needed:
 
@@ -144,8 +294,8 @@ bsk screenshot --out <path>        bsk emulate --device <preset-id>
 bsk upload <ref> --file <path>     bsk download <ref> --out <path>
 ```
 
-`select` matches an option's `value` attribute, not its visible label. Device preset ids are
-lowercase and hyphenated, such as `iphone-14`.
+Navigation alone (including deprecated help outcome `navigated`) is not completion.
+For other errors, follow the returned hint and inspect the current state.
 
 - `console` and `network` provide bounded, read-only debugging evidence.
 - `console` / `network` accept `--since <n>` (absolute cursor) **or**
@@ -165,33 +315,95 @@ lowercase and hyphenated, such as `iphone-14`.
 - `templates` manages Profile Templates — see **Profile templates** below.
 - `completion <shell>` prints a tab-completion script for `bash`, `zsh`, `fish`, or `powershell`.
 
-## File transfer
+**Help disabled:** do not request help or re-enable it. Use existing login state,
+authorized inputs and viable alternatives; disabling help adds no permission and
+does not remove borrow confirmation or host restrictions. Where authorized, a
+vision-capable model may attempt graphical verification. Phone-only QR scans,
+face verification, missing SMS codes or image-only tasks for a text-only model
+may remain blocked. Report a specific blocker only when inputs/capabilities are
+missing or viable approaches are exhausted; continue independent work. Do not loop
+on identical failures, repeat unknown effects or switch backends to bypass limits.
+On an unrecoverable failure, report the blocker and stop the owned session.
 
-`upload` and `download` stage files through the daemon; the agent never touches browser-internal
-paths. Treat upload as disclosure to the website, download as accepting website-controlled bytes.
+## Screenshots and Canvas
 
-Upload has two independent mechanisms — choose explicitly, never rely on automatic fallback:
+```sh
+bsk screenshot --session <id> --out viewport.png
+bsk screenshot --session <id> --ref @e3 --out element.png --json
+bsk screenshot --session <id> --full-page --out page.png
+bsk screenshot --session <id> --full-page --scope current --out loaded.png
+```
 
-- **Default (input mode):** for upload buttons, file-input labels, or "upload from computer"
-  actions. The command clicks the target and intercepts the native file chooser.
-- **`--mode drop`:** for reliably identified attachment-receiving areas — an explicit drop zone,
-  chat composer, email editor, or form attachment area. Do not target page whitespace, generic
-  containers, or areas whose attachment ownership is ambiguous.
+Screenshots return a local PNG path; view the image to interpret it. `--out`
+replaces an existing file; omitting it uses a temporary path. `--json` includes
+dimensions and byte size. `--ref` and `--full-page` cannot be combined.
 
-Decision sequence when uploading:
+Full-page mode scrolls an ordinary webpage and restores its position/styles.
+The default `--scope follow` follows appended content. Use `--scope current` when
+capturing the currently loaded range is requested: it stops at the initial document
+height, even if a loading indicator remains. Later content below that boundary is
+excluded; report this range rather than claiming all feed entries were loaded.
+Use a session-controlled tab and stable viewport; `--tab-id` targets a tab without
+selecting it or focusing the window. Switching to another tab does not cancel
+capture; navigation, loss of control or a debugger reconnection does.
+Internal browser pages, the Web Store, nested scrolling
+panels and virtualized lists are unsupported. Capture/encoding defaults to 2m;
+`--timeout 5m` extends it only in full-page mode. Allow the shell enough time for
+capture plus transfer. Respect cancellation; do not blindly retry endless pages
+or substitute a viewport image when an older extension rejects full-page capture.
+Use matching CLI/extension builds. Ctrl-C cancels; failed full-page captures save
+no partial image. A `loading_stalled` error means the bottom kept a loading
+indicator without height growth for 30s; do not simply increase the deadline.
+Choose `current` only when that range satisfies the request. A `user_cancelled`
+error means user input stopped capture. For other failures follow the returned
+reason and hint; do not work around them by editing the page or stitching screenshots.
 
-1. Try input mode (the default).
-2. If it returns `reason=file_input_not_activated` with `effect_state=none`, re-observe. When a
-   reliable attachment target exists, try `--mode drop` once against that target.
-3. Otherwise fall back to `request-help`.
-4. **Never** switch mechanisms or repeat when `effect_state` is `unknown` or `committed` — the
-   browser may already have applied the file.
+For `@eN canvas [visual:screenshot]`, observe returns text, not pixels. Screenshot
+that ref when its contents matter; never infer Canvas controls or names from
+nearby labels. If images cannot be received/understood, explain the limitation,
+ask for an image-capable model when needed, and continue with available semantics.
 
-A successful drop means Chrome dispatched the native file-drop event; it does not prove the site
-accepted the attachment. Observe the page once after the command.
+To click a point seen in a Canvas image, retain that screenshot's `capture_id`:
 
-Download default-refuses to overwrite; pass `--overwrite` when replacing an existing file is
-intended. Read `bsk upload --help` and `bsk download --help` for all flags and error details.
+```sh
+bsk click @e3 --capture <capture-id> --image-x <x> --image-y <y> --session <id>
+```
+
+Use ORIGINAL PNG coordinates and dimensions, not resized display/viewport pixels.
+Captures are single-use, expire after 2m, and are invalidated by ref replacement
+(observe/snapshot/continuation) or a newer screenshot of that ref. With
+`capture_unavailable`, the image is view-only: observe and screenshot again before
+clicking. Counts 1/2, buttons and modifiers work; Canvas fill, IME, drag, hover
+and HTML extraction do not. Repainting is allowed; changed identity/geometry/hit
+targets are rejected. Verify the result, using DOM refs for revealed controls;
+inspect `effect_state=unknown` before retrying with a new capture.
+
+## Files and other tools
+
+```sh
+bsk upload @e3 --file ./report.pdf --session <id>
+bsk download @e3 --out ./report.pdf --session <id>
+```
+
+Upload discloses the file to the site; download accepts site-controlled bytes.
+Use agent-local paths, not browser-internal staging paths.
+
+- Default upload clicks an upload button/label and intercepts its file chooser.
+- If `reason=file_input_not_activated` and `effect_state=none`, re-observe. Try
+  `--mode drop` once only on a clear attachment target such as a drop zone or
+  composer, never whitespace or an ambiguous container. Otherwise follow the
+  human-help rules. There is no automatic fallback between mechanisms.
+- Never retry or switch upload modes for `effect_state=unknown` or `committed`.
+  A successful drop proves dispatch, not site acceptance; observe the attachment.
+- Download refuses overwrite by default; add `--overwrite` only when replacement
+  is intended. Consult each command's help for other flags.
+
+Use `console` / `network` for bounded read-only diagnostics; follow returned
+sequence cursors. `emulate --device iphone-14` affects one tab; `--off` restores it.
+`evaluate` is a last resort: inspect JSON `.ok`, since a script exception can have
+CLI exit code 0. Never evaluate secrets. `record start` captures user actions;
+read its help first and never record banking, SSO or password-manager pages.
+Use `bsk --help` to find navigation/history, tab, wait and window commands.
 
 ## Fork additions
 

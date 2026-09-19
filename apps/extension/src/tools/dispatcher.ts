@@ -43,6 +43,7 @@ import type {
 } from "@/transport/types";
 import { isRequestFrame } from "@/transport/types";
 import { auditContext } from "./audit-context";
+import { prepareBackgroundExecution } from "./background-execution";
 import { handleBrowserClose } from "./browser-close";
 import { handleBrowserTabs } from "./browser-tabs";
 import { handleConsole } from "./console";
@@ -76,6 +77,7 @@ import {
   handleSnapshot,
 } from "./observation";
 import {
+  clearRecordingForSession,
   handleRecordAwait,
   handleRecordStart,
   handleRecordStop,
@@ -384,6 +386,27 @@ export class ToolDispatcher {
   }
 
   private async invoke(req: RequestFrame, signal: AbortSignal): Promise<unknown | RpcError> {
+    const sessionId = (req.params as { session_id?: string } | undefined)?.session_id;
+    // Also enforce this for gateways backed by a local-mode daemon, where the
+    // standalone server's early IPC rejection does not apply.
+    if (
+      sessionId &&
+      this.sessions.get(sessionId)?.remote &&
+      (req.method === "tool.upload" || req.method === "tool.download")
+    ) {
+      return {
+        code: "unsupported",
+        message: "Remote connections do not support upload or download",
+      };
+    }
+    const preparationError = await prepareBackgroundExecution(
+      this.sessions,
+      req,
+      this.cdp,
+      chromeTabsApi,
+      signal,
+    );
+    if (preparationError) return preparationError;
     switch (req.method) {
       case "browser.close":
         return handleBrowserClose(this.sessions, req.params, undefined, signal);
@@ -415,6 +438,7 @@ export class ToolDispatcher {
       case "tool.tab_create": {
         const result = await handleTabCreate(this.sessions, req.params as TabCreateParams, {
           signal,
+          cdp: this.cdp,
         });
         if (!isRpcError(result)) {
           this.onAgentTabClaimed?.(result.tab_id, result.window_id);
@@ -433,6 +457,7 @@ export class ToolDispatcher {
         const result = await handleTabBorrow(this.sessions, req.params as TabBorrowParams, {
           signal,
           approveBorrow: this.approveBorrow,
+          cdp: this.cdp,
         });
         if (!isRpcError(result)) {
           this.onAgentTabClaimed?.(result.tab_id, result.agent_window_id);
@@ -443,7 +468,10 @@ export class ToolDispatcher {
         return handleTabReturn(this.sessions, req.params as TabReturnParams, {
           signal,
           cdp: this.cdp,
-          beforeReturn: (sessionId, tabId) => this.releaseHoverLatch(sessionId, tabId),
+          beforeReturn: async (sessionId, tabId) => {
+            if (this.sessions.get(sessionId)?.remote) clearRecordingForSession(sessionId);
+            await this.releaseHoverLatch(sessionId, tabId);
+          },
         });
       case "tool.window_resize":
         return handleWindowResize(
@@ -552,7 +580,9 @@ export class ToolDispatcher {
             handleNavigate(
               this.sessions,
               req.params as NavigateParams,
-              this.cdp ? { cdp: this.cdp, tabsApi: chromeTabsApi, signal } : undefined,
+              this.cdp
+                ? { cdp: this.cdp, tabsApi: chromeTabsApi, signal, backgroundExecution: true }
+                : undefined,
             ),
           signal,
         );
@@ -563,7 +593,9 @@ export class ToolDispatcher {
             handleNavigateBack(
               this.sessions,
               req.params as NavigateBackParams,
-              this.cdp ? { cdp: this.cdp, tabsApi: chromeTabsApi, signal } : undefined,
+              this.cdp
+                ? { cdp: this.cdp, tabsApi: chromeTabsApi, signal, backgroundExecution: true }
+                : undefined,
             ),
           signal,
         );
@@ -574,7 +606,9 @@ export class ToolDispatcher {
             handleNavigateForward(
               this.sessions,
               req.params as NavigateForwardParams,
-              this.cdp ? { cdp: this.cdp, tabsApi: chromeTabsApi, signal } : undefined,
+              this.cdp
+                ? { cdp: this.cdp, tabsApi: chromeTabsApi, signal, backgroundExecution: true }
+                : undefined,
             ),
           signal,
         );
@@ -585,7 +619,9 @@ export class ToolDispatcher {
             handleReload(
               this.sessions,
               req.params as ReloadParams,
-              this.cdp ? { cdp: this.cdp, tabsApi: chromeTabsApi, signal } : undefined,
+              this.cdp
+                ? { cdp: this.cdp, tabsApi: chromeTabsApi, signal, backgroundExecution: true }
+                : undefined,
             ),
           signal,
         );

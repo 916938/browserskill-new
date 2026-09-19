@@ -4,7 +4,7 @@ import { applyTemplate } from "@/lib/apply-template";
 import { getAuditEnabled } from "@/lib/audit";
 import { attachAuditBridge } from "@/lib/audit-bridge";
 import { ConnectionController } from "@/lib/connection-controller";
-import { watchDaemonPort } from "@/lib/daemon-port-preference";
+import { watchDaemonConnection } from "@/lib/daemon-connection-preference";
 import { startHeartbeat } from "@/lib/heartbeat";
 import {
   getConnectionEnabled,
@@ -51,36 +51,75 @@ import {
 } from "@/tools/record";
 import { chromeTabsApi } from "@/tools/shared";
 import { chromeTabMutationApi } from "@/tools/tabs";
-import { resolveDaemonWsUrl } from "@/transport/daemon-endpoint";
 import { detectBrowserMeta } from "@/transport/handshake";
+import { watchRemoteAuthorization } from "@/transport/remote-authorization";
+import { type RemoteEndpoint, remoteSocket } from "@/transport/remote-endpoint";
 import type { Transport } from "@/transport/transport";
 import { WSTransport } from "@/transport/ws-transport";
 
 export default defineBackground(() => {
   const controller = new ConnectionController();
-  const transport = new WSTransport({ url: __BSK_DAEMON_WS_URL__ });
+  let remoteEndpoint: RemoteEndpoint | null = null;
+  let connectionPreferenceValid = false;
+  let requestedConnection: { key: string; remote: boolean } | null = null;
+  const transport = new WSTransport({
+    url: __BSK_DAEMON_WS_URL__,
+    webSocketFactory: (url) => {
+      if (!connectionPreferenceValid) throw new Error("Connection settings are unavailable");
+      return remoteSocket(url, remoteEndpoint);
+    },
+  });
   initTemplateClient(transport);
-  const sessions = new SessionManager();
+  const sessions = new SessionManager({ remote: () => remoteEndpoint !== null });
   attachLongScreenshot({
     isTabBusy: (tabId) => sessions.list().some((session) => isAgentControlledTab(session, tabId)),
   });
   attachAuditBridge(controller, transport);
   const cdp = new ChromiumCdp(undefined, {
+    onDocumentChanged: (tabId) => sessions.invalidateTabRefs(tabId),
     shouldAutoAcceptDialog: async (tabId) => {
       const tab = await chrome.tabs.get(tabId);
-      return sessions.findByWindowId(tab.windowId) !== null;
+      const session = sessions.findByWindowId(tab.windowId);
+      return session !== null && (!session.remote || isAgentControlledTab(session, tabId));
     },
   });
   const sessionsLive = attachSessionsLiveFlag({ manager: sessions });
   let overlayGeneration = 0;
   const controlModes = new Map<string, OverlayMode>();
 
-  const daemonPort = watchDaemonPort((port) => {
-    const url = resolveDaemonWsUrl(port);
-    void controller.reconfigureTransport(url, () => {
-      transport.setUrl(url);
-    });
-  });
+  watchRemoteAuthorization();
+  const daemonPort = watchDaemonConnection(
+    (url, remote) => {
+      const key = JSON.stringify([remote ? "remote" : "local", url, remote?.deviceId ?? null]);
+      const sameRequest = requestedConnection?.key === key;
+      requestedConnection = { key, remote: remote !== null };
+      if (
+        sameRequest &&
+        connectionPreferenceValid &&
+        remote?.deviceId &&
+        remoteEndpoint?.deviceId === remote.deviceId &&
+        remoteEndpoint.url === remote.url
+      ) {
+        remoteEndpoint = remote;
+        return;
+      }
+      // Connection identity is public metadata. Credential rotation updates the
+      // socket factory above without ending the current device's tasks.
+      void controller.reconfigureTransport(key, () => {
+        connectionPreferenceValid = true;
+        remoteEndpoint = remote;
+        transport.setUrl(url);
+      });
+    },
+    () => {
+      console.error("[connection] invalid connection preference");
+      if (remoteEndpoint || requestedConnection?.remote) {
+        requestedConnection = null;
+        connectionPreferenceValid = false;
+        void controller.reconfigureTransport("unavailable", () => {});
+      }
+    },
+  );
   let preferenceWrites = Promise.resolve();
 
   function setControlMode(sessionId: string, mode: OverlayMode): void {

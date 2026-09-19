@@ -57,15 +57,15 @@ export function useDaemonPort() {
   const draft = state.draft ?? String(state.savedPort ?? "");
   const dirty = state.savedPort !== null && draft !== String(state.savedPort);
   const commit = useCallback(async () => {
-    if (state.savedPort === null || savingRef.current) return;
+    if (state.savedPort === null || savingRef.current) return false;
     const parsed = parseDaemonPortInput(draft);
     if (parsed === null) {
       setState((s) => ({ ...s, invalid: true }));
-      return;
+      return false;
     }
     if (parsed === state.savedPort) {
       setState((s) => ({ ...s, draft: null, invalid: false, error: null }));
-      return;
+      return true;
     }
     savingRef.current = true;
     const revision = storageRevision.current;
@@ -81,8 +81,10 @@ export function useDaemonPort() {
           saving: false,
         }));
       }
+      return true;
     } catch {
       if (mounted.current) setState((s) => ({ ...s, saving: false, error: "write" }));
+      return false;
     } finally {
       savingRef.current = false;
     }

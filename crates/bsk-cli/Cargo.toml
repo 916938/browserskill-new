@@ -56,6 +56,12 @@ zip = { workspace = true }
 sha2 = { workspace = true }
 clap_complete = "4"
 base64 = { workspace = true }
+bytes = "1"
+http-body-util = "0.1"
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+tokio-rustls = "0.26"
+time = { version = "0.3", features = ["formatting", "parsing"] }
 
 [target.'cfg(unix)'.dependencies]
 nix = { workspace = true }

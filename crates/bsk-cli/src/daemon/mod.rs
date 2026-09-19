@@ -14,6 +14,7 @@ pub mod lockfile;
 pub mod paths;
 pub(crate) mod probe;
 pub mod queue;
+pub mod remote;
 pub mod session_interrupt;
 pub mod sessions;
 pub mod start;
@@ -27,7 +28,7 @@ mod test_support;
 pub use start::{DaemonConfig, run_foreground};
 pub use state::{DaemonHandle, DaemonState};
 
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -47,7 +48,7 @@ pub async fn run(
 ) -> anyhow::Result<DaemonHandle> {
     let ws_port = config.ws_port;
     let state = Arc::new(DaemonState::new(config));
-    let ws_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), ws_port);
+    let ws_addr = SocketAddr::new(state.config.listen_ip(), ws_port);
     let ws_handle = ws::WsServer::new(Arc::clone(&state)).bind(ws_addr).await?;
     let ipc_handle = match ipc_socket {
         Some(path) => Some(ipc::IpcServer::new(Arc::clone(&state)).bind(path).await?),

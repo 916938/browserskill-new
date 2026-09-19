@@ -625,12 +625,13 @@ describe("control hints toggle", () => {
       runtime: { lastError: undefined },
       storage: {
         local: {
-          get: (keys: string | string[], cb: (items: Record<string, unknown>) => void) => {
+          get: (keys: string | string[], cb?: (items: Record<string, unknown>) => void) => {
             const items: Record<string, unknown> = {};
             for (const k of Array.isArray(keys) ? keys : [keys]) {
               if (k in store) items[k] = store[k];
             }
-            cb(items);
+            cb?.(items);
+            return Promise.resolve(items);
           },
           set: (items: Record<string, unknown>, cb?: () => void) => {
             Object.assign(store, items);
@@ -722,12 +723,13 @@ describe("daemon port input", () => {
       runtime: { lastError: undefined },
       storage: {
         local: {
-          get: (keys: string | string[], cb: (items: Record<string, unknown>) => void) => {
+          get: (keys: string | string[], cb?: (items: Record<string, unknown>) => void) => {
             const items: Record<string, unknown> = {};
             for (const k of Array.isArray(keys) ? keys : [keys]) {
               if (k in store) items[k] = store[k];
             }
-            cb(items);
+            cb?.(items);
+            return Promise.resolve(items);
           },
           set: (items: Record<string, unknown>, cb?: () => void) => {
             Object.assign(store, items);
@@ -752,8 +754,9 @@ describe("daemon port input", () => {
     stubChromeStorage({ [STORAGE_KEYS.DAEMON_PORT]: 53200 });
 
     render(<App />);
+    fireEvent.click(screen.getByText("连接设置"));
 
-    const input = await screen.findByRole("textbox", { name: "连接端口" });
+    const input = await screen.findByRole("textbox", { name: "本机端口" });
     await waitFor(() => expect((input as HTMLInputElement).value).toBe("53200"));
   });
 
@@ -761,8 +764,9 @@ describe("daemon port input", () => {
     const store = stubChromeStorage();
 
     render(<App />);
+    fireEvent.click(screen.getByText("连接设置"));
 
-    const input = await screen.findByRole("textbox", { name: "连接端口" });
+    const input = await screen.findByRole("textbox", { name: "本机端口" });
     await waitFor(() => expect((input as HTMLInputElement).disabled).toBe(false));
     fireEvent.change(input, { target: { value: "53200" } });
     fireEvent.click(screen.getByRole("button", { name: "保存端口" }));
@@ -775,11 +779,12 @@ describe("daemon port input", () => {
     const store = stubChromeStorage();
 
     render(<App />);
+    fireEvent.click(screen.getByText("连接设置"));
 
-    const input = await screen.findByRole("textbox", { name: "连接端口" });
+    const input = await screen.findByRole("textbox", { name: "本机端口" });
     await waitFor(() => expect((input as HTMLInputElement).disabled).toBe(false));
     fireEvent.change(input, { target: { value: "53200" } });
-    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.submit(input.closest("form")!);
 
     await waitFor(() => expect(store[STORAGE_KEYS.DAEMON_PORT]).toBe(53200));
   });
@@ -788,8 +793,9 @@ describe("daemon port input", () => {
     const store = stubChromeStorage();
 
     render(<App />);
+    fireEvent.click(screen.getByText("连接设置"));
 
-    const input = await screen.findByRole("textbox", { name: "连接端口" });
+    const input = await screen.findByRole("textbox", { name: "本机端口" });
     await waitFor(() => expect((input as HTMLInputElement).disabled).toBe(false));
     fireEvent.change(input, { target: { value: "abc" } });
     fireEvent.click(screen.getByRole("button", { name: "保存端口" }));
@@ -802,8 +808,9 @@ describe("daemon port input", () => {
     const store = stubChromeStorage({ [STORAGE_KEYS.DAEMON_PORT]: 53200 });
 
     render(<App />);
+    fireEvent.click(screen.getByText("连接设置"));
 
-    const input = await screen.findByRole("textbox", { name: "连接端口" });
+    const input = await screen.findByRole("textbox", { name: "本机端口" });
     await waitFor(() => expect((input as HTMLInputElement).disabled).toBe(false));
     fireEvent.change(input, { target: { value: "" } });
     fireEvent.click(screen.getByRole("button", { name: "保存端口" }));
@@ -816,8 +823,9 @@ describe("daemon port input", () => {
     stubChromeStorage();
 
     render(<App />);
+    fireEvent.click(screen.getByText("连接设置"));
 
-    const info = await screen.findByRole("button", { name: "连接端口说明" });
+    const info = await screen.findByRole("button", { name: "本机端口说明" });
     expect(info).toBeTruthy();
     const tooltip = screen.getByText(
       "通过此端口连接本机 daemon，请先启动 daemon 并让其监听此端口。此设置仅更改扩展的连接地址，不会修改本地 CLI 配置。保存修改会结束当前会话，并在连接开关开启时重新连接。",
