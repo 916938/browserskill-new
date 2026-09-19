@@ -429,4 +429,9 @@ See [AGENTS.md](AGENTS.md) for development setup, coding conventions, and CI com
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE).
+
+This is a downstream fork of [Tencent/BrowserSkill](https://github.com/Tencent/BrowserSkill)
+under the same license. [NOTICE](NOTICE) lists what this distribution adds;
+[docs/UPSTREAM_SYNC.md](docs/UPSTREAM_SYNC.md) records the sync policy and the
+current divergence from upstream.

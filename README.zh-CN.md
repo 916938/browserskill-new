@@ -346,4 +346,8 @@ pnpm ext:dev                      # 启动 WXT dev server，支持 HMR
 
 ## 许可证
 
-MIT
+MIT —— 详见 [LICENSE](LICENSE)。
+
+本仓库是 [Tencent/BrowserSkill](https://github.com/Tencent/BrowserSkill) 的下游分叉，沿用同一许可证。
+[NOTICE](NOTICE) 列出本发行版新增的能力，[docs/UPSTREAM_SYNC.md](docs/UPSTREAM_SYNC.md)
+记录与上游的同步策略和当前分歧。

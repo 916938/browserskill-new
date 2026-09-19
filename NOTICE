@@ -1,0 +1,30 @@
+BrowserSkill — fork distribution
+
+Copyright (c) 2026 Tencent
+Copyright (c) 2026 916938
+
+This distribution is a downstream fork of Tencent/BrowserSkill
+<https://github.com/Tencent/BrowserSkill>, which is licensed under the MIT
+License. The upstream copyright notice and the upstream license terms are
+retained in LICENSE and apply to all code inherited from upstream.
+
+Modifications and additions made in this fork are distributed under the same
+MIT License. Additions that do not exist upstream include:
+
+- `bsk invoke` (raw JSON-RPC passthrough), `bsk templates` (Profile Templates)
+  and `bsk completion`
+- `bsk browsers close`, `bsk browsers --browser-id`, and user-scope tab
+  management (`tab list|create|select --browser-id`, `tab observe`)
+- opt-in profile account id reporting (used to tell browser profiles apart)
+- `--since last_action` relative cursor for `console` and `network`
+- editable instance smart labels
+
+Upstream remote/server mode — `crates/bsk-cli/src/daemon/remote/**` and
+`apps/extension/src/transport/remote-*` — is carried in the tree so the
+repository stays mergeable with upstream. It is **not supported** by this
+distribution: it is not enabled by default, it is not documented as a
+capability, and its future upstream changes are not adopted. The supported and
+default mode is loopback only.
+
+See docs/UPSTREAM_SYNC.md for the sync policy, the ported and not-ported lists,
+and the current divergence from upstream.
