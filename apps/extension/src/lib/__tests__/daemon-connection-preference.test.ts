@@ -4,6 +4,13 @@ import { WSTransport } from "@/transport/ws-transport";
 import { ConnectionController } from "../connection-controller";
 import { watchDaemonConnection } from "../daemon-connection-preference";
 
+vi.mock("../profile-account", () => ({
+  getProfileAccountId: vi.fn(async () => ""),
+  getProfileAccountSharing: vi.fn(async () => false),
+  setProfileAccountSharing: vi.fn(async () => {}),
+  PROFILE_ACCOUNT_SHARING_KEY: "bsk_profile_account_sharing",
+}));
+
 vi.mock("../instance-id", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../instance-id")>()),
   getOrCreateInstanceId: async () => "test-browser",

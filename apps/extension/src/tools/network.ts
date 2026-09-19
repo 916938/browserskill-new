@@ -1,6 +1,6 @@
 import { ChromiumCdp } from "@/browser-driver/chromium-cdp";
 import type { SessionManager } from "@/session-manager/manager";
-import type { NetworkParams, NetworkResult, RpcError } from "@/transport/types";
+import type { NetworkParams, NetworkResult, RpcError, SinceCursor } from "@/transport/types";
 import {
   type ChromeTabsApi,
   chromeTabsApi,
@@ -15,7 +15,7 @@ export interface NetworkCdpRunner {
   ensureNetworkCapture(tabId: number): Promise<void>;
   networkEntriesSince(
     tabId: number,
-    since: number | undefined,
+    since: SinceCursor | undefined,
     limit: number,
     maxTextChars: number,
   ): NetworkResult;

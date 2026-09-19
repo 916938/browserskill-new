@@ -112,15 +112,6 @@
       "lastUpdated": "Updated {{time}}"
     },
     "interactionCompatibilityWarning": "Connected to an older daemon (protocol v{{cliProtocol}}). Update the CLI and daemon for full support of Automation settings.",
-    "daemonPortLabel": "Connection port",
-    "daemonPortHint": "Connect to the local daemon on this port. Start the daemon and have it listen on this port first. This setting only changes the extension's connection address, not the local CLI configuration. Saving a change ends current sessions and reconnects if the connection is enabled.",
-    "daemonPortInfoLabel": "About connection port",
-    "daemonPortInvalid": "Enter a port between 1 and 65535.",
-    "daemonPortSave": "Save port",
-    "daemonPortSaving": "Saving…",
-    "daemonPortReadFailed": "Could not load the port. Reopen this popup to retry.",
-    "daemonPortWriteFailed": "Could not save the port. Please try again.",
-    "daemonUnreachable": "Can't connect. Check the daemon is running and the port matches.",
     "interaction": {
       "title": "Automation settings",
       "confirmTabBorrow": "Confirm before borrowing tabs",

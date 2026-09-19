@@ -112,15 +112,6 @@
       "lastUpdated": "更新于 {{time}}"
     },
     "interactionCompatibilityWarning": "已连接到旧版 Daemon（协议 v{{cliProtocol}}）。部分自动化设置需要更新 CLI 和 Daemon 才能完整生效。",
-    "daemonPortLabel": "连接端口",
-    "daemonPortHint": "通过此端口连接本机 daemon，请先启动 daemon 并让其监听此端口。此设置仅更改扩展的连接地址，不会修改本地 CLI 配置。保存修改会结束当前会话，并在连接开关开启时重新连接。",
-    "daemonPortInfoLabel": "连接端口说明",
-    "daemonPortInvalid": "请输入 1 到 65535 之间的端口号。",
-    "daemonPortSave": "保存端口",
-    "daemonPortSaving": "保存中…",
-    "daemonPortReadFailed": "无法读取端口，请重新打开弹窗重试。",
-    "daemonPortWriteFailed": "端口保存失败，请重试。",
-    "daemonUnreachable": "无法连接，请确认 daemon 已启动且端口一致。",
     "interaction": {
       "title": "自动化设置",
       "confirmTabBorrow": "借用标签页前确认",

@@ -4,6 +4,12 @@ import { WSTransport } from "@/transport/ws-transport";
 import { ConnectionController } from "../connection-controller";
 import { getLabel } from "../instance-id";
 
+vi.mock("../profile-account", () => ({
+  getProfileAccountId: vi.fn(async () => ""),
+  getProfileAccountSharing: vi.fn(async () => false),
+  setProfileAccountSharing: vi.fn(async () => {}),
+  PROFILE_ACCOUNT_SHARING_KEY: "bsk_profile_account_sharing",
+}));
 vi.mock("../instance-id", () => ({
   getOrCreateInstanceId: vi.fn(async () => "a1b2c3d4"),
   getLabel: vi.fn(async () => "test-label"),
