@@ -76,9 +76,16 @@ silently degrades the product, and reviewers should reject the change.
 1. **The daemon is the only control plane.** CLI and any other consumer reach
    the browser through the daemon's IPC/WebSocket surface. Do not add a second
    path that talks to the extension directly.
-2. **Everything stays on the loopback interface.** The daemon binds WS to
-   `127.0.0.1` (`start.rs`) and IPC to a local socket/named pipe. Never bind a
-   public interface and never open a listening port for "remote" convenience.
+2. **Loopback is the supported mode; upstream remote/server mode is carried but
+   unsupported.** The daemon's default — and the only mode this fork supports —
+   binds WS to `127.0.0.1` (`start.rs`) and IPC to a local socket/named pipe.
+   Never bind a public interface and never open a listening port for "remote"
+   convenience. `crates/bsk-cli/src/daemon/remote/**` and the extension's
+   `src/transport/remote-*` modules are inherited from upstream and are
+   **frozen**: do not extend them, do not present them as a fork capability, and
+   do not adopt their future upstream changes (`docs/UPSTREAM_SYNC.md` §4). If a
+   remote capability is ever needed, design it on our own terms instead of
+   inheriting upstream's device-pairing and public-listener model.
 3. **No telemetry, analytics, or crash reporting.** `PRIVACY.md` states it
    outright. Do not add SDKs, beacons, or usage counters.
 4. **User tabs are protected by default.** Automation runs in an isolated
@@ -103,6 +110,27 @@ silently degrades the product, and reviewers should reject the change.
 11. **Command availability is tiered.** Baseline / `0.2.4+` / fork-only. A new
     command must declare its tier in the docs, never imply the released binary
     has it.
+
+## Upstream relationship
+
+This repository is a **downstream distribution (soft fork)** of
+[`Tencent/BrowserSkill`](https://github.com/Tencent/BrowserSkill). The full
+procedure, the ported/not-ported lists and the current divergence numbers live
+in **`docs/UPSTREAM_SYNC.md`** — read it before syncing or before assuming a
+change came from upstream. The short version:
+
+- **Keep the wire protocol compatible.** It is what makes upstream fixes cheap
+  to cherry-pick. Do not diverge in `bsk-protocol` handshake semantics.
+- **Take bug fixes, skip remote/server mode.** Sync by directed cherry-pick, not
+  by whole-tree merge.
+- **Identity is ours.** Version numbers, install URLs, `repository` fields and
+  the published name are ours; a merge conflict on any of them resolves to our
+  side. Version bumps are a separate release action, never part of a sync
+  commit.
+- **Fork-only surface stays documented.** `invoke`, `templates`, `completion`,
+  `browsers close`, `browser-tabs`, `tab observe`, profile account id, the
+  `since` cursor and smart labels exist only here; `zenxbrowser` and
+  `browserskill-pro` depend on them and cannot run on an upstream build.
 
 ## Important quirks
 
