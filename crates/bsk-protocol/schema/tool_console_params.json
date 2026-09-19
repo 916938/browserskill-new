@@ -35,13 +35,15 @@
       "type": "string"
     },
     "since": {
-      "description": "Return entries with sequence strictly greater than this cursor.",
-      "type": [
-        "integer",
-        "null"
-      ],
-      "format": "uint64",
-      "minimum": 0.0
+      "description": "Return entries with sequence strictly greater than this cursor.\n\nAccepts an absolute cursor (`42`) or the relative marker `\"last_action\"`, which means \"everything produced after the last agent-initiated action on this tab\" — so a caller need not remember a number to ask \"what did my click cause?\".",
+      "anyOf": [
+        {
+          "$ref": "#/definitions/SinceCursor"
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "tab_id": {
       "description": "Optional target tab. Defaults to the Agent Window's currently active tab.",
@@ -50,6 +52,35 @@
         "null"
       ],
       "format": "int64"
+    }
+  },
+  "definitions": {
+    "SinceCursor": {
+      "description": "Where a buffered read should start from.\n\nBuffered reads are cursor-paginated: each entry carries a per-tab monotonic `sequence`, and `since` asks for entries strictly greater than a cursor. Remembering that number is busywork for the common question — \"what did the action I just take produce?\" — so a relative marker is accepted as well.\n\nSerialized as a bare number for the absolute form and as the string `\"last_action\"` for the marker, so an existing client sending `\"since\": 42` keeps working unchanged. (An `#[serde(untagged)]` enum cannot express this: the numeric arm always wins the string case.)",
+      "oneOf": [
+        {
+          "description": "An absolute sequence: return entries with `sequence > value`.",
+          "type": "object",
+          "required": [
+            "Sequence"
+          ],
+          "properties": {
+            "Sequence": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0.0
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "description": "Start after the last agent-initiated action on this tab.\n\nResolved by the extension from its per-tab action watermark; a tab with no recorded action behaves like \"from the beginning\".",
+          "type": "string",
+          "enum": [
+            "LastAction"
+          ]
+        }
+      ]
     }
   }
 }

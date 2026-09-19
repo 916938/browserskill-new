@@ -205,10 +205,18 @@ export interface ConsoleEntry {
   truncated: boolean;
 }
 
+/**
+ * Cursor for buffered reads: an absolute sequence, or the relative marker
+ * `last_action` ("everything after the last agent-initiated action on this
+ * tab"). The untagged shape matches the Rust `SinceCursor` — an old client
+ * that sends `since: 42` keeps working.
+ */
+export type SinceCursor = number | "last_action";
+
 export interface ConsoleParams {
   session_id: string;
   tab_id?: number;
-  since?: number;
+  since?: SinceCursor;
   limit?: number;
   max_text_chars?: number;
   include_stack?: boolean;
@@ -240,7 +248,7 @@ export interface NetworkEntry {
 export interface NetworkParams {
   session_id: string;
   tab_id?: number;
-  since?: number;
+  since?: SinceCursor;
   limit?: number;
   max_text_chars?: number;
 }

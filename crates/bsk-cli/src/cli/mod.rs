@@ -33,6 +33,7 @@ pub mod render_error;
 pub mod screenshot;
 pub mod scroll;
 pub mod session;
+pub mod since;
 pub mod snapshot;
 pub mod status;
 pub mod tab;

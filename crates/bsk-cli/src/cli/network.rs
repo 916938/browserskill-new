@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use anyhow::Context;
 use bsk_protocol::Method;
-use bsk_protocol::tools::{NetworkEntry, NetworkParams, NetworkResult};
+use bsk_protocol::tools::{NetworkEntry, NetworkParams, NetworkResult, SinceCursor};
 use clap::Args;
 
 use crate::cli::TOOL_IPC_TIMEOUT;
@@ -21,9 +21,10 @@ pub struct NetworkArgs {
     #[arg(long = "tab-id")]
     pub tab_id: Option<i64>,
 
-    /// Return entries with sequence greater than this cursor.
-    #[arg(long)]
-    pub since: Option<u64>,
+    /// Return entries with sequence greater than this cursor. Accepts
+    /// `last_action` for "after the last action on this tab".
+    #[arg(long, value_parser = crate::cli::since::parse_since)]
+    pub since: Option<SinceCursor>,
 
     /// Maximum number of entries to return. Defaults to 50; extension caps at 200.
     #[arg(long, value_parser = clap::value_parser!(u32).range(1..))]

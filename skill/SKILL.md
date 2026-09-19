@@ -148,6 +148,10 @@ bsk upload <ref> --file <path>     bsk download <ref> --out <path>
 lowercase and hyphenated, such as `iphone-14`.
 
 - `console` and `network` provide bounded, read-only debugging evidence.
+- `console` / `network` accept `--since <n>` (absolute cursor) **or**
+  `--since last_action` — the latter means "only what the last action I took
+  produced", so you do not have to remember a cursor to ask "what did my click
+  cause?". An unknown/never-acted tab returns nothing rather than everything.
 - `emulate` applies viewport, user-agent, and touch overrides to one tab; new tabs do not inherit
   them. Use `--off` to restore the real environment.
 - `evaluate` is a last resort when observe plus normal interactions cannot complete the task. With

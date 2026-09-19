@@ -10,7 +10,7 @@ import type { CdpDebuggee, DialogCursor } from "@/browser-driver/chromium-cdp";
 import type { CdpFrameGraph, CdpTarget } from "@/browser-driver/frame-graph";
 import type { SessionContext, SessionManager } from "@/session-manager/manager";
 import { normaliseRef } from "@/session-manager/ref-store";
-import type { ConsoleResult, JavaScriptDialogInfo, RpcError } from "@/transport/types";
+import type { ConsoleResult, JavaScriptDialogInfo, RpcError, SinceCursor } from "@/transport/types";
 import { rpcError } from "./errors";
 
 const DEFAULT_BUFFERED_READ_LIMIT = 50;
@@ -64,10 +64,15 @@ export interface CdpRunner {
   };
   dialogCursor?(tabId: number): DialogCursor;
   dialogsSince?(tabId: number, cursor: DialogCursor): JavaScriptDialogInfo[];
+  /**
+   * Stamp the `since: "last_action"` watermark for `tabId`. Optional so test
+   * doubles need not implement it.
+   */
+  markAction?(tabId: number): void;
   ensureConsoleCapture?(tabId: number): Promise<void>;
   consoleEntriesSince?(
     tabId: number,
-    since: number | undefined,
+    since: SinceCursor | undefined,
     limit: number,
     maxTextChars: number,
     includeStack: boolean,
@@ -94,20 +99,29 @@ export function cdpRunnerForTarget(cdp: CdpRunner, target: CdpTarget): CdpRunner
 }
 
 export interface BufferedReadBounds {
-  since: number | undefined;
+  since: SinceCursor | undefined;
   limit: number;
   maxTextChars: number;
 }
 
 /** Parse the common cursor and output bounds used by buffered read tools. */
 export function parseBufferedReadBounds(params: {
-  since?: number;
+  since?: SinceCursor;
   limit?: number;
   max_text_chars?: number;
 }): BufferedReadBounds | RpcError {
   const since = params.since;
-  if (since !== undefined && (!Number.isSafeInteger(since) || since < 0)) {
-    return { code: "invalid_params", message: "since must be a non-negative integer" };
+  // `last_action` is a relative marker, not a number — validate it separately
+  // and pass it through untouched so the runner can resolve it.
+  if (
+    since !== undefined &&
+    since !== "last_action" &&
+    (!Number.isSafeInteger(since) || since < 0)
+  ) {
+    return {
+      code: "invalid_params",
+      message: "since must be a non-negative integer or `last_action`",
+    };
   }
   const limit = boundedOptionalInteger(
     params.limit,

@@ -177,6 +177,14 @@ export class ChromiumCdp {
   private readonly networkSequences = new Map<number, number>();
   private readonly networkDomainsEnabledTabs = new Set<number>();
   private readonly networkRequestMeta = new Map<number, Map<string, NetworkRequestMeta>>();
+  /**
+   * Console/network sequence watermark at the moment of the last
+   * agent-initiated action on a tab — the anchor `since: "last_action"`
+   * resolves to. Both buffers share the numbering domain per tab by
+   * construction (each has its own counter), so we track both.
+   */
+  private readonly lastActionConsoleSeq = new Map<number, number>();
+  private readonly lastActionNetworkSeq = new Map<number, number>();
   private readonly frameDiscovery = new Map<number, FrameDiscoveryState>();
   private detachSubscription: { dispose(): void } | null = null;
   private dialogSubscription: { dispose(): void } | null = null;
@@ -377,6 +385,25 @@ export class ChromiumCdp {
     return buf.filter((entry) => entry.sequence > cursor);
   }
 
+  /**
+   * Stamp the action watermark for `tabId` at the current buffer positions.
+   * Called by the tool dispatcher before/after agent-initiated actions
+   * (click, fill, navigate, …) so a later `since: "last_action"` read can
+   * return exactly what that action produced.
+   */
+  markAction(tabId: number): void {
+    this.lastActionConsoleSeq.set(tabId, this.consoleSequences.get(tabId) ?? 0);
+    this.lastActionNetworkSeq.set(tabId, this.networkSequences.get(tabId) ?? 0);
+  }
+
+  /** Resolve a `since` cursor against one buffer's action watermark. */
+  private resolveSince(
+    since: number | "last_action" | undefined,
+    watermark: number,
+  ): number | undefined {
+    return since === "last_action" ? watermark : since;
+  }
+
   /** Ensure CDP domains for console capture are enabled for this tab. */
   async ensureConsoleCapture(tabId: number): Promise<void> {
     if (!this.attachedTabs.has(tabId)) {
@@ -389,7 +416,7 @@ export class ChromiumCdp {
   /** Console entries observed on `tabId`, bounded for agent context safety. */
   consoleEntriesSince(
     tabId: number,
-    since: number | undefined,
+    since: number | "last_action" | undefined,
     limit: number,
     maxTextChars: number,
     includeStack: boolean,
@@ -398,7 +425,7 @@ export class ChromiumCdp {
     const { entries, nextSince, truncated } = readBufferedEntries(
       buf,
       this.consoleSequences.get(tabId) ?? 0,
-      since,
+      this.resolveSince(since, this.lastActionConsoleSeq.get(tabId) ?? 0),
       limit,
       (entry) => projectConsoleEntry(entry, maxTextChars, includeStack),
     );
@@ -421,7 +448,7 @@ export class ChromiumCdp {
   /** Network entries observed on `tabId`, bounded for agent context safety. */
   networkEntriesSince(
     tabId: number,
-    since: number | undefined,
+    since: number | "last_action" | undefined,
     limit: number,
     maxTextChars: number,
   ): NetworkResult {
@@ -429,7 +456,7 @@ export class ChromiumCdp {
     const { entries, nextSince, truncated } = readBufferedEntries(
       buf,
       this.networkSequences.get(tabId) ?? 0,
-      since,
+      this.resolveSince(since, this.lastActionNetworkSeq.get(tabId) ?? 0),
       limit,
       (entry) => projectNetworkEntry(entry, maxTextChars),
     );

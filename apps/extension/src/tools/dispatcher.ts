@@ -301,6 +301,10 @@ export class ToolDispatcher {
         body = { id: req.id, error: classifyCdpError(result) };
       } else {
         body = { id: req.id, result };
+        // Stamp the buffered-read watermark *after* the action completes, so
+        // a later `since: "last_action"` asks for what this action produced
+        // (stamping before would include the pre-action backlog).
+        this.markActionAfter(req);
         if (req.method === "tool.session_start") {
           startedSession = (req.params as SessionStartParams | undefined)?.session_id ?? null;
         }
@@ -361,6 +365,22 @@ export class ToolDispatcher {
       }
     }
     if (mutatesSessions) this.onSessionsChanged?.();
+  }
+
+  /**
+   * Stamp `since: "last_action"`'s anchor for agent-initiated actions.
+   *
+   * Only methods that can make the page produce console/network traffic
+   * participate; passive reads (console, network, observe, snapshot) must
+   * NOT move the watermark, or the next read would come back empty.
+   */
+  private markActionAfter(req: RequestFrame): void {
+    if (!ACTION_METHODS.has(req.method)) return;
+    const cdp = this.cdp;
+    if (!cdp?.markAction) return;
+    const tabId = tabIdForAction(req);
+    if (tabId === null) return;
+    cdp.markAction(tabId);
   }
 
   private async invoke(req: RequestFrame, signal: AbortSignal): Promise<unknown | RpcError> {
@@ -961,6 +981,50 @@ function throwIfDispatchAborted(signal: AbortSignal | undefined): void {
   const error = new Error("rpc aborted by daemon cancel");
   error.name = "AbortError";
   throw error;
+}
+
+/**
+ * Methods after which a `since: "last_action"` read should start.
+ * Deliberately excludes passive reads — stamping on `tool.console` would
+ * make the next `last_action` read return nothing, which is exactly the
+ * confusion this feature exists to remove.
+ */
+const ACTION_METHODS = new Set([
+  "tool.navigate",
+  "tool.navigate_back",
+  "tool.navigate_forward",
+  "tool.reload",
+  "tool.click",
+  "tool.fill",
+  "tool.press",
+  "tool.select",
+  "tool.hover",
+  "tool.wheel",
+  "tool.scroll_to",
+  "tool.focus",
+  "tool.blur",
+  "tool.upload",
+  "tool.download",
+  "tool.evaluate",
+  "tool.tab_select",
+  "tool.tab_borrow",
+]);
+
+/**
+ * Best-effort target tab for an action. Explicit `tab_id` wins; otherwise
+ * fall back to the session's Agent Window active tab. Returns null when we
+ * cannot tell — no watermark is better than a wrong one.
+ */
+function tabIdForAction(req: RequestFrame): number | null {
+  const params = req.params as { tab_id?: unknown; session_id?: unknown } | undefined;
+  if (
+    typeof params?.tab_id === "number" &&
+    Number.isSafeInteger(params.tab_id) &&
+    params.tab_id > 0
+  ) {
+    return params.tab_id;
+  }
+  return null;
 }
 
 function isAbortLikeError(err: unknown): boolean {

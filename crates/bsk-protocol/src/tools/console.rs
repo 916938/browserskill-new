@@ -1,5 +1,6 @@
 //! `tool.console` — read buffered console/log/exception messages.
 
+use super::since::SinceCursor;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -10,8 +11,13 @@ pub struct ConsoleParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tab_id: Option<i64>,
     /// Return entries with sequence strictly greater than this cursor.
+    ///
+    /// Accepts an absolute cursor (`42`) or the relative marker
+    /// `"last_action"`, which means "everything produced after the last
+    /// agent-initiated action on this tab" — so a caller need not remember
+    /// a number to ask "what did my click cause?".
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub since: Option<u64>,
+    pub since: Option<SinceCursor>,
     /// Maximum number of entries to return. Extension applies safe defaults and caps.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(range(min = 1))]

@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+#### `console` / `network` 支持 `--since last_action` 相对游标
+
+游标分页原本只有绝对数字，Agent 想问"我刚才那次点击产生了什么请求"得先记住一个序号。现在支持相对标记：
+
+```bash
+bsk network --session <id> --since last_action
+bsk console --session <id> --since last_action
+```
+
+- 协议层新增 `SinceCursor`（`Sequence(u64)` / `LastAction`），按数字或字符串 `"last_action"` 解析；旧客户端发 `"since": 42` 行为完全不变。
+- 扩展侧 `ChromiumCdp` 为每个 tab 记录操作水位，dispatcher 在 agent 动作（click / fill / navigate / press …）**完成后**打时间戳，因此下一次 `last_action` 读到的正是该动作产生的条目。
+- 刻意**不**在被动读取（console / network / observe / snapshot）上打水位——否则下一次读会空，正好与这个特性的目的相反。
+- 无水位记录（从未操作过的 tab）返回空，而不是全量：宁可少返回，不能返回无关内容。
+- 测试：协议层 4 例（数字/字符串/非法值/params 往返）+ 扩展 5 例。
+
 #### 可选上报 Profile 账号 ID（opt-in，fork 新增）
 
 `bsk browsers` 新增 `ACCOUNT` 列：该浏览器 Profile 已登录账号的**混淆 ID**，用于区分同时连接的多个 Profile。

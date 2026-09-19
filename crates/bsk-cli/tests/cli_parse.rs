@@ -2,12 +2,14 @@
 
 use std::time::Duration;
 
+use bsk::cli::browsers::BrowsersSub;
 use bsk::cli::daemon::{DaemonCmd, parse_duration};
 use bsk::cli::navigate::NavigateCmd;
 use bsk::cli::record::{RecordCmd, RecordSub};
 use bsk::cli::session::{SessionCmd, SessionSub};
 use bsk::cli::upload::UploadModeArg;
 use bsk::{Cli, Command};
+use bsk_protocol::tools::SinceCursor;
 use clap::Parser;
 
 fn parse(args: &[&str]) -> Cli {
@@ -197,7 +199,7 @@ fn parses_console_command_with_context_safety_flags() {
     };
     assert_eq!(args.session, "s1");
     assert_eq!(args.tab_id, Some(9));
-    assert_eq!(args.since, Some(12));
+    assert_eq!(args.since, Some(SinceCursor::Sequence(12)));
     assert_eq!(args.limit, Some(75));
     assert_eq!(args.max_text_chars, Some(2048));
     assert!(args.include_stack);
@@ -233,7 +235,7 @@ fn parses_network_command_with_context_safety_flags() {
     };
     assert_eq!(args.session, "s1");
     assert_eq!(args.tab_id, Some(9));
-    assert_eq!(args.since, Some(12));
+    assert_eq!(args.since, Some(SinceCursor::Sequence(12)));
     assert_eq!(args.limit, Some(75));
     assert_eq!(args.max_text_chars, Some(2048));
 }
@@ -853,4 +855,45 @@ fn canvas_click_requires_complete_capture_coordinates() {
         argv.extend(extra);
         assert!(Cli::try_parse_from(argv).is_err());
     }
+}
+
+#[test]
+fn parses_browsers_close_with_confirmation() {
+    let cli = parse(&[
+        "bsk",
+        "browsers",
+        "close",
+        "--browser-id",
+        "abc123",
+        "--confirm",
+    ]);
+    let Command::Browsers(cmd) = cli.command else {
+        panic!("expected browsers")
+    };
+    let Some(BrowsersSub::Close(args)) = cmd.sub else {
+        panic!("expected close subcommand")
+    };
+    assert_eq!(args.browser_id, "abc123");
+    assert!(args.confirm);
+
+    // Plain `bsk browsers` still lists, and `--confirm` is never implied.
+    let Command::Browsers(list) = parse(&["bsk", "browsers"]).command else {
+        panic!("expected browsers")
+    };
+    assert!(list.sub.is_none());
+    let Command::Browsers(unconfirmed) =
+        parse(&["bsk", "browsers", "close", "--browser-id", "abc123"]).command
+    else {
+        panic!("expected browsers")
+    };
+    let Some(BrowsersSub::Close(args)) = unconfirmed.sub else {
+        panic!("expected close subcommand")
+    };
+    assert!(!args.confirm);
+
+    // A blank instance id is rejected at parse time.
+    assert!(
+        Cli::try_parse_from(["bsk", "browsers", "close", "--browser-id", " ", "--confirm"])
+            .is_err()
+    );
 }

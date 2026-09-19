@@ -12,8 +12,8 @@ use bsk_protocol::system::{HandshakeParams, HandshakeResult};
 use bsk_protocol::tools::{
     ConsoleEntry, ConsoleEntryKind, ConsoleParams, ConsoleResult, GetHtmlParams, GetHtmlResult,
     NetworkEntry, NetworkEntryKind, NetworkParams, NetworkResult, ObserveParams, ObserveResult,
-    ScreenshotParams, ScreenshotResult, SessionStartParams, SessionStartResult, SnapshotParams,
-    SnapshotResult, TabInfo, TabListParams, TabListResult, TabScope,
+    ScreenshotParams, ScreenshotResult, SessionStartParams, SessionStartResult, SinceCursor,
+    SnapshotParams, SnapshotResult, TabInfo, TabListParams, TabListResult, TabScope,
 };
 use bsk_protocol::{
     BrowserPeerInfo, ErrorCode, Frame, Method, RequestFrame, ResponseBody, ResponseFrame, RpcError,
@@ -326,7 +326,7 @@ async fn console_returns_buffered_entries() {
         assert_eq!(req.method, Method::ToolConsole);
         let params: ConsoleParams = serde_json::from_value(req.params.clone().unwrap()).unwrap();
         assert_eq!(params.tab_id, Some(7));
-        assert_eq!(params.since, Some(3));
+        assert_eq!(params.since, Some(SinceCursor::Sequence(3)));
         assert_eq!(params.limit, Some(50));
         assert_eq!(params.max_text_chars, Some(1000));
         assert_eq!(params.include_stack, Some(false));
@@ -359,7 +359,7 @@ async fn console_returns_buffered_entries() {
         ConsoleParams {
             session_id,
             tab_id: Some(7),
-            since: Some(3),
+            since: Some(SinceCursor::Sequence(3)),
             limit: Some(50),
             max_text_chars: Some(1000),
             include_stack: Some(false),
@@ -383,7 +383,7 @@ async fn network_returns_buffered_entries() {
         assert_eq!(req.method, Method::ToolNetwork);
         let params: NetworkParams = serde_json::from_value(req.params.clone().unwrap()).unwrap();
         assert_eq!(params.tab_id, Some(7));
-        assert_eq!(params.since, Some(3));
+        assert_eq!(params.since, Some(SinceCursor::Sequence(3)));
         assert_eq!(params.limit, Some(50));
         assert_eq!(params.max_text_chars, Some(1000));
         ResponseBody::Ok(
@@ -416,7 +416,7 @@ async fn network_returns_buffered_entries() {
         NetworkParams {
             session_id,
             tab_id: Some(7),
-            since: Some(3),
+            since: Some(SinceCursor::Sequence(3)),
             limit: Some(50),
             max_text_chars: Some(1000),
         },

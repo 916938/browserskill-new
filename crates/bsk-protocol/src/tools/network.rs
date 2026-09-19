@@ -1,5 +1,6 @@
 //! `tool.network` — read buffered network responses / failures.
 
+use super::since::SinceCursor;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -10,8 +11,11 @@ pub struct NetworkParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tab_id: Option<i64>,
     /// Return entries with sequence strictly greater than this cursor.
+    ///
+    /// Accepts an absolute cursor (`42`) or the relative marker
+    /// `"last_action"` — see [`SinceCursor`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub since: Option<u64>,
+    pub since: Option<SinceCursor>,
     /// Maximum number of entries to return. Extension applies safe defaults and caps.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(range(min = 1))]
