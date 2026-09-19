@@ -65,9 +65,20 @@ skill/SKILL.md                                      # build.rs 会复制到 crat
 
 ### 3.3 版本号与安装 URL 一律取我方
 
-`Cargo.toml`、`Cargo.lock`、`apps/extension/package.json`、`packages/dsh-plugin-browserskill/package.json` 的版本号冲突一律保留我方（当前 `0.2.3`）；`README.md`、`README.zh-CN.md`、`AGENT_INSTALL.md`、`crates/bsk-cli/README.md` 的安装 URL 一律保留 `916938/browserskill-new`，只吸收上游新增的 PATH 提示等附加说明。
+`Cargo.toml`、`Cargo.lock`、`apps/extension/package.json`、`packages/dsh-plugin-browserskill/package.json` 的版本号冲突一律保留我方；`README.md`、`README.zh-CN.md`、`AGENT_INSTALL.md`、`crates/bsk-cli/README.md` 的安装 URL 一律保留 `916938/browserskill-new`，只吸收上游新增的 PATH 提示等附加说明。
 
 > 版本号升级是独立的发布动作，不在同步提交里顺手改。
+
+### 3.5 版本线规则
+
+**我方版本号始终严格大于最后一次同步的上游版本。** 上游 `0.3.0` → 我方 `0.4.0`。这样单看版本号就能判断跑的是哪个发行版。
+
+不要用 `0.3.0+zenx.1` 这类 build metadata 做区分，两个原因：
+
+1. semver 比较**忽略** build metadata，`0.3.0+zenx.2` 与 `0.3.0+zenx.1` 判定为相等 → 自动更新会永远认为无需升级；
+2. `scripts/release.mjs` 的版本正则 `^\d+\.\d+\.\d+(-[\w.]+)?$` 直接拒绝 `+`。
+
+若将来我方号码即将与上游新版本相撞，继续向上跳一个 minor，而不是复用上游号码。
 
 ### 3.4 验证清单
 
@@ -132,7 +143,7 @@ pnpm ext:test
 
 ## 7. 待办（soft fork 身份步骤，未包含在本轮同步）
 
-1. 版本线独立：与上游 `0.3.0` 显式区分（当前仍保持 `0.2.3`）。
+1. ~~版本线独立：与上游 `0.3.0` 显式区分。~~ **已完成** —— 当前 `0.4.0`，规则见 §3.5。
 2. 对外品牌去 "BrowserSkill"（上游商标）。CLI 二进制名 `bsk` **保留**——`zenxbrowser` 与 `browserskill-pro` 全部脚本硬编码依赖，改名收益不抵成本；且我们不 `cargo publish`，不存在 crate 名冲突。
 3. `LICENSE`：保留 Tencent 的 MIT 版权行，另起一行加我方 copyright 与 modified 说明（MIT 硬性要求）。
 4. `browserskill-pro` / `zenxbrowser` 文档写明"依赖 fork 构建，非上游 BrowserSkill"，列出 fork-only 命令。

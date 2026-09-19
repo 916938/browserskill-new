@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - Unreleased
+
+This fork keeps a version line that is independent from upstream's. `0.4.0` sits
+above the upstream `0.3.0` we last synced, so the version number alone tells you
+which distribution you are running. See `docs/UPSTREAM_SYNC.md`.
+
+### Added (fork only)
+
+- `bsk browsers close --browser-id <id> --confirm` — stop every session of an
+  instance, close its windows and let the browser process exit
+- `bsk browsers --browser-id` selection plus user-scope tab management
+  (`tab list|create|select --browser-id`, read-only `tab observe`)
+- Opt-in profile account id reporting, so connected profiles can be told apart
+- `--since last_action` relative cursor for `console` and `network`
+- `bsk invoke` (raw JSON-RPC passthrough), `bsk templates` (Profile Templates),
+  `bsk completion <shell>`
+- Editable instance smart labels
+
+### Changed
+
+- Version bumped from `0.2.3` to `0.4.0` across CLI, extension and DSH plugin
+- Upstream `0.3.0` is synced in; see that entry below for what it brings.
+  Remote/server mode is carried for mergeability but is **not supported** by
+  this distribution — the supported and default mode is loopback only
+
 ## [0.3.0] - 2026-09-16
 
 ### Added
