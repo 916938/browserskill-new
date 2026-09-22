@@ -243,7 +243,9 @@ Daemon 也会为自身继承的旧环境设置记录说明。原先只依靠这�
 
 ## DeepSeek Harness 插件
 
-在用 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（`dsh`）？ZenX Bridge 提供了官方 dsh 插件，已发布到 npm：[`@916938/zenx-bridge-dsh-plugin`](https://www.npmjs.com/package/@916938/zenx-bridge-dsh-plugin)。它为 Agent 提供原生 `browser_*` 工具，由插件代为调用 `bsk`，并在 Web UI 中实时展示浏览器会话。
+在用 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（`dsh`）？ZenX Bridge 提供了官方 dsh 插件，包名 `@916938/zenx-bridge-dsh-plugin`，由本仓库的 `packages/dsh-plugin-browserskill` 构建。它为 Agent 提供原生 `browser_*` 工具，由插件代为调用 `bsk`，并在 Web UI 中实时展示浏览器会话。
+
+> ⚠️ **尚未发布到 npm。** 包名已确定、产物可从本仓库构建，但还没有正式发版——在那之前请从本地构建安装。
 
 先安装 `bsk` CLI 并连接浏览器扩展，再将插件装进 dsh profile 并启动（将 `web` 替换为你的 profile 名称）：
 
@@ -252,7 +254,7 @@ dsh plugin --profile web add @916938/zenx-bridge-dsh-plugin
 dsh --profile web
 ```
 
-插件自带 `browser-skill` skill，所以在 dsh 下无需执行 `bsk install-skill`。已安装的插件不会自动更新；升级此插件请运行：
+插件自带 `zenx-bridge` skill，所以在 dsh 下无需执行 `bsk install-skill`。已安装的插件不会自动更新；升级此插件请运行：
 
 ```sh
 dsh plugin --profile web update @916938/zenx-bridge-dsh-plugin --latest

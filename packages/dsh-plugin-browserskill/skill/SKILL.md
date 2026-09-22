@@ -1,5 +1,5 @@
 ---
-name: browser-skill
+name: zenx-bridge
 description: Browser automation through six injected domain tools.
 ---
 

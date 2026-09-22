@@ -1,7 +1,7 @@
-# browser-skill — Install Guide for AI Agents
+# ZenX Bridge — Install Guide for AI Agents
 
-You are an AI agent setting up browser-skill for the user. Done = the intended
-harness can load `browser-skill`, `bsk doctor` reports no `fail` checks, and a
+You are an AI agent setting up ZenX Bridge for the user. Done = the intended
+harness can load the `zenx-bridge` skill, `bsk doctor` reports no `fail` checks, and a
 small browser task succeeds and cleans up its session. Doctor alone does not
 verify skill installation or discovery: no installed skill is reported as `N/A`.
 Explain remaining warnings; a local process identity warning permits browser use

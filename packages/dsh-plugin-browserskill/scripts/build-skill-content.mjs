@@ -48,7 +48,7 @@ function validateModelFacingSkill(markdown, supportedTools) {
   }
 }
 
-const NAME = "browser-skill";
+const NAME = "zenx-bridge";
 const DESCRIPTION =
   "Browser automation against the user's logged-in Chromium through this plugin's injected " +
   "browser_* tools. Use to visit and read pages, fill forms, click through flows, inspect tabs, " +

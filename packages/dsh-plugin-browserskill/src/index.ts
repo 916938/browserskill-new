@@ -49,7 +49,7 @@ export const Config = Schema.object({
   lazyTools: Schema.boolean()
     .default(true)
     .description(
-      "Reveal the browser_* tools only after the browser-skill skill is invoked (default true); " +
+      "Reveal the browser_* tools only after the zenx-bridge skill is invoked (default true); " +
         "false registers the full suite at load.",
     ),
 });

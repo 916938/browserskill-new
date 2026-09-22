@@ -290,10 +290,13 @@ Run an Agent on a server and pair it with your local browser using the built-in 
 ## DeepSeek Harness plugin
 
 Using [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`dsh`)?
-ZenX Bridge ships a first-class dsh plugin on npm as
-[`@916938/zenx-bridge-dsh-plugin`](https://www.npmjs.com/package/@916938/zenx-bridge-dsh-plugin).
-It gives the agent native `browser_*` tools and a live view of its browser sessions
-in the Web UI. The plugin runs `bsk` on the agent's behalf.
+ZenX Bridge ships a first-class dsh plugin: `@916938/zenx-bridge-dsh-plugin`, built from
+`packages/dsh-plugin-browserskill` in this repository. It gives the agent native `browser_*`
+tools and a live view of its browser sessions in the Web UI. The plugin runs `bsk` on the
+agent's behalf.
+
+> ⚠️ **Not published to npm yet.** The name is reserved and the package builds from this
+> repository, but no release has been pushed — install it from a local build until then.
 
 Install the `bsk` CLI and connect the browser extension first. Then add the plugin
 to a dsh profile and start it (replace `web` with your profile name):
@@ -303,7 +306,7 @@ dsh plugin --profile web add @916938/zenx-bridge-dsh-plugin
 dsh --profile web
 ```
 
-The plugin includes the `browser-skill` skill, so `bsk install-skill` is not needed
+The plugin includes the `zenx-bridge` skill, so `bsk install-skill` is not needed
 for dsh. Installed plugins do not update automatically. To upgrade this plugin:
 
 ```sh
