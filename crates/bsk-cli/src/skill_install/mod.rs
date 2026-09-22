@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 
 pub use harness::{HarnessId, HarnessReport, all_harness_reports, parse_harness_id};
 
-pub const SKILL_DIR_NAME: &str = "browser-skill";
+pub const SKILL_DIR_NAME: &str = "zenx-bridge";
 pub const DEFAULT_SKILL_MD: &str = include_str!("../../skill/SKILL.md");
 pub const SOURCE_MARKER_FILE: &str = ".bsk-source";
 pub const SOURCE_BUNDLED: &str = "bundled\n";

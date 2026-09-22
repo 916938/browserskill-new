@@ -69,7 +69,7 @@ copy this one line and send it to your agent — it will install the CLI and ski
 for you, then walk you through loading the extension:
 
 ```text
-Set up browser-skill on this machine by following https://raw.githubusercontent.com/916938/zenx-bridge/main/AGENT_INSTALL.md
+Set up ZenX Bridge on this machine by following https://raw.githubusercontent.com/916938/zenx-bridge/main/AGENT_INSTALL.md
 ```
 
 </details>
@@ -109,14 +109,26 @@ bsk --version
 
 #### 2. Install the browser extension
 
-Install ZenX Bridge from your browser's store:
+> ⚠️ **ZenX Bridge is not published in any browser store.** The store listings you
+> may find belong to the upstream project and **do not include the fork-only
+> capabilities** (closing browser instances, `--browser-id` tab management,
+> `tab observe`, profile account id, `--since last_action`). Installing the
+> upstream extension will not work with this build.
 
-| Browser | Store listing |
-| --- | --- |
-| Chrome | [Chrome Web Store](https://chromewebstore.google.com/detail/hhcmgoofomhgciiibhipgmgkgnoenaoi) |
-| Microsoft Edge | [Edge Add-ons](https://microsoftedge.microsoft.com/addons/detail/browserskill/emacgiaaaiojkkpkddmmdfhmokgmnikg) |
+Build and load the extension from this repository:
 
-On other Chromium-based browsers, install the Chrome Web Store build.
+```sh
+git clone https://github.com/916938/zenx-bridge.git
+cd zenx-bridge
+pnpm install --frozen-lockfile
+pnpm ext:build
+```
+
+Then open `edge://extensions` (or `chrome://extensions`), enable **Developer
+mode**, choose **Load unpacked** and select `apps/extension/dist/chrome-mv3`.
+
+Keep that directory path fixed: the extension ID is derived from the load path,
+so moving or renaming it invalidates every connected instance.
 
 #### 3. Install the skill
 
@@ -175,7 +187,7 @@ without `--source`. This second command overwrites the existing instructions.
 
 Other shell-capable agent harnesses are supported too. Copy
 [`skill/SKILL.md`](skill/SKILL.md) into your harness's skills directory as
-`browser-skill/SKILL.md` to install the skill manually. DeepSeek Harness uses a
+`zenx-bridge/SKILL.md` to install the skill manually. DeepSeek Harness uses a
 dedicated plugin instead — see [DeepSeek Harness plugin](#deepseek-harness-plugin).
 
 #### 4. Verify the connection
@@ -186,12 +198,12 @@ Doctor can pass with no skill installed (`N/A`); verify skill discovery separate
 
 </details>
 
-Start a new Agent session, confirm `browser-skill` is available in the harness,
+Start a new Agent session, confirm `zenx-bridge` is available in the harness,
 and ask it to open `https://example.com` and summarize the page. For harnesses
 with slash-command skill invocation, for example:
 
 ```text
-/browser-skill open example.com and summarize what is on the page.
+/zenx-bridge open example.com and summarize what is on the page.
 ```
 
 A successful first-use check reads the page and stops its ZenX Bridge session.
@@ -227,7 +239,7 @@ Managed CLI skills synchronize on daemon startup, `session start`, or `doctor`;
 local edits and custom skills are preserved. Start a new agent session to load
 updated instructions.
 
-**Upgrading to 0.3.0:** `--unattended`, `tab borrow --no-confirm`, and
+**Upgrading to 0.4.0:** `--unattended`, `tab borrow --no-confirm`, and
 `BSK_REQUEST_HELP=off` no longer bypass confirmation or disable help. Choose the
 corresponding extension settings described below. See [what changed](CHANGELOG.md).
 

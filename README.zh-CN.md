@@ -55,7 +55,7 @@ ZenX Bridge 由两个本地运行组件组成：`bsk` CLI/daemon 和浏览器扩
 已经在用 Cursor、Claude Code、Codex 或其他支持 Shell 的 Agent？只需复制下面这句话发给 Agent，它会帮你安装 CLI 和 skill，并引导你加载浏览器扩展：
 
 ```text
-按照 https://raw.githubusercontent.com/916938/zenx-bridge/main/AGENT_INSTALL.md 的说明，在本机安装并配置 browser-skill
+按照 https://raw.githubusercontent.com/916938/zenx-bridge/main/AGENT_INSTALL.md 的说明，在本机安装并配置 ZenX Bridge
 ```
 
 </details>
@@ -65,8 +65,7 @@ ZenX Bridge 由两个本地运行组件组成：`bsk` CLI/daemon 和浏览器扩
 
 <br>
 
-先安装 CLI，再从 [Chrome Web Store](https://chromewebstore.google.com/detail/hhcmgoofomhgciiibhipgmgkgnoenaoi)
-或 [Edge 加载项商店](https://microsoftedge.microsoft.com/addons/detail/browserskill/emacgiaaaiojkkpkddmmdfhmokgmnikg) 安装浏览器扩展。
+先安装 CLI，再从本仓库构建并解压加载浏览器扩展（本 fork 未上架商店，见下文第 2 步）。
 
 #### 1. 安装 `bsk` CLI
 
@@ -94,14 +93,23 @@ bsk --version
 
 #### 2. 安装浏览器扩展
 
-在对应浏览器的商店安装 ZenX Bridge：
+> ⚠️ **ZenX Bridge 没有上架任何浏览器商店。** 你能搜到的商店页面属于上游项目，
+> **不包含本 fork 的专属能力**（关闭浏览器实例、`--browser-id` tab 管理、
+> `tab observe`、profile account id、`--since last_action`）。装上游扩展无法配合本构建使用。
 
-| 浏览器 | 商店页面 |
-| --- | --- |
-| Chrome | [Chrome Web Store](https://chromewebstore.google.com/detail/hhcmgoofomhgciiibhipgmgkgnoenaoi) |
-| Microsoft Edge | [Edge 加载项商店](https://microsoftedge.microsoft.com/addons/detail/browserskill/emacgiaaaiojkkpkddmmdfhmokgmnikg) |
+请从本仓库构建并解压加载：
 
-其他基于 Chromium 的浏览器，安装 Chrome Web Store 版本即可。
+```sh
+git clone https://github.com/916938/zenx-bridge.git
+cd zenx-bridge
+pnpm install --frozen-lockfile
+pnpm ext:build
+```
+
+然后打开 `edge://extensions`（或 `chrome://extensions`），开启**开发人员模式**，
+选择**加载已解压的扩展程序**，指向 `apps/extension/dist/chrome-mv3`。
+
+该目录路径请保持固定：扩展 ID 由加载路径决定，移动或改名会让所有已连接实例失效。
 
 #### 3. 安装 skill
 
@@ -150,7 +158,7 @@ daemon 启动、`session start` 和 `doctor` 会检查已安装的 skill：只�
 `<existing-SKILL.md>` 替换为现有文件路径。如需恢复内置 skill 并重新启用自动更新，运行
 `bsk install-skill --harness cursor --force`，不带 `--source`。后一条命令会覆盖现有指令。
 
-其他支持 Shell 的 Agent harness 也可使用 ZenX Bridge，但需手动将 [`skill/SKILL.md`](skill/SKILL.md) 复制到对应 skills 目录下的 `browser-skill/SKILL.md`。DeepSeek Harness 走独立插件，见 [DeepSeek Harness 插件](#deepseek-harness-插件)。
+其他支持 Shell 的 Agent harness 也可使用 ZenX Bridge，但需手动将 [`skill/SKILL.md`](skill/SKILL.md) 复制到对应 skills 目录下的 `zenx-bridge/SKILL.md`。DeepSeek Harness 走独立插件，见 [DeepSeek Harness 插件](#deepseek-harness-插件)。
 
 #### 4. 验证连接
 
@@ -159,11 +167,11 @@ daemon 启动、`session start` 和 `doctor` 会检查已安装的 skill：只�
 
 </details>
 
-启动一个新的 Agent 会话，确认 harness 中可用 `browser-skill`，再让它打开
+启动一个新的 Agent 会话，确认 harness 中可用 `zenx-bridge`，再让它打开
 `https://example.com` 并总结页面。对于支持斜杠命令调用 skill 的 harness，例如：
 
 ```text
-/browser-skill open example.com and summarize what is on the page.
+/zenx-bridge open example.com and summarize what is on the page.
 ```
 
 首次使用验证应成功读取页面，并停止本次 ZenX Bridge session。

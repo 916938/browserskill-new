@@ -102,7 +102,7 @@ pub struct GlobalFlags {
 #[command(
     name = "bsk",
     version,
-    about = "browser-skill — drive your browser from AI agents"
+    about = "ZenX Bridge — drive your browser from AI agents"
 )]
 pub struct Cli {
     #[command(flatten)]
@@ -124,7 +124,7 @@ pub enum Command {
     /// Run diagnostics + repair hints.
     Doctor,
 
-    /// Install the browser-skill agent skill into local agent harnesses.
+    /// Install the ZenX Bridge agent skill into local agent harnesses.
     #[command(name = "install-skill")]
     InstallSkill(InstallSkillArgs),
 

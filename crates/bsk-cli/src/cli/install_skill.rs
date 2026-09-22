@@ -1,4 +1,4 @@
-//! `bsk install-skill` — install browser-skill SKILL.md into agent harnesses.
+//! `bsk install-skill` — install the ZenX Bridge SKILL.md into agent harnesses.
 
 use std::io::{self, IsTerminal};
 use std::path::PathBuf;
@@ -38,7 +38,7 @@ pub struct InstallSkillArgs {
     #[arg(long, value_name = "PATH")]
     pub source: Option<PathBuf>,
 
-    /// Overwrite an existing `browser-skill` skill installation.
+    /// Overwrite an existing `zenx-bridge` skill installation.
     #[arg(long)]
     pub force: bool,
 }

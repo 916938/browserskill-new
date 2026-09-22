@@ -1,5 +1,5 @@
 ---
-name: browser-skill
+name: zenx-bridge
 description: |
   Use when the user asks to automate their logged-in Chromium browser: visit
   and read pages, fill forms, scrape data, click through flows, regression-test
@@ -8,7 +8,7 @@ description: |
   CLI and browser extension.
 ---
 
-# browser-skill
+# ZenX Bridge
 
 Use `bsk` to work in an **Agent Window** with the user's existing logins. User tabs
 require explicit borrowing. This skill does not install the extension or handle

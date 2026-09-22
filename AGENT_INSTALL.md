@@ -119,7 +119,7 @@ machine. For a managed remote server, use its `BSK_HOME` and `BSK_AUTO_START=0`.
 
 ## 5. Verify skill discovery and first use
 
-Confirm that the intended harness lists or can invoke `browser-skill`. If it needs
+Confirm that the intended harness lists or can invoke `zenx-bridge`. If it needs
 a new agent session or profile restart to discover the skill, tell the user how
 to do that and report verification as pending until it has been loaded there.
 
