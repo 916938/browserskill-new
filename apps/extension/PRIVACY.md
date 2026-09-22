@@ -1,20 +1,20 @@
-# BrowserSkill — Privacy Policy
+# ZenX Bridge — Privacy Policy
 
 **Last updated:** September 15, 2026
 
-This Privacy Policy describes how the **BrowserSkill** browser extension (the "Extension") handles information when you install and use it. BrowserSkill is published as part of the open-source [BrowserSkill](https://github.com/916938/browserskill-new) project. The source code is publicly auditable. This project is derived from [Tencent/BrowserSkill](https://github.com/Tencent/BrowserSkill) under the MIT License.
+This Privacy Policy describes how the **ZenX Bridge** browser extension (the "Extension") handles information when you install and use it. ZenX Bridge is published as part of the open-source [ZenX Bridge](https://github.com/916938/browserskill-new) project. The source code is publicly auditable. This project is derived from [Tencent/BrowserSkill](https://github.com/Tencent/BrowserSkill) under the MIT License.
 
 If you have questions about this policy, please open an issue in the project repository.
 
 ---
 
-## 1. What BrowserSkill Does
+## 1. What ZenX Bridge Does
 
-BrowserSkill lets a user-directed AI agent drive a Chromium browser through the `bsk` command-line tool. By default the Extension connects to a daemon on the same computer. Users can instead explicitly pair with a server running `bsk` or a compatible third-party gateway. In that mode, automation data is sent to the selected server. The Extension does not independently call an AI provider.
+ZenX Bridge lets a user-directed AI agent drive a Chromium browser through the `bsk` command-line tool. By default the Extension connects to a daemon on the same computer. Users can instead explicitly pair with a server running `bsk` or a compatible third-party gateway. In that mode, automation data is sent to the selected server. The Extension does not independently call an AI provider.
 
 ## 2. Single Purpose
 
-The Extension exposes browser automation primitives to the user's selected BrowserSkill daemon or compatible gateway so an AI agent can interact with web pages on the user's behalf. Local connections use loopback WebSocket; remote connections use authenticated WSS. Remote upload and download are unsupported in this version.
+The Extension exposes browser automation primitives to the user's selected ZenX Bridge daemon or compatible gateway so an AI agent can interact with web pages on the user's behalf. Local connections use loopback WebSocket; remote connections use authenticated WSS. Remote upload and download are unsupported in this version.
 
 ## 3. Data the Extension Accesses
 
@@ -31,9 +31,9 @@ Depending on the commands the user (via their AI agent) sends to the selected da
 
 ## 4. Data Collection Boundaries
 
-- The Extension sends automation results only to the daemon or gateway the user selects. BrowserSkill's authors do not receive telemetry or operate a mandatory hosted service.
+- The Extension sends automation results only to the daemon or gateway the user selects. ZenX Bridge's authors do not receive telemetry or operate a mandatory hosted service.
 - The Extension does not independently call LLM, AI or cloud APIs and contains no AI provider API keys.
-- BrowserSkill does not enumerate browser history, bookmarks, saved passwords or autofill databases. Its download handling observes the download initiated by an active local `bsk download` call.
+- ZenX Bridge does not enumerate browser history, bookmarks, saved passwords or autofill databases. Its download handling observes the download initiated by an active local `bsk download` call.
 - Automation uses the existing browser profile. Controlled pages may expose personal data and signed-in website sessions; pairing with a server allows its Agent to operate those pages.
 - The Extension includes no analytics, advertising, fingerprinting or cross-site tracking system and does not sell user data.
 
@@ -41,7 +41,7 @@ Depending on the commands the user (via their AI agent) sends to the selected da
 
 The Extension requests the following Chrome permissions. Each is used solely for the single purpose described above.
 
-- **`debugger`** — Attach the Chrome DevTools Protocol to tabs selected for automation or user-initiated capture, so BrowserSkill can observe, interact with, and capture those pages.
+- **`debugger`** — Attach the Chrome DevTools Protocol to tabs selected for automation or user-initiated capture, so ZenX Bridge can observe, interact with, and capture those pages.
 - **`activeTab`** — Allow temporary access to the active tab when the user invokes the Extension, for user-initiated Quick Actions.
 - **`scripting`** — Inject the full-page screenshot helper into the selected page when it is missing, such as after an extension reload.
 - **`webNavigation`** — Track page navigation and frames so captures, recordings, and human-help completion checks follow the correct document.
@@ -50,7 +50,7 @@ The Extension requests the following Chrome permissions. Each is used solely for
 - **`alarms`** — Periodically wake the service worker to keep the selected connection alive and renew remote device authorization.
 - **`idle`** — Detect when the device returns from idle/locked so the Extension can promptly re-establish the selected WebSocket connection after the machine wakes. No idle data is stored or transmitted.
 - **`notifications`** — Show a system notification to obtain user approval before borrowing a user-owned tab when browser confirmation is enabled.
-- **`downloads`** — Correlate and route the one browser download initiated by an active `bsk download` command. If that claimed transaction fails, BrowserSkill cancels an in-progress file or removes its completed temporary browser file. It is not used to enumerate download history or alter unclaimed downloads.
+- **`downloads`** — Correlate and route the one browser download initiated by an active `bsk download` command. If that claimed transaction fails, ZenX Bridge cancels an in-progress file or removes its completed temporary browser file. It is not used to enumerate download history or alter unclaimed downloads.
 - **`storage`** — Persist a random instance ID, optional label, and feature preferences in `chrome.storage.local`. Remote credentials are kept separately in extension-origin IndexedDB.
 - **`identity`** — Opt-in only, and off by default. When the user turns on "Share profile account id" in the popup, the Extension calls `chrome.identity.getProfileUserInfo()` once per connection and sends **only the obfuscated account id** to the local daemon so two browser profiles can be told apart in `bsk browsers`. The email address is never read, stored, or transmitted, and nothing leaves the device. Leaving the setting off means this API is never called.
 - **Host permission `<all_urls>`** — Inject a small status overlay (showing "Agent Active") on pages controlled by the agent, and enable automation across whatever sites the user directs the agent to. The Extension does **not** read or transmit page content from sites the agent is not actively driving. Remote connections also use this permission for the selected endpoint. Remote page-content access requires a task-created or explicitly borrowed tab.
@@ -59,7 +59,7 @@ The Extension requests the following Chrome permissions. Each is used solely for
 
 Local mode connects to the loopback daemon (default port **52800**). Remote mode sends pairing and renewal requests over HTTPS and automation traffic over authenticated WSS to the endpoint the user explicitly selects. Plain HTTP/WS is allowed only on loopback for development. Pairing secrets are removed from the URL before network requests.
 
-The selected server receives task results, including requested page content, screenshots, recording traces and tab metadata. Agents and gateway operators may retain or forward those results under their own policies. In remote mode, enabled operation audit is stored on the daemon's server, not on the browser computer. BrowserSkill does not operate a required intermediary service.
+The selected server receives task results, including requested page content, screenshots, recording traces and tab metadata. Agents and gateway operators may retain or forward those results under their own policies. In remote mode, enabled operation audit is stored on the daemon's server, not on the browser computer. ZenX Bridge does not operate a required intermediary service.
 
 ## 7. Data Retention
 
@@ -94,7 +94,7 @@ Remote page reads and operations require task-owned tabs; merely moving a user t
 
 ## 11. Open Source and Auditability
 
-BrowserSkill is open source. Anyone can verify the claims in this policy by reading the source code in the project repository. The Extension contains no obfuscated or minified code paths that hide network calls.
+ZenX Bridge is open source. Anyone can verify the claims in this policy by reading the source code in the project repository. The Extension contains no obfuscated or minified code paths that hide network calls.
 
 ## 12. Changes to This Policy
 
@@ -102,4 +102,4 @@ If this policy changes materially, the **Last updated** date above will change a
 
 ## 13. Contact
 
-For privacy-related questions or requests, please open an issue in the BrowserSkill project repository.
+For privacy-related questions or requests, please open an issue in the ZenX Bridge project repository.

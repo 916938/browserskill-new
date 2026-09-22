@@ -1,6 +1,6 @@
 # bsk
 
-Command-line interface and background daemon for [BrowserSkill](https://github.com/916938/browserskill-new).
+Command-line interface and background daemon for [ZenX Bridge](https://github.com/916938/browserskill-new).
 
 > Derived from [Tencent/BrowserSkill](https://github.com/Tencent/BrowserSkill) under the MIT License.
 

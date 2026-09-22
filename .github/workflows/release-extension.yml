@@ -212,7 +212,7 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.resolve.outputs.tag }}
-          name: BrowserSkill Extension ${{ needs.resolve.outputs.version }}
+          name: ZenX Bridge Extension ${{ needs.resolve.outputs.version }}
           make_latest: false
           prerelease: ${{ needs.resolve.outputs.is_prerelease == 'true' }}
           generate_release_notes: true
@@ -577,7 +577,7 @@ jobs:
             --header "Authorization: ApiKey $API_KEY" \
             --header "X-ClientID: $CLIENT_ID" \
             --header "Content-Type: application/json" \
-            --data "{\"notes\":\"Automated BrowserSkill extension v${RELEASE_VERSION} release from GitHub Actions.\"}" \
+            --data "{\"notes\":\"Automated ZenX Bridge extension v${RELEASE_VERSION} release from GitHub Actions.\"}" \
             "$API_ROOT/products/$PRODUCT_ID/submissions")"
           if [ "$HTTP_STATUS" != "202" ]; then
             echo "::error::Microsoft Edge Add-ons publish failed with HTTP $HTTP_STATUS"

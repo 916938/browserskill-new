@@ -152,7 +152,7 @@ export function AuditApp() {
   const [tick, setTick] = useState(0);
 
   useEffect(() => {
-    document.title = `${t("audit.title")} · BrowserSkill`;
+    document.title = `${t("audit.title")} · ZenX Bridge`;
     const media = window.matchMedia("(prefers-color-scheme: dark)");
     const update = () => document.documentElement.classList.toggle("dark", media.matches);
     update();
@@ -283,7 +283,7 @@ export function AuditApp() {
           <RiHistoryLine className="size-5" aria-hidden />
         </div>
         <div>
-          <p className="text-xs font-medium text-muted-foreground">BrowserSkill</p>
+          <p className="text-xs font-medium text-muted-foreground">ZenX Bridge</p>
           <h1 className="text-xl font-semibold">{t("audit.title")}</h1>
         </div>
         {id && (

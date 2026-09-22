@@ -1,7 +1,7 @@
-# BrowserSkill
+# ZenX Bridge
 
 <p align="center">
-  <img src="docs/assets/browserskill-readme-banner.png" alt="BrowserSkill banner" />
+  <img src="docs/assets/browserskill-readme-banner.png" alt="ZenX Bridge banner" />
 </p>
 
 <p align="center">
@@ -12,7 +12,7 @@
   English · <a href="README.zh-CN.md">中文</a>
 </p>
 
-**BrowserSkill** connects Cursor, Claude Code, Codex, OpenClaw, CodeBuddy,
+**ZenX Bridge** connects Cursor, Claude Code, Codex, OpenClaw, CodeBuddy,
 WorkBuddy, Pi, Hermes Agent, DeepSeek Harness, and other AI agents to your already logged-in
 browser.
 
@@ -22,13 +22,13 @@ alone.
 
 https://github.com/user-attachments/assets/db782c92-b1d4-4aae-a255-039675937a90
 
-## BrowserSkill Advantages
+## ZenX Bridge Advantages
 
 - **Reuse real login state**: Agents can work with sites you are already signed
   into, without separate test accounts.
 - **Keep working uninterrupted**: browser tasks run in a separate, visible
   Agent Window, so you can keep using your own browser.
-- **Support any Agent**: any Agent that can call a shell can use BrowserSkill
+- **Support any Agent**: any Agent that can call a shell can use ZenX Bridge
   through the `bsk` CLI, with no lock-in to a specific model, Agent framework, or
   harness.
 - **Multi-browser support**: when you have more than one browser connected
@@ -44,7 +44,7 @@ Capture a long image in **Quick actions → Full-page screenshot**, or let an Ag
 
 ## Runtime Environment
 
-BrowserSkill has two local runtime pieces: the `bsk` CLI/daemon and the browser
+ZenX Bridge has two local runtime pieces: the `bsk` CLI/daemon and the browser
 extension.
 
 | Runtime | Support |
@@ -109,7 +109,7 @@ bsk --version
 
 #### 2. Install the browser extension
 
-Install BrowserSkill from your browser's store:
+Install ZenX Bridge from your browser's store:
 
 | Browser | Store listing |
 | --- | --- |
@@ -120,7 +120,7 @@ On other Chromium-based browsers, install the Chrome Web Store build.
 
 #### 3. Install the skill
 
-BrowserSkill ships a skill that teaches your agent harness how to use `bsk`. For
+ZenX Bridge ships a skill that teaches your agent harness how to use `bsk`. For
 these harnesses, install it in one step:
 
 <p align="center">
@@ -194,7 +194,7 @@ with slash-command skill invocation, for example:
 /browser-skill open example.com and summarize what is on the page.
 ```
 
-A successful first-use check reads the page and stops its BrowserSkill session.
+A successful first-use check reads the page and stops its ZenX Bridge session.
 If the skill is missing, check the target harness and install path before retrying.
 
 ### Updating
@@ -290,7 +290,7 @@ Run an Agent on a server and pair it with your local browser using the built-in 
 ## DeepSeek Harness plugin
 
 Using [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`dsh`)?
-BrowserSkill ships a first-class dsh plugin on npm as
+ZenX Bridge ships a first-class dsh plugin on npm as
 [`@wxg-prc-cpg/browser-skill-dsh-plugin`](https://www.npmjs.com/package/@wxg-prc-cpg/browser-skill-dsh-plugin).
 It gives the agent native `browser_*` tools and a live view of its browser sessions
 in the Web UI. The plugin runs `bsk` on the agent's behalf.
@@ -315,7 +315,7 @@ Restart the profile after upgrading. See the
 
 ## How It Works
 
-BrowserSkill is a local bridge between your agent harness and your browser.
+ZenX Bridge is a local bridge between your agent harness and your browser.
 
 ```mermaid
 flowchart TB
@@ -326,7 +326,7 @@ flowchart TB
   subgraph Local["Your Machine"]
     CLI["bsk CLI"]
     Daemon["bsk daemon"]
-    Extension["BrowserSkill extension"]
+    Extension["ZenX Bridge extension"]
   end
 
   subgraph Browser["Browser Profile"]
@@ -352,7 +352,7 @@ through the [plugin](#deepseek-harness-plugin): the agent calls injected
 
 ## Multiple Browsers
 
-When more than one Chromium browser with the BrowserSkill extension is running,
+When more than one Chromium browser with the ZenX Bridge extension is running,
 the agent can target a specific one:
 
 ```bash
@@ -397,7 +397,7 @@ Then in Chrome:
 1. Open `chrome://extensions`
 2. Enable **Developer mode**
 3. Click **Load unpacked** and select the `apps/extension/dist/chrome-mv3` directory
-4. The BrowserSkill popup should turn green once connected to the daemon
+4. The ZenX Bridge popup should turn green once connected to the daemon
 
 For development with hot reload:
 

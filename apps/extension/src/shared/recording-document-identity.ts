@@ -11,7 +11,7 @@ export function recordingDocumentMarkerValue(identity: string): string {
   return `${RECORDING_DOCUMENT_MARKER_PREFIX}${identity}`;
 }
 
-/** Read BrowserSkill's opaque per-Document recording identity from captured attributes. */
+/** Read ZenX Bridge's opaque per-Document recording identity from captured attributes. */
 export function readRecordingDocumentIdentity(
   attrs: Readonly<Record<string, string>>,
 ): string | undefined {

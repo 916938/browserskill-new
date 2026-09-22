@@ -58,7 +58,7 @@ impl ValidatedBrowserFile {
                 "download path is outside its browser capability",
             ));
         }
-        let expected_parent = Path::new("BrowserSkill").join(transfer_id);
+        let expected_parent = Path::new("ZenX Bridge").join(transfer_id);
         let parent = reported_path
             .parent()
             .ok_or_else(|| permission("download path has no parent directory"))?;
@@ -310,7 +310,7 @@ impl TransferRegistry {
             },
         );
         Ok(DownloadStaging {
-            browser_relative_dir: format!("BrowserSkill/{id}"),
+            browser_relative_dir: format!("ZenX Bridge/{id}"),
             transfer_id: id,
         })
     }
@@ -636,7 +636,7 @@ mod tests {
         let browser_dir = temp
             .path()
             .join("Downloads")
-            .join("BrowserSkill")
+            .join("ZenX Bridge")
             .join(&staging.transfer_id);
         fs::create_dir_all(&browser_dir).unwrap();
         let inside = browser_dir.join("result.bin");
@@ -670,7 +670,7 @@ mod tests {
         let browser_dir = temp
             .path()
             .join("Downloads")
-            .join("BrowserSkill")
+            .join("ZenX Bridge")
             .join(&staging.transfer_id);
         fs::create_dir_all(&browser_dir).unwrap();
         let inside = browser_dir.join("oversized.bin");

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://browser-skill.local/schemas/browser-eval-case.schema.json",
-  "title": "BrowserSkill browser evaluation case",
+  "title": "ZenX Bridge browser evaluation case",
   "type": "object",
   "required": [
     "schemaVersion",

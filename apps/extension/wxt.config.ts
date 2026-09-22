@@ -22,7 +22,7 @@ export default defineConfig({
   outDir: "dist",
   modules: ["@wxt-dev/module-react"],
   manifest: {
-    name: "BrowserSkill",
+    name: "ZenX Bridge",
     description:
       "Let AI agents use your logged-in browser in a separate Agent Window—without interrupting your work. Powered by the bsk CLI.",
     // Flat debugger sessions are required to address out-of-process iframes.
@@ -50,7 +50,7 @@ export default defineConfig({
       128: "icon/logo.png",
     },
     action: {
-      default_title: "BrowserSkill",
+      default_title: "ZenX Bridge",
       default_icon: {
         16: "icon/logo.png",
         32: "icon/logo.png",

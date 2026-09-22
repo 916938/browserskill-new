@@ -1071,7 +1071,7 @@ export async function handleRecordStart(
     return {
       code: "protocol_error",
       message:
-        "failed to start recording in content script — reload the BrowserSkill extension, then retry",
+        "failed to start recording in content script — reload the ZenX Bridge extension, then retry",
     };
   }
 

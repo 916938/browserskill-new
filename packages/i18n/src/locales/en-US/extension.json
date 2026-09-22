@@ -1,7 +1,7 @@
 {
   "popup": {
     "brandCategory": "Browser Automation",
-    "brandName": "BrowserSkill",
+    "brandName": "ZenX Bridge",
     "stateLabel": {
       "disconnected": "Disconnected",
       "connecting": "Connecting…",
@@ -10,8 +10,8 @@
       "disabled": "Connection off"
     },
     "stateDetail": {
-      "disconnected": "Open BrowserSkill to connect.",
-      "connecting": "Connecting to BrowserSkill…",
+      "disconnected": "Open ZenX Bridge to connect.",
+      "connecting": "Connecting to ZenX Bridge…",
       "connected": "Ready for automation tasks.",
       "version_skew": "Protocol versions differ. Please upgrade."
     },
@@ -22,7 +22,7 @@
       "version_skew": "Upgradable",
       "disabled": "Off"
     },
-    "connectionToggleTitle": "BrowserSkill connection",
+    "connectionToggleTitle": "ZenX Bridge connection",
     "controlHintsToggleTitle": "Control hints",
     "controlHintsToggleHint": "Show the status pill and orange glow while the Agent controls a page.",
     "controlHintsInfoLabel": "About control hints",
@@ -77,7 +77,7 @@
       "copyButton": "Copy recording instructions",
       "copied": "Copied",
       "hintDisconnected": "Available when connected",
-      "promptTemplate": "Use BrowserSkill's `bsk` CLI to record the browser actions I'm about to demonstrate.\n\nSteps:\n1. Run: {{command}}\n2. Once you confirm it's started, I'll operate in the opened window myself.\n3. After I click Finish, read the written `./trace` bundle (`trace.json` + `states/`) and summarize what I did."
+      "promptTemplate": "Use ZenX Bridge's `bsk` CLI to record the browser actions I'm about to demonstrate.\n\nSteps:\n1. Run: {{command}}\n2. Once you confirm it's started, I'll operate in the opened window myself.\n3. After I click Finish, read the written `./trace` bundle (`trace.json` + `states/`) and summarize what I did."
     },
     "templates": {
       "sectionTitle": "Profile Templates",
@@ -131,13 +131,13 @@
     "remoteError": "Pairing did not complete. Check the server connection or try a new pairing link.",
     "remoteNeedsAttention": "Needs attention",
     "remoteUnknown": "Connection settings unavailable",
-    "remoteStorageError": "Could not read connection settings. BrowserSkill will retry. You can explicitly select the local daemon to recover.",
+    "remoteStorageError": "Could not read connection settings. ZenX Bridge will retry. You can explicitly select the local daemon to recover.",
     "remoteExpires": "Authorization expires: {{date}}",
     "remoteRenewing": "Renewing browser authorization…",
-    "remoteRenewalFailed": "Renewal could not reach the service or complete successfully. BrowserSkill will retry; the current authorization remains usable until it expires.",
+    "remoteRenewalFailed": "Renewal could not reach the service or complete successfully. ZenX Bridge will retry; the current authorization remains usable until it expires.",
     "remoteRejected": "The server rejected authorization. Check the server or use a new pairing link.",
     "remoteExpired": "Authorization has expired. Use a new pairing link to reconnect.",
-    "remoteUnconfirmed": "The last confirmed authorization has expired, but a renewal may have succeeded. BrowserSkill is retrying the pending renewal; check the server if this continues.",
+    "remoteUnconfirmed": "The last confirmed authorization has expired, but a renewal may have succeeded. ZenX Bridge is retrying the pending renewal; check the server if this continues.",
     "connectionSettings": "Connection settings",
     "connectionMode": "Connection mode",
     "connectionLocal": "Local",
@@ -173,7 +173,7 @@
     "autoDeny": "Request expires in {{count}}s",
     "deny": "Deny",
     "allow": "Allow",
-    "notificationTitle": "BrowserSkill: Agent wants to borrow a tab",
+    "notificationTitle": "ZenX Bridge: Agent wants to borrow a tab",
     "notificationBody": "Approve or deny the borrow of \"{{tabTitle}}\" in your browser."
   },
   "helpRequest": {
@@ -186,7 +186,7 @@
     "collapse": "Collapse",
     "expand": "Expand",
     "dragHandle": "Drag to move",
-    "notificationTitle": "BrowserSkill: Agent needs your help"
+    "notificationTitle": "ZenX Bridge: Agent needs your help"
   },
   "recordOverlay": {
     "recording": "Recording your actions",
@@ -268,8 +268,8 @@
     "partialLabel": "Partial history",
     "partialDescription": "Recording started at {{time}}. Paused intervals were not recorded; see the timeline below.",
     "inputRedacted": "Input content hidden",
-    "empty": "No tasks recorded yet. Future BrowserSkill operations will appear here.",
-    "disconnected": "The local service is disconnected. Start the BrowserSkill service and retry. Existing history remains on your computer.",
+    "empty": "No tasks recorded yet. Future ZenX Bridge operations will appear here.",
+    "disconnected": "The local service is disconnected. Start the ZenX Bridge service and retry. Existing history remains on your computer.",
     "unsupported": "This local service does not support operation auditing. Update bsk and retry.",
     "requestFailed": "Could not read or save audit history. Check local storage and task availability, or retry after the task ends.",
     "privacyShort": "Saved locally for 30 days. Input content is hidden.",

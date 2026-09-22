@@ -1,7 +1,7 @@
 {
   "popup": {
     "brandCategory": "Browser Automation",
-    "brandName": "BrowserSkill",
+    "brandName": "ZenX Bridge",
     "stateLabel": {
       "disconnected": "未连接",
       "connecting": "连接中…",
@@ -10,8 +10,8 @@
       "disabled": "连接已关闭"
     },
     "stateDetail": {
-      "disconnected": "请先打开 BrowserSkill。",
-      "connecting": "正在连接 BrowserSkill…",
+      "disconnected": "请先打开 ZenX Bridge。",
+      "connecting": "正在连接 ZenX Bridge…",
       "connected": "可接收自动化任务。",
       "version_skew": "协议版本不同，请及时升级。"
     },
@@ -22,7 +22,7 @@
       "version_skew": "可升级",
       "disabled": "Off"
     },
-    "connectionToggleTitle": "BrowserSkill 连接",
+    "connectionToggleTitle": "ZenX Bridge 连接",
     "controlHintsToggleTitle": "控制提示",
     "controlHintsToggleHint": "Agent 控制页面时显示提示条和橙色闪光。",
     "controlHintsInfoLabel": "控制提示说明",
@@ -77,7 +77,7 @@
       "copyButton": "复制录制指令",
       "copied": "已复制",
       "hintDisconnected": "连接后可用",
-      "promptTemplate": "用 BrowserSkill 的 `bsk` CLI 录制我接下来的浏览器操作。\n\n步骤：\n1. 执行：{{command}}\n2. 你确认已开始后，我会在打开的窗口里自己操作。\n3. 我点“结束”后，读取写出的 `./trace` 目录包（`trace.json` + `states/`），总结我做了什么。"
+      "promptTemplate": "用 ZenX Bridge 的 `bsk` CLI 录制我接下来的浏览器操作。\n\n步骤：\n1. 执行：{{command}}\n2. 你确认已开始后，我会在打开的窗口里自己操作。\n3. 我点“结束”后，读取写出的 `./trace` 目录包（`trace.json` + `states/`），总结我做了什么。"
     },
     "templates": {
       "sectionTitle": "配置模板",
@@ -173,7 +173,7 @@
     "autoDeny": "{{count}} 秒后自动拒绝",
     "deny": "拒绝",
     "allow": "允许",
-    "notificationTitle": "BrowserSkill：Agent 请求借用标签页",
+    "notificationTitle": "ZenX Bridge：Agent 请求借用标签页",
     "notificationBody": "请在浏览器中允许或拒绝对「{{tabTitle}}」的借用。"
   },
   "helpRequest": {
@@ -186,7 +186,7 @@
     "collapse": "折叠",
     "expand": "展开",
     "dragHandle": "拖动以移动",
-    "notificationTitle": "BrowserSkill：Agent 需要你的帮助"
+    "notificationTitle": "ZenX Bridge：Agent 需要你的帮助"
   },
   "recordOverlay": {
     "recording": "正在录制你的操作",
@@ -268,8 +268,8 @@
     "partialLabel": "部分记录",
     "partialDescription": "本次审计从 {{time}} 开始。中途暂停的时间段未记录，具体位置见下方时间线。",
     "inputRedacted": "输入内容已隐藏",
-    "empty": "还没有任务记录。后续通过 BrowserSkill 执行的操作会显示在这里。",
-    "disconnected": "本地服务未连接。启动 BrowserSkill 本地服务后重试，已有记录仍保存在电脑上。",
+    "empty": "还没有任务记录。后续通过 ZenX Bridge 执行的操作会显示在这里。",
+    "disconnected": "本地服务未连接。启动 ZenX Bridge 本地服务后重试，已有记录仍保存在电脑上。",
     "unsupported": "当前本地服务尚不支持操作审计，请更新 bsk 后重试。",
     "requestFailed": "无法读取或保存审计记录。请检查本地存储，确认任务仍存在且未在执行后重试。",
     "privacyShort": "仅保存在本机，默认保留 30 天。输入内容已隐藏。",

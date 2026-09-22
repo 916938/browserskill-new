@@ -1,7 +1,7 @@
-# BrowserSkill
+# ZenX Bridge
 
 <p align="center">
-  <img src="docs/assets/browserskill-readme-banner.png" alt="BrowserSkill 横幅" />
+  <img src="docs/assets/browserskill-readme-banner.png" alt="ZenX Bridge 横幅" />
 </p>
 
 <p align="center">
@@ -12,17 +12,17 @@
   <a href="README.md">English</a> · 中文
 </p>
 
-**BrowserSkill** 把 Cursor、Claude Code、Codex、OpenClaw、CodeBuddy、WorkBuddy、Pi、Hermes Agent、DeepSeek Harness 等支持 Shell 的 AI Agent 连接到你已登录的浏览器。
+**ZenX Bridge** 把 Cursor、Claude Code、Codex、OpenClaw、CodeBuddy、WorkBuddy、Pi、Hermes Agent、DeepSeek Harness 等支持 Shell 的 AI Agent 连接到你已登录的浏览器。
 
 需要 Agent 操作你已打开的标签页？必须显式借用该标签，任务结束后归还，其余浏览器窗口不受影响。
 
 https://github.com/user-attachments/assets/db782c92-b1d4-4aae-a255-039675937a90
 
-## BrowserSkill 的优势
+## ZenX Bridge 的优势
 
 - **复用真实登录态**：Agent 可以操作你已经登录的网站，不需要额外测试账号。
 - **不中断你的工作**：浏览器任务在独立可见的 Agent Window 中运行，不影响你继续使用自己的浏览器。
-- **支持任意 Agent**：只要 Agent 能调用 Shell，就可以通过 `bsk` CLI 使用 BrowserSkill，不绑定特定模型、Agent 框架或 harness。
+- **支持任意 Agent**：只要 Agent 能调用 Shell，就可以通过 `bsk` CLI 使用 ZenX Bridge，不绑定特定模型、Agent 框架或 harness。
 - **多浏览器支持**：当连接了多个浏览器（如 Chrome + Edge）时，Agent 可以列举所有实例并指定目标——每个浏览器独立运行 Agent Window 和会话。
 - **内置 human-in-loop**：遇到 captcha、登录、确认弹窗等必须由人处理的步骤时，Agent 可以主动请求你接管，完成后再继续任务。
 
@@ -33,7 +33,7 @@ https://github.com/user-attachments/assets/db782c92-b1d4-4aae-a255-039675937a90
 
 ## 运行环境
 
-BrowserSkill 由两个本地运行组件组成：`bsk` CLI/daemon 和浏览器扩展。
+ZenX Bridge 由两个本地运行组件组成：`bsk` CLI/daemon 和浏览器扩展。
 
 | 运行项 | 支持情况 |
 | --- | --- |
@@ -94,7 +94,7 @@ bsk --version
 
 #### 2. 安装浏览器扩展
 
-在对应浏览器的商店安装 BrowserSkill：
+在对应浏览器的商店安装 ZenX Bridge：
 
 | 浏览器 | 商店页面 |
 | --- | --- |
@@ -105,7 +105,7 @@ bsk --version
 
 #### 3. 安装 skill
 
-BrowserSkill 自带 skill，用于教 Agent harness 如何使用 `bsk`。以下 harness 可一键安装：
+ZenX Bridge 自带 skill，用于教 Agent harness 如何使用 `bsk`。以下 harness 可一键安装：
 
 <p align="center">
 <table>
@@ -150,7 +150,7 @@ daemon 启动、`session start` 和 `doctor` 会检查已安装的 skill：只�
 `<existing-SKILL.md>` 替换为现有文件路径。如需恢复内置 skill 并重新启用自动更新，运行
 `bsk install-skill --harness cursor --force`，不带 `--source`。后一条命令会覆盖现有指令。
 
-其他支持 Shell 的 Agent harness 也可使用 BrowserSkill，但需手动将 [`skill/SKILL.md`](skill/SKILL.md) 复制到对应 skills 目录下的 `browser-skill/SKILL.md`。DeepSeek Harness 走独立插件，见 [DeepSeek Harness 插件](#deepseek-harness-插件)。
+其他支持 Shell 的 Agent harness 也可使用 ZenX Bridge，但需手动将 [`skill/SKILL.md`](skill/SKILL.md) 复制到对应 skills 目录下的 `browser-skill/SKILL.md`。DeepSeek Harness 走独立插件，见 [DeepSeek Harness 插件](#deepseek-harness-插件)。
 
 #### 4. 验证连接
 
@@ -166,7 +166,7 @@ daemon 启动、`session start` 和 `doctor` 会检查已安装的 skill：只�
 /browser-skill open example.com and summarize what is on the page.
 ```
 
-首次使用验证应成功读取页面，并停止本次 BrowserSkill session。
+首次使用验证应成功读取页面，并停止本次 ZenX Bridge session。
 如果找不到 skill，先检查目标 harness 和安装路径，再重试。
 
 ### 升级
@@ -243,7 +243,7 @@ Daemon 也会为自身继承的旧环境设置记录说明。原先只依靠这�
 
 ## DeepSeek Harness 插件
 
-在用 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（`dsh`）？BrowserSkill 提供了官方 dsh 插件，已发布到 npm：[`@wxg-prc-cpg/browser-skill-dsh-plugin`](https://www.npmjs.com/package/@wxg-prc-cpg/browser-skill-dsh-plugin)。它为 Agent 提供原生 `browser_*` 工具，由插件代为调用 `bsk`，并在 Web UI 中实时展示浏览器会话。
+在用 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（`dsh`）？ZenX Bridge 提供了官方 dsh 插件，已发布到 npm：[`@wxg-prc-cpg/browser-skill-dsh-plugin`](https://www.npmjs.com/package/@wxg-prc-cpg/browser-skill-dsh-plugin)。它为 Agent 提供原生 `browser_*` 工具，由插件代为调用 `bsk`，并在 Web UI 中实时展示浏览器会话。
 
 先安装 `bsk` CLI 并连接浏览器扩展，再将插件装进 dsh profile 并启动（将 `web` 替换为你的 profile 名称）：
 
@@ -262,7 +262,7 @@ dsh plugin --profile web update @wxg-prc-cpg/browser-skill-dsh-plugin --latest
 
 ## 工作原理
 
-BrowserSkill 是 Agent 运行时与浏览器之间的本地桥接层。
+ZenX Bridge 是 Agent 运行时与浏览器之间的本地桥接层。
 
 ```mermaid
 flowchart TB
@@ -273,7 +273,7 @@ flowchart TB
   subgraph Local["本机"]
     CLI["bsk CLI"]
     Daemon["bsk daemon"]
-    Extension["BrowserSkill 扩展"]
+    Extension["ZenX Bridge 扩展"]
   end
 
   subgraph Browser["浏览器配置文件"]
@@ -295,7 +295,7 @@ Agent 不直接与浏览器通信。它通过 `bsk` CLI 下发浏览器任务；
 
 ## 多浏览器使用
 
-当运行多个装有 BrowserSkill 扩展的 Chromium 浏览器时，Agent 可以指定目标浏览器：
+当运行多个装有 ZenX Bridge 扩展的 Chromium 浏览器时，Agent 可以指定目标浏览器：
 
 ```bash
 # 列出所有已连接的浏览器实例
@@ -334,7 +334,7 @@ pnpm ext:build                    # 输出: apps/extension/dist/chrome-mv3
 1. 打开 `chrome://extensions`
 2. 开启 **开发者模式**
 3. 点击 **加载已解压的扩展程序**，选择 `apps/extension/dist/chrome-mv3` 目录
-4. BrowserSkill 弹窗变绿即表示已连接到 daemon
+4. ZenX Bridge 弹窗变绿即表示已连接到 daemon
 
 开发时可使用热重载：
 

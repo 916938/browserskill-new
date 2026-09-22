@@ -33,7 +33,7 @@ async function authorize(
     credentials: "omit",
     cache: "no-store",
     headers: { Authorization: `Bearer ${endpoint.token}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ action, next_token: nextToken, label: "Chrome · BrowserSkill" }),
+    body: JSON.stringify({ action, next_token: nextToken, label: "Chrome · ZenX Bridge" }),
     signal: AbortSignal.timeout(10000),
   });
   if (response.status === 401 || response.status === 403)

@@ -76,7 +76,7 @@ async fn exercise(transfers: Arc<TransferRegistry>, staging_root: &Path) {
         let received = Arc::new(Mutex::new(Vec::<Method>::new()));
         let download_id = if mode == "download" {
             let staging = transfers.begin_download("fixture").unwrap();
-            let browser_dir = home.path().join("BrowserSkill").join(&staging.transfer_id);
+            let browser_dir = home.path().join("ZenX Bridge").join(&staging.transfer_id);
             std::fs::create_dir_all(&browser_dir).unwrap();
             let file = browser_dir.join("download.txt");
             std::fs::write(&file, b"download fixture").unwrap();

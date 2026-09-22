@@ -367,7 +367,7 @@ export default defineBackground(() => {
   // not connected we force a fresh connect attempt so we never sit on
   // a stale `disconnected` state when the setTimeout-based reconnect
   // dies with the SW. Reconnect is skipped when the user has disabled
-  // the BrowserSkill connection.
+  // the ZenX Bridge connection.
   startKeepalive({
     transport,
     requestConnect: () => controller.requestConnect(),

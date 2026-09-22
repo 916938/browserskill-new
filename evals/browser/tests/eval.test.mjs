@@ -120,7 +120,7 @@ test("form case oracle checks submitted values and separates adapter evidence", 
     { type: "form.enter_pressed", data: {} },
     {
       type: "form.submitted",
-      data: { text: "agent-parity", notes: "BrowserSkill works", choice: "two" },
+      data: { text: "agent-parity", notes: "ZenX Bridge works", choice: "two" },
     },
     { type: "page.shown", data: { path: "/result" } },
   ];

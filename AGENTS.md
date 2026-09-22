@@ -2,7 +2,7 @@
 
 ## What is this
 
-BrowserSkill connects AI agents to a user's real Chromium browser via a local `bsk` CLI + daemon + browser extension. The repo is a **dual workspace**: Cargo (Rust) + pnpm (JS/TS).
+ZenX Bridge connects AI agents to a user's real Chromium browser via a local `bsk` CLI + daemon + browser extension. The repo is a **dual workspace**: Cargo (Rust) + pnpm (JS/TS).
 
 ## Structure
 

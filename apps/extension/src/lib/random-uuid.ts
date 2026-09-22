@@ -3,7 +3,7 @@
  *
  * Crypto.randomUUID() is restricted to secure contexts, while
  * crypto.getRandomValues() is available to content scripts on ordinary HTTP
- * origins. BrowserSkill records many intranet pages served over HTTP, so the
+ * origins. ZenX Bridge records many intranet pages served over HTTP, so the
  * fallback is required for recording to work on those pages.
  */
 export function createRandomUuid(): string {

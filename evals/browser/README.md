@@ -1,6 +1,6 @@
 # Browser capability evaluation corpus
 
-This directory is a deterministic, local browser evaluation environment for BrowserSkill, DSH,
+This directory is a deterministic, local browser evaluation environment for ZenX Bridge, DSH,
 and other command-line agents. Cases, fixture pages, direct `bsk` workflows, and assertions are
 data-driven and discovered automatically. Adding a case does not require editing a central switch.
 

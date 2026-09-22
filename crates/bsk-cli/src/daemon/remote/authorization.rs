@@ -319,7 +319,7 @@ impl AuthorizationStore {
                 device_id: id,
                 expires_at: date(device.expires_at),
                 renew_after: date(device.renew_after),
-                service_name: "BrowserSkill".into(),
+                service_name: "ZenX Bridge".into(),
             })
         })
     }

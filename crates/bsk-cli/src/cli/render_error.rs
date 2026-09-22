@@ -255,7 +255,7 @@ pub fn info_for_error(code: ErrorCode, data: Option<&serde_json::Value>) -> Rend
         (ErrorCode::CdpFailed, reason::CDP_EXTENSION_ACCESS_DENIED) => RenderInfo {
             summary: "Chrome blocked CDP access to another extension's content in this tab",
             hint: Some(
-                "a web page can contain a restricted extension frame; disable the conflicting extension and reload, or use `bsk navigate <url>` to leave this page; reconnecting BrowserSkill alone does not remove the restriction",
+                "a web page can contain a restricted extension frame; disable the conflicting extension and reload, or use `bsk navigate <url>` to leave this page; reconnecting ZenX Bridge alone does not remove the restriction",
             ),
             exit_code: base.exit_code,
         },
@@ -514,7 +514,7 @@ pub fn info_for_error(code: ErrorCode, data: Option<&serde_json::Value>) -> Rend
         (ErrorCode::Timeout | ErrorCode::CdpFailed, reason::SET_FILE_INPUT_FAILED) => RenderInfo {
             summary: "the browser could not attach the staged file to the input",
             hint: Some(
-                "check that BrowserSkill has Chrome's 'Allow access to file URLs' permission; otherwise use `bsk request-help`",
+                "check that ZenX Bridge has Chrome's 'Allow access to file URLs' permission; otherwise use `bsk request-help`",
             ),
             exit_code: base.exit_code,
         },

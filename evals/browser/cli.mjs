@@ -154,7 +154,7 @@ function selectionMetadata(cases) {
 }
 
 function usage() {
-  console.log(`BrowserSkill local browser evaluation
+  console.log(`ZenX Bridge local browser evaluation
 
 Usage:
   node evals/browser/cli.mjs validate [--json]

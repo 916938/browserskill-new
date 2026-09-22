@@ -579,7 +579,7 @@ describe("file transfer tools", () => {
     } as chrome.downloads.DownloadItem;
     const completed = {
       ...initial,
-      filename: "/profile/Downloads/BrowserSkill/tr_1/result.zip",
+      filename: "/profile/Downloads/ZenX Bridge/tr_1/result.zip",
       state: "complete",
       fileSize: 12,
     } as chrome.downloads.DownloadItem;
@@ -625,12 +625,12 @@ describe("file transfer tools", () => {
 
     const result = await handleDownload(
       manager,
-      { session_id: "s1", ref: "@e3", browser_relative_dir: "BrowserSkill/tr_1" },
+      { session_id: "s1", ref: "@e3", browser_relative_dir: "ZenX Bridge/tr_1" },
       { cdp, tabsApi: tabsApi(), downloads },
     );
 
     expect(suggested).toEqual({
-      filename: "BrowserSkill/tr_1/result.zip",
+      filename: "ZenX Bridge/tr_1/result.zip",
       conflictAction: "overwrite",
     });
     expect(result).toMatchObject({
@@ -680,7 +680,7 @@ describe("file transfer tools", () => {
       cdp,
       target: { tabId: 4, sessionId: "expected-child" },
       downloads,
-      browserRelativeDir: "BrowserSkill/tr_1",
+      browserRelativeDir: "ZenX Bridge/tr_1",
       timeoutMs: 5,
       trigger: async () => {
         cdpEvent?.({ tabId: 4, sessionId: "other-child" }, "Page.downloadWillBegin", {
@@ -749,7 +749,7 @@ describe("file transfer tools", () => {
       cdp,
       target: { tabId: 4 },
       downloads,
-      browserRelativeDir: "BrowserSkill/tr_21",
+      browserRelativeDir: "ZenX Bridge/tr_21",
       timeoutMs: 1_000,
       trigger: async () => {
         const suggested = new Promise<void>((resolve) => {
@@ -769,7 +769,7 @@ describe("file transfer tools", () => {
     });
 
     expect(suggestion).toEqual({
-      filename: "BrowserSkill/tr_21/candidate-first.bin",
+      filename: "ZenX Bridge/tr_21/candidate-first.bin",
       conflictAction: "overwrite",
     });
     expect(result).toMatchObject({ item: { id: 21, state: "complete" } });
@@ -797,7 +797,7 @@ describe("file transfer tools", () => {
     } as chrome.downloads.DownloadItem;
     const complete = {
       ...initial,
-      filename: "/profile/Downloads/BrowserSkill/tr_22/oversized.bin",
+      filename: "/profile/Downloads/ZenX Bridge/tr_22/oversized.bin",
       state: "complete",
       fileSize: 8,
       totalBytes: 8,
@@ -824,7 +824,7 @@ describe("file transfer tools", () => {
       cdp,
       target: { tabId: 4 },
       downloads,
-      browserRelativeDir: "BrowserSkill/tr_22",
+      browserRelativeDir: "ZenX Bridge/tr_22",
       maxByteSize: 4,
       timeoutMs: 1_000,
       trigger: async () => {
@@ -871,7 +871,7 @@ describe("file transfer tools", () => {
     } as chrome.downloads.DownloadItem;
     const complete = {
       ...initial,
-      filename: "/profile/Downloads/BrowserSkill/tr_23/racing.bin",
+      filename: "/profile/Downloads/ZenX Bridge/tr_23/racing.bin",
       state: "complete",
       fileSize: 4,
       totalBytes: 4,
@@ -900,7 +900,7 @@ describe("file transfer tools", () => {
       cdp,
       target: { tabId: 4 },
       downloads,
-      browserRelativeDir: "BrowserSkill/tr_23",
+      browserRelativeDir: "ZenX Bridge/tr_23",
       timeoutMs: 80,
       trigger: async () => {
         cdpEvent?.({ tabId: 4 }, "Page.downloadWillBegin", {
@@ -964,7 +964,7 @@ describe("file transfer tools", () => {
       cdp,
       target: { tabId: 4 },
       downloads,
-      browserRelativeDir: "BrowserSkill/tr_ambiguous",
+      browserRelativeDir: "ZenX Bridge/tr_ambiguous",
       timeoutMs: 100,
       trigger: async () => {
         cdpEvent?.({ tabId: 4 }, "Page.downloadWillBegin", {

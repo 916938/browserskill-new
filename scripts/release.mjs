@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Unified release script for BrowserSkill.
+ * Unified release script for ZenX Bridge.
  *
  * Bumps CLI, Extension, and DSH Plugin to the same version, updates
  * CHANGELOG.md, commits, tags, and optionally pushes.

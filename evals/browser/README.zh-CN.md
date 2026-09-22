@@ -1,6 +1,6 @@
 # 浏览器能力测试语料库
 
-这里是一套供 BrowserSkill、DSH 以及其他命令行 Agent 共用的本地确定性浏览器测试环境。
+这里是一套供 ZenX Bridge、DSH 以及其他命令行 Agent 共用的本地确定性浏览器测试环境。
 case、测试页面、`bsk` 直连流程和断言都会自动发现；新增 case 不需要修改中央 `switch`。
 
 [English](README.md)

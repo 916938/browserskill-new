@@ -13,7 +13,7 @@ export interface CaptureVomFrame {
   target: CdpTarget;
   parentFrameId?: string;
   ownerBackendNodeId?: number;
-  /** BrowserSkill-generated identity for the recording agent in this Document. */
+  /** ZenX Bridge-generated identity for the recording agent in this Document. */
   recordingDocumentId?: string;
 }
 

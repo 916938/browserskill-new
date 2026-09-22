@@ -71,7 +71,7 @@ describe("App", () => {
 
     expect(screen.getByText("未连接")).toBeTruthy();
     expect(screen.getByText("无法连接，请确认 daemon 已启动且端口一致。")).toBeTruthy();
-    expect(screen.queryByText("请先打开 BrowserSkill。")).toBeNull();
+    expect(screen.queryByText("请先打开 ZenX Bridge。")).toBeNull();
   });
 
   it("keeps the connection switch usable and shows protocol errors when disconnected", () => {
@@ -91,10 +91,10 @@ describe("App", () => {
     expect(screen.queryByText("无法连接，请确认 daemon 已启动且端口一致。")).toBeNull();
     expect(screen.queryByText("端口不匹配")).toBeNull();
     expect(
-      screen.getByRole("switch", { name: "BrowserSkill 连接" }).getAttribute("aria-checked"),
+      screen.getByRole("switch", { name: "ZenX Bridge 连接" }).getAttribute("aria-checked"),
     ).toBe("true");
     expect(screen.getByText("version_too_old: protocol-major mismatch")).toBeTruthy();
-    fireEvent.click(screen.getByRole("switch", { name: "BrowserSkill 连接" }));
+    fireEvent.click(screen.getByRole("switch", { name: "ZenX Bridge 连接" }));
     expect(setConnectionEnabled).toHaveBeenCalledWith(false);
   });
 
@@ -200,7 +200,7 @@ describe("App", () => {
 
     render(<App />);
 
-    const toggle = screen.getByRole("switch", { name: "BrowserSkill 连接" });
+    const toggle = screen.getByRole("switch", { name: "ZenX Bridge 连接" });
     expect(toggle.getAttribute("aria-checked")).toBe("true");
   });
 
@@ -214,7 +214,7 @@ describe("App", () => {
 
     render(<App />);
 
-    fireEvent.click(screen.getByRole("switch", { name: "BrowserSkill 连接" }));
+    fireEvent.click(screen.getByRole("switch", { name: "ZenX Bridge 连接" }));
     expect(setConnectionEnabled).toHaveBeenCalledWith(false);
   });
 
@@ -231,7 +231,7 @@ describe("App", () => {
     expect(screen.getByText("连接已关闭")).toBeTruthy();
     expect(screen.queryByText("无法连接，请确认 daemon 已启动且端口一致。")).toBeNull();
     expect(
-      screen.getByRole("switch", { name: "BrowserSkill 连接" }).getAttribute("aria-checked"),
+      screen.getByRole("switch", { name: "ZenX Bridge 连接" }).getAttribute("aria-checked"),
     ).toBe("false");
   });
 
@@ -707,7 +707,7 @@ describe("control hints toggle", () => {
     render(<App />);
 
     const hintsToggle = await screen.findByRole("switch", { name: "控制提示" });
-    const connectionToggle = screen.getByRole("switch", { name: "BrowserSkill 连接" });
+    const connectionToggle = screen.getByRole("switch", { name: "ZenX Bridge 连接" });
     // One shared Switch component, one size — hierarchy comes from copy and
     // the info icon, not control size. Both rows default to checked, so the
     // class strings must be identical.

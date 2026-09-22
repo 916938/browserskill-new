@@ -51,7 +51,7 @@ export function Preview() {
           setImageUrl(objectUrl);
         }
         setShot(value);
-        document.title = `${value.title} · BrowserSkill`;
+        document.title = `${value.title} · ZenX Bridge`;
       })
       .catch(() => {
         if (alive) setError(true);
@@ -130,7 +130,7 @@ export function Preview() {
         <img
           src={chrome.runtime.getURL("icon/logo.png")}
           className="size-8 shrink-0 rounded-lg"
-          alt="BrowserSkill"
+          alt="ZenX Bridge"
         />
         <div className="min-w-0 flex-1">
           <h1 className="truncate text-sm font-semibold" title={shot?.title}>

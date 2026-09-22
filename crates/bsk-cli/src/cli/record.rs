@@ -328,7 +328,7 @@ fn render_finish(
             RecordedTrace::V2(t) => {
                 if exported.v2_fallback {
                     eprintln!(
-                        "note: extension returned trace v2 (no page observations); update the BrowserSkill extension for v3 bundles"
+                        "note: extension returned trace v2 (no page observations); update the ZenX Bridge extension for v3 bundles"
                     );
                 }
                 println!(

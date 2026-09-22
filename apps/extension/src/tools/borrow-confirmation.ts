@@ -244,7 +244,7 @@ export const defaultBorrowChromeNotifications: ChromeNotificationsForBorrow = {
 };
 
 const DEFAULT_NOTIFICATION_COPY: BorrowNotificationCopy = {
-  title: "BrowserSkill: Agent wants to borrow a tab",
+  title: "ZenX Bridge: Agent wants to borrow a tab",
   body: (tabTitle) => `Approve or deny the borrow of "${tabTitle}".`,
   iconUrl: "icon/logo.png",
   allowButton: "Allow",
