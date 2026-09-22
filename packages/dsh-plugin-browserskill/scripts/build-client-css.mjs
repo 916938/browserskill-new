@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Build the scoped BrowserSkill-UI utility sheet for the dsh client bundle.
+ * Build the scoped ZenX Bridge UI utility sheet for the dsh client bundle.
  *
  * The overlay reuses @browser-skill/ui components (shadcn-style, Tailwind v4
  * utility classes). Those classes need a stylesheet — but a global utility

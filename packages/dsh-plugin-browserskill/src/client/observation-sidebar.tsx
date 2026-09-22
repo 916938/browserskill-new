@@ -8,7 +8,7 @@ import type { ObservationClientStore } from "./observation-store";
 import { useObservationView, usePip, visibleToScope } from "./observation-view";
 
 export const OBSERVATION_TAB_KIND = "browserskill-observation";
-export const OBSERVATION_TAB_ID = "@wxg-prc-cpg/browser-skill-dsh-plugin/observation";
+export const OBSERVATION_TAB_ID = "@916938/zenx-bridge-dsh-plugin/observation";
 const TAB_TITLE = "Browser Skill";
 const BODY_SLOT = "sidebar.right.pane.tab";
 const TITLE_SLOT = "sidebar.right.pane.tab.title";

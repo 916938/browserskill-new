@@ -14,7 +14,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  PACKAGE_NAME: "@wxg-prc-cpg/browser-skill-dsh-plugin"
+  PACKAGE_NAME: "@916938/zenx-bridge-dsh-plugin"
   PACKAGE_DIR: packages/dsh-plugin-browserskill
 
 jobs:
@@ -80,7 +80,7 @@ jobs:
           node-version: 22
           cache: pnpm
           registry-url: https://registry.npmjs.org
-          scope: "@wxg-prc-cpg"
+          scope: "@916938"
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile

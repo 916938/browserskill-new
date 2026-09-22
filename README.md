@@ -291,7 +291,7 @@ Run an Agent on a server and pair it with your local browser using the built-in 
 
 Using [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`dsh`)?
 ZenX Bridge ships a first-class dsh plugin on npm as
-[`@wxg-prc-cpg/browser-skill-dsh-plugin`](https://www.npmjs.com/package/@wxg-prc-cpg/browser-skill-dsh-plugin).
+[`@916938/zenx-bridge-dsh-plugin`](https://www.npmjs.com/package/@916938/zenx-bridge-dsh-plugin).
 It gives the agent native `browser_*` tools and a live view of its browser sessions
 in the Web UI. The plugin runs `bsk` on the agent's behalf.
 
@@ -299,7 +299,7 @@ Install the `bsk` CLI and connect the browser extension first. Then add the plug
 to a dsh profile and start it (replace `web` with your profile name):
 
 ```sh
-dsh plugin --profile web add @wxg-prc-cpg/browser-skill-dsh-plugin
+dsh plugin --profile web add @916938/zenx-bridge-dsh-plugin
 dsh --profile web
 ```
 
@@ -307,7 +307,7 @@ The plugin includes the `browser-skill` skill, so `bsk install-skill` is not nee
 for dsh. Installed plugins do not update automatically. To upgrade this plugin:
 
 ```sh
-dsh plugin --profile web update @wxg-prc-cpg/browser-skill-dsh-plugin --latest
+dsh plugin --profile web update @916938/zenx-bridge-dsh-plugin --latest
 ```
 
 Restart the profile after upgrading. See the
@@ -379,7 +379,7 @@ The repository is a Cargo + pnpm workspace:
 - `crates/bsk-protocol` — shared wire types and JSON schemas
 - `apps/extension` — browser extension
 - `packages/ui` and [`packages/i18n`](packages/i18n/README.md) — shared extension UI support, including English, Simplified Chinese and Korean localization
-- `packages/dsh-plugin-browserskill` — DeepSeek Harness plugin (`@wxg-prc-cpg/browser-skill-dsh-plugin`)
+- `packages/dsh-plugin-browserskill` — DeepSeek Harness plugin (`@916938/zenx-bridge-dsh-plugin`)
 - [`evals/browser`](evals/browser/README.md) — deterministic local pages and agent-neutral browser capability evaluation
 
 ### Building the extension from source

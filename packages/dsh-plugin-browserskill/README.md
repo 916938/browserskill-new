@@ -1,6 +1,6 @@
-# BrowserSkill for DeepSeek Harness
+# ZenX Bridge for DeepSeek Harness
 
-[![npm version](https://img.shields.io/npm/v/@wxg-prc-cpg/browser-skill-dsh-plugin)](https://www.npmjs.com/package/@wxg-prc-cpg/browser-skill-dsh-plugin)
+[![npm version](https://img.shields.io/npm/v/@916938/zenx-bridge-dsh-plugin)](https://www.npmjs.com/package/@916938/zenx-bridge-dsh-plugin)
 
 Use [BrowserSkill](https://github.com/Tencent/BrowserSkill) in
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`dsh`) to browse
@@ -13,14 +13,14 @@ Before installing the plugin:
 
 - Install [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) and
   [pnpm](https://pnpm.io/installation), which dsh uses to manage plugins.
-- Install the `bsk` CLI and connect the BrowserSkill extension in Chrome or Edge.
+- Install the `bsk` CLI and connect the ZenX Bridge extension in Chrome or Edge.
   Follow the [BrowserSkill setup guide](https://github.com/Tencent/BrowserSkill#quick-start).
 - Make sure `bsk` is on the `PATH` used to start dsh, or set `bskPath` in the plugin configuration.
 
 Install the plugin into the `web` profile, then start it:
 
 ```sh
-dsh plugin --profile web add @wxg-prc-cpg/browser-skill-dsh-plugin
+dsh plugin --profile web add @916938/zenx-bridge-dsh-plugin
 dsh --profile web
 ```
 
@@ -41,7 +41,7 @@ Installed plugins do not update automatically. To upgrade this plugin to npm's
 `latest` version, including versions outside the profile's saved dependency range:
 
 ```sh
-dsh plugin --profile web update @wxg-prc-cpg/browser-skill-dsh-plugin --latest
+dsh plugin --profile web update @916938/zenx-bridge-dsh-plugin --latest
 ```
 
 Restart that dsh profile after upgrading. This command updates the plugin; update
@@ -167,9 +167,9 @@ The observation endpoints require a loopback address such as `localhost` or
 
 ```sh
 pnpm install
-pnpm --filter @wxg-prc-cpg/browser-skill-dsh-plugin typecheck
-pnpm --filter @wxg-prc-cpg/browser-skill-dsh-plugin test     # unit tests mock bsk; no browser needed
-pnpm --filter @wxg-prc-cpg/browser-skill-dsh-plugin build    # tsdown -> lib/
+pnpm --filter @916938/zenx-bridge-dsh-plugin typecheck
+pnpm --filter @916938/zenx-bridge-dsh-plugin test     # unit tests mock bsk; no browser needed
+pnpm --filter @916938/zenx-bridge-dsh-plugin build    # tsdown -> lib/
 ```
 
 See the [development notes](https://github.com/Tencent/BrowserSkill/blob/main/packages/dsh-plugin-browserskill/docs/development.md)

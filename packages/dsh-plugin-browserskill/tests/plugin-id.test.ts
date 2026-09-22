@@ -17,7 +17,7 @@ const pkg = JSON.parse(
 
 describe("plugin identity", () => {
   it("uses the published package name as the Cordis plugin id", () => {
-    expect(name).toBe("@wxg-prc-cpg/browser-skill-dsh-plugin");
+    expect(name).toBe("@916938/zenx-bridge-dsh-plugin");
     expect(name).toBe(pkg.name);
   });
 

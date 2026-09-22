@@ -90,7 +90,7 @@ registers the tools. Setting `lazyTools: false` registers them at plugin startup
 ## Tool results and cancellation
 
 - **Cancellation**: aborting a tool call (`exec.signal`) kills the underlying bsk child process,
-  matching BrowserSkill's cooperative tool-cancellation model.
+  matching ZenX Bridge's cooperative tool-cancellation model.
 - **UI cards**: calls render as terminal cards (command line as title, output as the completed
   card). Screenshots additionally attach the image itself when the host mounts an attachment store
   and the active model route declares image input; otherwise the PNG path is returned.

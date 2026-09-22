@@ -350,7 +350,7 @@ v19 清单中"计划新注"包含 **`browserskillhub.com`（浏览器技能枢�
 | **P1** | 对外身份改名：扩展 `name`、i18n `brandName` + 硬编码串、双语 README、`AGENT_INSTALL.md`、安装脚本、Cargo description、`NOTICE` | `pnpm ext:build` 通过；扩展列表显示新名；`git grep -i browserskill` 仅剩历史档案 |
 | **P2** | 域名与站点上线 | `bridge.zenx.tech` 可访问，`/docs` `/skill` `/compare` 就位 |
 | **P3** | 仓库改名 + `update.rs` + 安装脚本 | **`bsk update` 实测成功**（含旧二进制） |
-| **P4** | npm 包名改为自有 scope（现为上游 `@wxg-prc-cpg/*`） | 包名不再含上游标识 |
+| ~~P4~~ | ~~npm 包名改为自有 scope~~ | ✅ **已完成**：`@wxg-prc-cpg/browser-skill-dsh-plugin` → `@916938/zenx-bridge-dsh-plugin`（含插件 id、cordis.patch.yml、CI 的 npm scope）。**发布前需在 npm 创建 `@916938` scope** |
 | **不做** | `MERGE_REVIEW.md`、`RELEASE_NOTES_*`、`UPGRADE_MERGE_SUMMARY.md`、`TEST_REPORT_*` | 保持原样——那是历史事实，篡改会失真 |
 
 每阶段之间跑一次全量测试（Rust 762 / 扩展 2062 / pro 306），确认无回归。

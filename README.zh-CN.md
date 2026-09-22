@@ -243,19 +243,19 @@ Daemon 也会为自身继承的旧环境设置记录说明。原先只依靠这�
 
 ## DeepSeek Harness 插件
 
-在用 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（`dsh`）？ZenX Bridge 提供了官方 dsh 插件，已发布到 npm：[`@wxg-prc-cpg/browser-skill-dsh-plugin`](https://www.npmjs.com/package/@wxg-prc-cpg/browser-skill-dsh-plugin)。它为 Agent 提供原生 `browser_*` 工具，由插件代为调用 `bsk`，并在 Web UI 中实时展示浏览器会话。
+在用 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（`dsh`）？ZenX Bridge 提供了官方 dsh 插件，已发布到 npm：[`@916938/zenx-bridge-dsh-plugin`](https://www.npmjs.com/package/@916938/zenx-bridge-dsh-plugin)。它为 Agent 提供原生 `browser_*` 工具，由插件代为调用 `bsk`，并在 Web UI 中实时展示浏览器会话。
 
 先安装 `bsk` CLI 并连接浏览器扩展，再将插件装进 dsh profile 并启动（将 `web` 替换为你的 profile 名称）：
 
 ```sh
-dsh plugin --profile web add @wxg-prc-cpg/browser-skill-dsh-plugin
+dsh plugin --profile web add @916938/zenx-bridge-dsh-plugin
 dsh --profile web
 ```
 
 插件自带 `browser-skill` skill，所以在 dsh 下无需执行 `bsk install-skill`。已安装的插件不会自动更新；升级此插件请运行：
 
 ```sh
-dsh plugin --profile web update @wxg-prc-cpg/browser-skill-dsh-plugin --latest
+dsh plugin --profile web update @916938/zenx-bridge-dsh-plugin --latest
 ```
 
 升级后重启该 profile。用法与配置见[插件 README](packages/dsh-plugin-browserskill/README.md)。
@@ -317,7 +317,7 @@ bsk session start --browser <instance-id-or-label>
 - `crates/bsk-protocol` — 共享协议类型与 JSON Schema
 - `apps/extension` — 浏览器扩展
 - `packages/ui` 和 [`packages/i18n`](packages/i18n/README.md) — 扩展 UI 共享支持，包含英文、简体中文和韩语本地化
-- `packages/dsh-plugin-browserskill` — DeepSeek Harness 插件（`@wxg-prc-cpg/browser-skill-dsh-plugin`）
+- `packages/dsh-plugin-browserskill` — DeepSeek Harness 插件（`@916938/zenx-bridge-dsh-plugin`）
 - [`evals/browser`](evals/browser/README.zh-CN.md) — 确定性本地页面与 Agent 无关的浏览器能力测试台
 
 ### 从源码构建扩展
