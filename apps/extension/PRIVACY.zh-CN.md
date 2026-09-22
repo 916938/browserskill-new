@@ -2,7 +2,7 @@
 
 **最后更新：** 2026 年 9 月 15 日
 
-本隐私政策说明 **ZenX Bridge** 浏览器扩展（下称"本扩展"）在您安装和使用过程中如何处理信息。ZenX Bridge 作为开源项目 [ZenX Bridge](https://github.com/916938/browserskill-new) 的一部分发布，源代码完全公开，可供审计。本项目基于 MIT 许可证衍生自 [Tencent/BrowserSkill](https://github.com/Tencent/BrowserSkill)。
+本隐私政策说明 **ZenX Bridge** 浏览器扩展（下称"本扩展"）在您安装和使用过程中如何处理信息。ZenX Bridge 作为开源项目 [ZenX Bridge](https://github.com/916938/zenx-bridge) 的一部分发布，源代码完全公开，可供审计。本项目基于 MIT 许可证衍生自 [Tencent/BrowserSkill](https://github.com/Tencent/BrowserSkill)。
 
 如有任何疑问，请在项目仓库中提交 issue 与我们联系。
 

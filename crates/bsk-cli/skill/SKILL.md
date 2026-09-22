@@ -407,7 +407,7 @@ Use `bsk --help` to find navigation/history, tab, wait and window commands.
 
 ## Fork additions
 
-These commands and variables exist in this fork (`916938/browserskill-new`) but not upstream.
+These commands and variables exist in this fork (`916938/zenx-bridge`) but not upstream.
 
 ### Generic passthrough — `bsk invoke`
 

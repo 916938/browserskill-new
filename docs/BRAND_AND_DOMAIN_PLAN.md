@@ -316,7 +316,7 @@ v19 清单中"计划新注"包含 **`browserskillhub.com`（浏览器技能枢�
 
 | 项 | 现在 | 改名后 | 风险与处理 |
 |---|---|---|---|
-| 仓库 | `916938/browserskill-new` | `916938/zenx-bridge` | GitHub 对改名仓库自动重定向，旧链接不断 |
+| 仓库 | `916938/zenx-bridge` | `916938/zenx-bridge` | GitHub 对改名仓库自动重定向，旧链接不断 |
 | 更新源 | `update.rs` → `.../browserskill-new/releases/...` | 改为 `zenx-bridge` | **已安装的旧二进制走旧 URL，靠重定向兜底**；改名后必须实测 `bsk update` |
 | 安装脚本 | `install.sh` / `install.ps1` 硬编码仓库路径 | 同步改 | 同上 |
 | 文档链接 | 三仓 README / SKILL.md 内的 URL | 统一改为 `bridge.zenx.tech` | 减少硬编码 |

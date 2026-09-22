@@ -30,7 +30,7 @@
 
 身份层面其实早已分离：
 
-- `cli/update.rs` 的更新源指向 `916938/browserskill-new/releases`；
+- `cli/update.rs` 的更新源指向 `916938/zenx-bridge/releases`；
 - `Cargo.toml` 的 `repository` 为我方；
 - 扩展 manifest 含上游没有的 `cookies` 权限；
 - `zenxbrowser`、`browserskill-pro` 已依赖 fork-only 的 CLI 面（`--browser-id`、`tab observe`、`browsers close`、`profile_account_id`），在上游构建上跑不起来。
@@ -65,7 +65,7 @@ skill/SKILL.md                                      # build.rs 会复制到 crat
 
 ### 3.3 版本号与安装 URL 一律取我方
 
-`Cargo.toml`、`Cargo.lock`、`apps/extension/package.json`、`packages/dsh-plugin-browserskill/package.json` 的版本号冲突一律保留我方；`README.md`、`README.zh-CN.md`、`AGENT_INSTALL.md`、`crates/bsk-cli/README.md` 的安装 URL 一律保留 `916938/browserskill-new`，只吸收上游新增的 PATH 提示等附加说明。
+`Cargo.toml`、`Cargo.lock`、`apps/extension/package.json`、`packages/dsh-plugin-browserskill/package.json` 的版本号冲突一律保留我方；`README.md`、`README.zh-CN.md`、`AGENT_INSTALL.md`、`crates/bsk-cli/README.md` 的安装 URL 一律保留 `916938/zenx-bridge`，只吸收上游新增的 PATH 提示等附加说明。
 
 > 版本号升级是独立的发布动作，不在同步提交里顺手改。
 

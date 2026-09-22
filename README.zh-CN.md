@@ -55,7 +55,7 @@ ZenX Bridge 由两个本地运行组件组成：`bsk` CLI/daemon 和浏览器扩
 已经在用 Cursor、Claude Code、Codex 或其他支持 Shell 的 Agent？只需复制下面这句话发给 Agent，它会帮你安装 CLI 和 skill，并引导你加载浏览器扩展：
 
 ```text
-按照 https://raw.githubusercontent.com/916938/browserskill-new/main/AGENT_INSTALL.md 的说明，在本机安装并配置 browser-skill
+按照 https://raw.githubusercontent.com/916938/zenx-bridge/main/AGENT_INSTALL.md 的说明，在本机安装并配置 browser-skill
 ```
 
 </details>
@@ -73,14 +73,14 @@ ZenX Bridge 由两个本地运行组件组成：`bsk` CLI/daemon 和浏览器扩
 **macOS / Linux**（推荐，安装到 `~/.local/bin`）：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/916938/browserskill-new/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/916938/zenx-bridge/main/install.sh | sh
 export PATH="${BSK_INSTALL_DIR:-$HOME/.local/bin}:$PATH"
 ```
 
 **Windows**（PowerShell — 安装到 `~/.local/bin`）：
 
 ```powershell
-irm https://raw.githubusercontent.com/916938/browserskill-new/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/916938/zenx-bridge/main/install.ps1 | iex
 ```
 
 上面的 export 让当前 Unix shell 能找到 CLI。正在运行的 Agent 可能需要在每次 Shell

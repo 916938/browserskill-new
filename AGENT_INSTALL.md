@@ -25,7 +25,7 @@ For an existing installation, check `bsk --version` and follow the
 **macOS / Linux:**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/916938/browserskill-new/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/916938/zenx-bridge/main/install.sh | sh
 export PATH="${BSK_INSTALL_DIR:-$HOME/.local/bin}:$PATH"
 bsk install-skill --yes
 ```
@@ -33,7 +33,7 @@ bsk install-skill --yes
 **Windows (PowerShell):**
 
 ```powershell
-irm https://raw.githubusercontent.com/916938/browserskill-new/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/916938/zenx-bridge/main/install.ps1 | iex
 bsk install-skill --yes
 ```
 

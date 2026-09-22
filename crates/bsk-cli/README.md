@@ -1,13 +1,13 @@
 # bsk
 
-Command-line interface and background daemon for [ZenX Bridge](https://github.com/916938/browserskill-new).
+Command-line interface and background daemon for [ZenX Bridge](https://github.com/916938/zenx-bridge).
 
 > Derived from [Tencent/BrowserSkill](https://github.com/Tencent/BrowserSkill) under the MIT License.
 
 Install:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/916938/browserskill-new/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/916938/zenx-bridge/main/install.sh | sh
 export PATH="${BSK_INSTALL_DIR:-$HOME/.local/bin}:$PATH"
 ```
 

@@ -7,12 +7,12 @@ Downloads the latest (or pinned) bsk release for Windows x64,
 extracts bsk.exe to a user-local directory, and adds it to PATH.
 
 Usage:
-  irm https://raw.githubusercontent.com/916938/browserskill-new/main/install.ps1 | iex
+  irm https://raw.githubusercontent.com/916938/zenx-bridge/main/install.ps1 | iex
 
 Upstream origin: Tencent/BrowserSkill (https://github.com/Tencent/BrowserSkill)
 
 Environment overrides:
-  $env:BSK_REPO         GitHub owner/repo (default: 916938/browserskill-new)
+  $env:BSK_REPO         GitHub owner/repo (default: 916938/zenx-bridge)
   $env:BSK_VERSION      Pin CLI version (default: latest from version.json)
   $env:BSK_INSTALL_DIR  Install directory (default: $HOME\.local\bin)
 #>
@@ -21,7 +21,7 @@ Environment overrides:
 
 $ErrorActionPreference = "Stop"
 
-$Repo = if ($env:BSK_REPO) { $env:BSK_REPO } else { "916938/browserskill-new" }
+$Repo = if ($env:BSK_REPO) { $env:BSK_REPO } else { "916938/zenx-bridge" }
 $InstallDir = if ($env:BSK_INSTALL_DIR) { $env:BSK_INSTALL_DIR } else { Join-Path $HOME ".local\bin" }
 $InstallDir = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($InstallDir)
 $GitHub = "https://github.com/${Repo}"

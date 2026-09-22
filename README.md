@@ -69,7 +69,7 @@ copy this one line and send it to your agent — it will install the CLI and ski
 for you, then walk you through loading the extension:
 
 ```text
-Set up browser-skill on this machine by following https://raw.githubusercontent.com/916938/browserskill-new/main/AGENT_INSTALL.md
+Set up browser-skill on this machine by following https://raw.githubusercontent.com/916938/zenx-bridge/main/AGENT_INSTALL.md
 ```
 
 </details>
@@ -87,14 +87,14 @@ or [Edge Add-ons](https://microsoftedge.microsoft.com/addons/detail/browserskill
 **macOS / Linux** (recommended — installs to `~/.local/bin`):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/916938/browserskill-new/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/916938/zenx-bridge/main/install.sh | sh
 export PATH="${BSK_INSTALL_DIR:-$HOME/.local/bin}:$PATH"
 ```
 
 **Windows** (PowerShell — installs to `~/.local/bin`):
 
 ```powershell
-irm https://raw.githubusercontent.com/916938/browserskill-new/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/916938/zenx-bridge/main/install.ps1 | iex
 ```
 
 The export makes the CLI available in the current Unix shell. A running agent may
@@ -414,8 +414,8 @@ View the [full changelog](CHANGELOG.md) for details on version history, new feat
 
 | Version | Date | Highlights |
 |---------|------|------------|
-| [**v0.2.0 / v0.1.4**](https://github.com/916938/browserskill-new/releases/tag/cli-v0.2.0) | 2026-07-17 | Dry-run mode, env var defaults, human-readable timeout, shell completion |
-| [v0.1.7 / v0.1.3](https://github.com/916938/browserskill-new/releases/tag/cli-v0.1.7) | 2026-07-16 | `bsk invoke` command, Windows compatibility, transport improvements |
+| [**v0.2.0 / v0.1.4**](https://github.com/916938/zenx-bridge/releases/tag/cli-v0.2.0) | 2026-07-17 | Dry-run mode, env var defaults, human-readable timeout, shell completion |
+| [v0.1.7 / v0.1.3](https://github.com/916938/zenx-bridge/releases/tag/cli-v0.1.7) | 2026-07-16 | `bsk invoke` command, Windows compatibility, transport improvements |
 
 ## Contributing
 
@@ -423,9 +423,9 @@ See [AGENTS.md](AGENTS.md) for development setup, coding conventions, and CI com
 
 ## Support
 
-- **Issues & Bugs**: [GitHub Issues](https://github.com/916938/browserskill-new/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/916938/browserskill-new/discussions)
-- **Releases**: [GitHub Releases](https://github.com/916938/browserskill-new/releases)
+- **Issues & Bugs**: [GitHub Issues](https://github.com/916938/zenx-bridge/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/916938/zenx-bridge/discussions)
+- **Releases**: [GitHub Releases](https://github.com/916938/zenx-bridge/releases)
 
 ## License
 

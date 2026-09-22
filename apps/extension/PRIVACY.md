@@ -2,7 +2,7 @@
 
 **Last updated:** September 15, 2026
 
-This Privacy Policy describes how the **ZenX Bridge** browser extension (the "Extension") handles information when you install and use it. ZenX Bridge is published as part of the open-source [ZenX Bridge](https://github.com/916938/browserskill-new) project. The source code is publicly auditable. This project is derived from [Tencent/BrowserSkill](https://github.com/Tencent/BrowserSkill) under the MIT License.
+This Privacy Policy describes how the **ZenX Bridge** browser extension (the "Extension") handles information when you install and use it. ZenX Bridge is published as part of the open-source [ZenX Bridge](https://github.com/916938/zenx-bridge) project. The source code is publicly auditable. This project is derived from [Tencent/BrowserSkill](https://github.com/Tencent/BrowserSkill) under the MIT License.
 
 If you have questions about this policy, please open an issue in the project repository.
 

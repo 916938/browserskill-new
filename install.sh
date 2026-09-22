@@ -2,19 +2,19 @@
 # install.sh — install the bsk CLI on macOS and Linux from GitHub Releases.
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/916938/browserskill-new/main/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/916938/zenx-bridge/main/install.sh | sh
 #
 # Upstream origin: Tencent/BrowserSkill (https://github.com/Tencent/BrowserSkill)
 #
 # Environment overrides:
-#   BSK_REPO         GitHub owner/repo (default: 916938/browserskill-new)
+#   BSK_REPO         GitHub owner/repo (default: 916938/zenx-bridge)
 #   BSK_VERSION      Pin CLI version (default: latest from version.json)
 #   BSK_INSTALL_DIR  Install directory (default: $HOME/.local/bin)
 #   BSK_BRANCH       Branch for install_sh raw URL metadata only (unused here)
 
 set -eu
 
-REPO="${BSK_REPO:-916938/browserskill-new}"
+REPO="${BSK_REPO:-916938/zenx-bridge}"
 INSTALL_DIR="${BSK_INSTALL_DIR:-$HOME/.local/bin}"
 GITHUB="https://github.com/${REPO}"
 

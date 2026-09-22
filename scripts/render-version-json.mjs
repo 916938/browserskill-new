@@ -5,7 +5,7 @@
  * Usage:
  *   node scripts/render-version-json.mjs \
  *     --version 0.1.5 \
- *     --repo 916938/browserskill-new \
+ *     --repo 916938/zenx-bridge \
  *     --server-url https://github.com \
  *     --branch main \
  *     --dist dist \
